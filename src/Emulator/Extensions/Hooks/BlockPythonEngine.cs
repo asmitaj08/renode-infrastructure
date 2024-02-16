@@ -78,7 +78,7 @@ namespace Antmicro.Renode.Hooks
                 Marshal.WriteInt32(LibAflInterop.covMapPtr + (int)hash * sizeof(int), newValue);
                 PREV_LOC = pc >> 1;
                 //LibAflInterop.block_hook(pc);
-                Console.WriteLine($"Inside  BlockPythonEngine HookWithSize");
+                // Console.WriteLine($"Inside  BlockPythonEngine HookWithSize");
                 Execute(code, error =>
                 {
                     CPU.Log(LogLevel.Error, "Python runtime error: {0}", error);
