@@ -21,7 +21,7 @@ namespace Antmicro.Renode
     {
         static Emulator()
         {
-            Console.WriteLine("** Test Hello from Emulator cs");
+            Console.WriteLine("** Test Hello from Emulator cs 3");
             UserDirectoryPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData, Environment.SpecialFolderOption.Create), "renode");
         }
 
