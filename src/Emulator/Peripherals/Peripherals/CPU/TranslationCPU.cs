@@ -38,6 +38,7 @@ namespace Antmicro.Renode.Peripherals.CPU
     {
         public static void SetHookAtBlockBegin(this TranslationCPU cpu, [AutoParameter]IMachine m, string pythonScript)
         {
+            // Console.WriteLine($"Inside  TranslationCPU SetHookAtBlockBegin");
             var engine = new BlockPythonEngine(m, cpu, pythonScript);
             cpu.SetHookAtBlockBegin(engine.HookWithSize);
         }
@@ -491,6 +492,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public void SetHookAtBlockBegin(Action<ulong, uint> hook)
         {
+            // Console.WriteLine($"Inside  TranslationCPU BlockHook_def");
             using(machine?.ObtainPausedState())
             {
                 if((hook == null) ^ (blockBeginUserHook == null))

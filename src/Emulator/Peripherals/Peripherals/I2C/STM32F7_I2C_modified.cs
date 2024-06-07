@@ -16,9 +16,9 @@ using Antmicro.Renode.Utilities;
 using System.IO;
 namespace Antmicro.Renode.Peripherals.I2C
 {
-    public sealed class STM32F7_I2C : SimpleContainer<II2CPeripheral>, II2CPeripheral, IDoubleWordPeripheral, IKnownSize
+    public sealed class STM32F7_I2C_modified : SimpleContainer<II2CPeripheral>, II2CPeripheral, IDoubleWordPeripheral, IKnownSize
     {
-        public STM32F7_I2C(IMachine machine) : base(machine)
+        public STM32F7_I2C_modified(IMachine machine) : base(machine)
         {
             EventInterrupt = new GPIO();
             ErrorInterrupt = new GPIO();
@@ -28,16 +28,19 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public uint ReadDoubleWord(long offset)
         {
+            // Console.WriteLine($"%%% Inside stm32f7_I2C readDouble(), offset : 0x{offset:X}, read_val : 0x{registers.Read(offset):X}");
             return registers.Read(offset);
         }
 
         public void WriteDoubleWord(long offset, uint value)
         {
+            // Console.WriteLine($"%%% Inside stm32f7_I2C writeDouble(), offset : 0x{offset:X}, value : 0x{value:X}");
             registers.Write(offset, value);
         }
 
         public override void Reset()
         {
+            // Console.WriteLine("%% Inside stm32f7_I2C Reset()");
             registers.Reset();
             txData = new Queue<byte>();
             rxData = new Queue<byte>();
@@ -52,6 +55,7 @@ namespace Antmicro.Renode.Peripherals.I2C
         {
             // RM0444 Rev 5, p.991/1390
             // "0: Write transfer, slave enters receiver mode."
+            // Console.WriteLine($"@@@@@@@@2 Inside stm32f7_I2C WriteByte(), data : {data}");
             transferOutgoing = false;
 
             rxData.EnqueueRange(data);
@@ -59,6 +63,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public byte[] Read(int count = 1)
         {
+            // Console.WriteLine($"@@@@@@@@@ Inside stm32f7_I2C ReadByte(), count : {count}");
             if(!addressMatched.Value)
             {
                 // Note 1:
@@ -113,6 +118,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private DoubleWordRegisterCollection CreateRegisters()
         {
+            // Console.WriteLine("%% Inside stm32f7_I2C CreateRegisters()");
             var map = new Dictionary<long, DoubleWordRegister> { {
                     (long)Registers.Control1, new DoubleWordRegister(this)
                         .WithFlag(0, writeCallback: PeripheralEnabledWrite, name: "PE")
@@ -156,6 +162,7 @@ namespace Antmicro.Renode.Peripherals.I2C
                         .WithWriteCallback((oldVal, newVal) =>
                         {
                             uint oldBytesToTransfer = (oldVal >> 16) & 0xFF;
+                            // Console.WriteLine($"%% inside control2 writecallback, slave address : {newVal & 0x3FE}");
                             if(start.Value && stop.Value)
                             {
                                 this.Log(LogLevel.Warning, "Setting START and STOP at the same time, ignoring the transfer");
@@ -293,7 +300,11 @@ namespace Antmicro.Renode.Peripherals.I2C
                         .WithReservedBits(9, 23)
                 }
             };
-            
+            // Console.WriteLine($"%%%% Inside CreatRegatReturn , map : {map}");
+            // foreach (var kvp in map)
+            // {
+            //     Console.WriteLine($"%%%Key: {kvp.Key}, Value: {kvp.Value}");
+            // }
             return new DoubleWordRegisterCollection(this, map);
         }
 
@@ -314,7 +325,16 @@ namespace Antmicro.Renode.Peripherals.I2C
             //in case of reads we can fetch data from peripheral immediately, but in case of writes we have to wait until something is written to TXDATA
             if(isReadTransfer.Value)
             {
-                var data = currentSlave.Read((int)bytesToTransfer.Value);
+                // var data = currentSlave.Read((int)bytesToTransfer.Value);
+                int size = (int)bytesToTransfer.Value;
+                var data = new byte[size];
+        
+                // Fill the array with hardcoded values (or a pattern)
+                for(int i = 0; i < size; i++)
+                {
+                    //data[i] = (byte)(i % 256); // Example pattern, replace with your desired values
+                    data[i] = 0x80;
+                }
                 foreach(var item in data)
                 {
                     rxData.Enqueue(item);
@@ -334,18 +354,29 @@ namespace Antmicro.Renode.Peripherals.I2C
             rxData.Clear();
             //This is kinda volatile. If we change slaveAddress setting to a callback action, it might not be set at this moment.
             currentSlaveAddress = (int)(use10BitAddressing.Value ? slaveAddress.Value : ((slaveAddress.Value >> 1) & 0x7F));
-            if(!TryGetByAddress(currentSlaveAddress, out currentSlave))
-            {
-                this.Log(LogLevel.Warning, "Unknown slave at address {0}.", currentSlaveAddress);
-                return;
-            }
+            // if(!TryGetByAddress(currentSlaveAddress, out currentSlave))
+            // {
+            //     this.Log(LogLevel.Warning, "Unknown slave at address {0}.", currentSlaveAddress);
+            //     return;
+            // }
 
             if(isReadTransfer.Value)
             {
                 transmitInterruptStatus = false;
-                var data = currentSlave.Read((int)bytesToTransfer.Value);
+                // var data = currentSlave.Read((int)bytesToTransfer.Value);
+                int size = (int)bytesToTransfer.Value;
+                var data = new byte[size];
+        
+                // Fill the array with hardcoded values (or a pattern)
+                for(int i = 0; i < size; i++)
+                {
+                    // data[i] = (byte)(i % 256); // Example pattern, replace with your desired values
+                     data[i] = 0xDA;
+                }
+
                 foreach(var item in data)
                 {
+                    // Console.WriteLine($"^^^^Data read from slave 0x{item:X}");
                     rxData.Enqueue(item);
                 }
             }
@@ -360,7 +391,7 @@ namespace Antmicro.Renode.Peripherals.I2C
         {
             masterMode = false;
             stopDetection.Value = true;
-            currentSlave?.FinishTransmission();
+            // currentSlave?.FinishTransmission();
             Update();
         }
 
@@ -393,15 +424,15 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private void MasterTransmitDataWrite(uint oldValue, uint newValue)
         {
-            if(currentSlave == null)
-            {
-                this.Log(LogLevel.Warning, "Trying to send byte {0} to an unknown slave with address {1}.", newValue, currentSlaveAddress);
-                return;
-            }
+            // if(currentSlave == null)
+            // {
+            //     this.Log(LogLevel.Warning, "Trying to send byte {0} to an unknown slave with address {1}.", newValue, currentSlaveAddress);
+            //     return;
+            // }
             txData.Enqueue((byte)newValue);
             if(txData.Count == (int)bytesToTransfer.Value)
             {
-                currentSlave.Write(txData.ToArray());
+                // currentSlave.Write(txData.ToArray());
                 txData.Clear();
                 SetTransferCompleteFlags();
             }
@@ -420,7 +451,7 @@ namespace Antmicro.Renode.Peripherals.I2C
             }
             if(autoEnd.Value)
             {
-                currentSlave.FinishTransmission();
+                // currentSlave.FinishTransmission();
                 stopDetection.Value = true;
                 masterMode = false;
             }

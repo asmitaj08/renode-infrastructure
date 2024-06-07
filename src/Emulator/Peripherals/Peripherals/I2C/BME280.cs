@@ -13,13 +13,14 @@ using Antmicro.Renode.Logging;
 using Antmicro.Renode.Core;
 using Antmicro.Renode.Core.Structure.Registers;
 using Antmicro.Renode.Utilities;
-
+using System.IO;
 namespace Antmicro.Renode.Peripherals.I2C
 {
     public class BME280 : II2CPeripheral, IProvidesRegisterCollection<ByteRegisterCollection>
     {
         public BME280()
         {
+            // Console.WriteLine("** Inside BME280 constructor");
             RegistersCollection = new ByteRegisterCollection(this);
             DefineRegisters();
             Reset();
@@ -27,32 +28,41 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public void Reset()
         {
+            // Console.WriteLine("BME280 Reset");
             RegistersCollection.Reset();
             selectedRegister = 0x0;
             EncodeTemperature();
             EncodeHumidity();
             EncodePressure();
             state = State.Idle;
+
         }
 
         public void Write(byte[] data)
         {
             this.Log(LogLevel.Noisy, "Write {0}", data.Select(x => x.ToString("X")).Aggregate((x, y) => x + " " + y));
 
+            // Console.WriteLine($"** Inside BME280 write()");
             foreach(var b in data)
             {
+                // Console.WriteLine($"** Inside BME280 write(), data : {(Registers)b}, state : {state}");
+
                 switch(state)
-                {
+                {   
+
                     case State.Idle:
                         selectedRegister = (Registers)b;
+                        // Console.WriteLine($"** Inside BME280 write(), selected_reg : {selectedRegister},data : 0x{b:X}, state : {state}");
                         state = State.ReceivedFirstByte;
                         break;
                     case State.ReceivedFirstByte:
                     case State.WritingWaitingForValue:
+                        // Console.WriteLine($"** Inside BME280 write(), selected_reg : {selectedRegister},data : 0x{b:X}, state : {state}");
                         RegistersCollection.Write((byte)selectedRegister, b); //bme280 have 256 addressable registers the same as byte max value
                         state = State.WaitingForAddress;
                         break;
                     case State.WaitingForAddress:
+                        // Console.WriteLine($"** Inside BME280 write(), selected_reg : {selectedRegister},data : 0x{b:X}, state : {state}");
                         selectedRegister = (Registers)b;
                         state = State.WritingWaitingForValue;
                         break;
@@ -66,12 +76,16 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public byte[] Read(int count = 0)
         {
+            // Console.WriteLine("** Inside BME280 Read()");
             state = State.Reading; //reading can be started regardless of state, last selectedRegister is used
             byte[] buf = new byte[count];
+
             for(int i = 0; i < buf.Length; i++)
             {
                 //bme280 have 256 addressable registers, byte covers them all and allows roll-over like in real hardware
                 buf[i] = RegistersCollection.Read((byte)selectedRegister);
+                // Console.WriteLine($"** Inside BME280 Read(), selectedReg : {selectedRegister}, state : {state}, count : {count}, data: 0x{buf[i]:X}");
+
                 selectedRegister++;
             }
             this.Log(LogLevel.Noisy, "Read {0}", buf.Select(x => x.ToString("X")).Aggregate((x, y) => x + " " + y));
@@ -81,6 +95,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public void FinishTransmission()
         {
+            // Console.WriteLine("** BME280 FinishTransmission");
             if(state != State.ReceivedFirstByte) //in case of reading we may (documentation permits this or repeated START) receive STOP before the read transfer
             {
                 if(state == State.WritingWaitingForValue)
@@ -95,11 +110,13 @@ namespace Antmicro.Renode.Peripherals.I2C
         {
             get
             {
+                // Console.WriteLine($"##### Inside Temp get :{temperature} ");
                 return temperature;
             }
             set
             {
                 temperature = value;
+                // Console.WriteLine("##### Inside Temp set");
                 EncodeTemperature();
             }
         }
@@ -108,11 +125,13 @@ namespace Antmicro.Renode.Peripherals.I2C
         {
             get
             {
+                // Console.WriteLine($"##### Inside pressure get :{pressure} ");
                 return pressure;
             }
             set
             {
                 pressure = value;
+                // Console.WriteLine("##### Inside Pressure set");
                 EncodePressure();
             }
         }
@@ -121,11 +140,13 @@ namespace Antmicro.Renode.Peripherals.I2C
         {
             get
             {
+                // Console.WriteLine($"##### Inside humidity get :{humidity} ");
                 return humidity;
             }
             set
             {
                 humidity = value;
+                // Console.WriteLine("##### Inside Humidity set");
                 EncodeHumidity();
             }
         }
@@ -133,7 +154,8 @@ namespace Antmicro.Renode.Peripherals.I2C
         public ByteRegisterCollection RegistersCollection { get; }
 
         private void DefineRegisters()
-        {
+        {   
+            // Console.WriteLine("##### Inside defineReg BME280()");
             Registers.HumLsb.Define(this, 0x0)
                 .WithValueField(0, 8, out humLsb, FieldMode.Read);
             Registers.HumMsb.Define(this, 0x80)
@@ -164,6 +186,7 @@ namespace Antmicro.Renode.Peripherals.I2C
                 {
                     if(val == resetRequestVal)
                     {
+                        // Console.WriteLine("Reset request");
                         Reset();
                     }
                 });
@@ -254,6 +277,7 @@ namespace Antmicro.Renode.Peripherals.I2C
             tempXlsb.Value = (byte)((t & 0x0F) << 4);
             tempLsb.Value = (byte)(t >> 4);
             tempMsb.Value = (byte)(t >> 12);
+            // Console.WriteLine($"###### Inside Encode Temp , tempXlsb : 0x{tempXlsb.Value:X}, tempLsb : 0x{tempLsb.Value:X}, tempMsb : 0x{tempMsb.Value:X}");
         }
 
         private void EncodePressure()
@@ -272,6 +296,7 @@ namespace Antmicro.Renode.Peripherals.I2C
             pressXlsb.Value = (byte)((p & 0x0F) << 4);
             pressLsb.Value = (byte)(p >> 4);
             pressMsb.Value = (byte)(p >> 12);
+            // Console.WriteLine($"###### Inside Encode Pressure , pressXlsb : 0x{pressXlsb.Value:X}, pressLsb : 0x{pressLsb.Value:X}, pressMsb : 0x{pressMsb.Value:X}");
         }
 
         private void EncodeHumidity()
@@ -279,9 +304,10 @@ namespace Antmicro.Renode.Peripherals.I2C
             const ushort h0 = 20650;
             const ushort h100 = 38550;
             ushort h = (ushort)(h0 + (h100 - h0) * Humidity / 100);
-
+            // Console.WriteLine($"###### Inside Encode Humidity , value of Humidity is : {Humidity}");
             humLsb.Value = (byte)h;
             humMsb.Value = (byte)(h >> 8);
+            // Console.WriteLine($"###### Inside Encode Humidity , humLsb : 0x{humLsb.Value:X}, humMsb : 0x{humMsb.Value:X}");
         }
 
         private State state;
