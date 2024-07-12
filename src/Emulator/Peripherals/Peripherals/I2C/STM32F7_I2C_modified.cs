@@ -49,6 +49,7 @@ namespace Antmicro.Renode.Peripherals.I2C
             EventInterrupt.Unset();
             ErrorInterrupt.Unset();
             masterMode = false;
+            readStatusRegisterFlag = false;
         }
 
         public void Write(byte[] data)
@@ -363,22 +364,32 @@ namespace Antmicro.Renode.Peripherals.I2C
             if(isReadTransfer.Value)
             {
                 transmitInterruptStatus = false;
-                // var data = currentSlave.Read((int)bytesToTransfer.Value);
-                int size = (int)bytesToTransfer.Value;
-                var data = new byte[size];
-        
-                // Fill the array with hardcoded values (or a pattern)
-                for(int i = 0; i < size; i++)
-                {
-                    // data[i] = (byte)(i % 256); // Example pattern, replace with your desired values
-                     data[i] = 0xDA;
-                }
 
-                foreach(var item in data)
+                if(readStatusRegisterFlag)
                 {
-                    // Console.WriteLine($"^^^^Data read from slave 0x{item:X}");
-                    rxData.Enqueue(item);
+                    // If the last written value to txData was 0xF3, return 0x00
+                    rxData.Enqueue(0x00);
+                    readStatusRegisterFlag = false;
                 }
+                // var data = currentSlave.Read((int)bytesToTransfer.Value);
+                else {
+                        int size = (int)bytesToTransfer.Value;
+                        var data = new byte[size];
+        
+                        // Fill the array with hardcoded values (or a pattern)
+                        for(int i = 0; i < size; i++)
+                        {
+                            // data[i] = (byte)(i % 256); // Example pattern, replace with your desired values
+                            data[i] = 0xDA;
+                        }
+
+                        foreach(var item in data)
+                        {
+                            // Console.WriteLine($"^^^^Data read from slave 0x{item:X}");
+                            rxData.Enqueue(item);
+                        }
+                    }
+              
             }
             else
             {
@@ -429,6 +440,14 @@ namespace Antmicro.Renode.Peripherals.I2C
             //     this.Log(LogLevel.Warning, "Trying to send byte {0} to an unknown slave with address {1}.", newValue, currentSlaveAddress);
             //     return;
             // }
+            byte reg_val = (byte)(newValue);
+            // txData.Enqueue((byte)newValue);
+            if(reg_val==0xF3){
+                readStatusRegisterFlag = true;
+            }
+            else{
+                readStatusRegisterFlag = false;
+            }
             txData.Enqueue((byte)newValue);
             if(txData.Count == (int)bytesToTransfer.Value)
             {
@@ -512,6 +531,8 @@ namespace Antmicro.Renode.Peripherals.I2C
         private bool transferOutgoing;
         private bool transmitInterruptStatus;
         private bool masterMode;
+
+        private bool readStatusRegisterFlag;
 
         private enum Registers
         {
