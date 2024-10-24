@@ -444,6 +444,7 @@ namespace Antmicro.Renode.Core
         {
             lock(pausingSync)
             {
+                // Console.WriteLine("\n^^^^^^^^^^^^^^PAUSE machine.cs^^^^^^^^^^^^\n");
                 switch(state)
                 {
                 case State.Paused:
@@ -1555,6 +1556,7 @@ namespace Antmicro.Renode.Core
 
         private void Resume()
         {
+            // Console.WriteLine("\n^^^^^^^^^^^^^^Resume machine.cs^^^^^^^^^^^^\n");
             lock(pausingSync)
             {
                 (LocalTimeSource as SlaveTimeSource)?.Resume();

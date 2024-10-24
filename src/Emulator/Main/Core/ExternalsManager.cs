@@ -166,6 +166,7 @@ namespace Antmicro.Renode.Core
 
         public void Pause()
         {
+            // Console.WriteLine("\n^^^^^^^^^^^^^^PAUSE externalManer.cs^^^^^^^^^^^^\n");
             lock(externals)
             {
                 if(paused)

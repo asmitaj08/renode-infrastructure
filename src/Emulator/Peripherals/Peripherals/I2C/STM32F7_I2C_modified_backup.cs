@@ -14,7 +14,7 @@ using Antmicro.Renode.Logging;
 using Antmicro.Renode.Peripherals.Bus;
 using Antmicro.Renode.Utilities;
 using System.IO;
-// using Newtonsoft.Json; // need to fix this for handling json configs
+// using Newtonsoft.Json; // need to fix this for handling json config
 
 namespace Antmicro.Renode.Peripherals.I2C
 {
@@ -22,31 +22,31 @@ namespace Antmicro.Renode.Peripherals.I2C
     {
         public STM32F7_I2C_modified(IMachine machine) : base(machine)
         {
-            // Console.WriteLine($"%%% Inside stm32f7_I2C constructor");
+            Console.WriteLine($"%%% Inside stm32f7_I2C constructor");
             EventInterrupt = new GPIO();
             ErrorInterrupt = new GPIO();
             registers = CreateRegisters();
             configValues = LoadConfiguration("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/sensor_config_files/test_config"); // Load configuration file
-            // random = new Random(); // We don't need it later once we integrate the mutated data provided by LibAFL fuzzer
+            random = new Random();
             // LoadSensorConfig("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/ensor_config_files/test_config"); // Load the config file here.
             Reset();
         }
 
         public uint ReadDoubleWord(long offset)
         {
-            // Console.WriteLine($"%%% Inside stm32f7_I2C readDouble(), offset : 0x{offset:X}, read_val : 0x{registers.Read(offset):X}");
+            Console.WriteLine($"%%% Inside stm32f7_I2C readDouble(), offset : 0x{offset:X}, read_val : 0x{registers.Read(offset):X}");
             return registers.Read(offset);
         }
 
         public void WriteDoubleWord(long offset, uint value)
         {
-            // Console.WriteLine($"%%% Inside stm32f7_I2C writeDouble(), offset : 0x{offset:X}, value : 0x{value:X}");
+            Console.WriteLine($"%%% Inside stm32f7_I2C writeDouble(), offset : 0x{offset:X}, value : 0x{value:X}");
             registers.Write(offset, value);
         }
 
         public override void Reset()
         {
-            // Console.WriteLine("%% Inside stm32f7_I2C Reset()");
+            Console.WriteLine("%% Inside stm32f7_I2C Reset()");
             registers.Reset();
             txData = new Queue<byte>();
             rxData = new Queue<byte>();
@@ -57,7 +57,6 @@ namespace Antmicro.Renode.Peripherals.I2C
             masterMode = false;
             state = State.Idle;
             selectedRegister = 0x0;
-            // general_fuzz_data = 0xaa;
             // readStatusRegisterFlag = false;
         }
 
@@ -65,7 +64,7 @@ namespace Antmicro.Renode.Peripherals.I2C
         {
             // RM0444 Rev 5, p.991/1390
             // "0: Write transfer, slave enters receiver mode."
-            // Console.WriteLine($"@@@@@@@@2 Inside stm32f7_I2C WriteByte(), data : {data}");
+            Console.WriteLine($"@@@@@@@@2 Inside stm32f7_I2C WriteByte(), data : {data}");
             transferOutgoing = false;
 
             rxData.EnqueueRange(data);
@@ -73,7 +72,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public byte[] Read(int count = 1)
         {
-            // Console.WriteLine($"@@@@@@@@@ Inside stm32f7_I2C ReadByte(), count : {count}");
+            Console.WriteLine($"@@@@@@@@@ Inside stm32f7_I2C ReadByte(), count : {count}");
             if(!addressMatched.Value)
             {
                 // Note 1:
@@ -114,13 +113,8 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public void FinishTransmission()
         {
-            // Console.WriteLine("%%%%Iside stm32f7_i2c_ finish transmission");
+            Console.WriteLine("%%%%Iside stm32f7_i2c_ finish transmission");
             
-        }
-
-        public void ReadFromFuzzer(byte[] data){
-                general_fuzz_data = data[0];
-                Console.WriteLine($"%%%%Inside stm32f7_i2c_ ReadFromFuzzer : data read {data}, {general_fuzz_data}");
         }
 
         public long Size { get { return 0x400; } }
@@ -135,7 +129,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private DoubleWordRegisterCollection CreateRegisters()
         {
-            // Console.WriteLine("%% Inside stm32f7_I2C CreateRegisters()");
+            Console.WriteLine("%% Inside stm32f7_I2C CreateRegisters()");
             var map = new Dictionary<long, DoubleWordRegister> { {
                     (long)Registers.Control1, new DoubleWordRegister(this)
                         .WithFlag(0, writeCallback: PeripheralEnabledWrite, name: "PE")
@@ -340,7 +334,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private void ExtendTransfer()
         {
-            // Console.WriteLine("%%%%%%Inside stm32f7_i2c extend transfer");
+            Console.WriteLine("%%%%%%Inside stm32f7_i2c extend transfer");
             //in case of reads we can fetch data from peripheral immediately, but in case of writes we have to wait until something is written to TXDATA
             if(isReadTransfer.Value)
             {
@@ -360,14 +354,13 @@ namespace Antmicro.Renode.Peripherals.I2C
                     if (configValues.TryGetValue(selectedRegister, out var value))
                     {
                         // data[i] = Convert.ToByte(value, 16);
-                        rxData.Enqueue(value);// hardcoded value in hex for offset present in config file
+                        rxData.Enqueue(Convert.ToByte(value, 16));// hardcoded value in hex for offset present in config file
                     }
                     else{
                         // data[i] = (byte)random.Next(0, 256);
                         // rxData.Enqueue((byte)random.Next(0, 256)); // else random value
-                        // var randomValue = (byte)random.Next(0, 256);
-                        // rxData.Enqueue(randomValue); // else random value
-                        rxData.Enqueue(general_fuzz_data);
+                        var randomValue = (byte)random.Next(0, 256);
+                        rxData.Enqueue(randomValue); // else random value
                     }
                     selectedRegister++;
                 }
@@ -382,7 +375,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private void StartTransfer()
         {
-            // Console.WriteLine("%%%%%%Inside stm32f7_i2c start transfer");
+            Console.WriteLine("%%%%%%Inside stm32f7_i2c start transfer");
             masterMode = true;
             transferComplete.Value = false;
 
@@ -391,7 +384,7 @@ namespace Antmicro.Renode.Peripherals.I2C
             rxData.Clear();
             //This is kinda volatile. If we change slaveAddress setting to a callback action, it might not be set at this moment.
             currentSlaveAddress = (int)(use10BitAddressing.Value ? slaveAddress.Value : ((slaveAddress.Value >> 1) & 0x7F));
-            // Console.WriteLine($"%%%%%%Inside stm32f7_i2c start transfer. slave address {currentSlaveAddress}");
+            Console.WriteLine($"%%%%%%Inside stm32f7_i2c start transfer. slave address {currentSlaveAddress}");
             // if(!TryGetByAddress(currentSlaveAddress, out currentSlave))
             // {
             //     this.Log(LogLevel.Warning, "Unknown slave at address {0}.", currentSlaveAddress);
@@ -430,30 +423,28 @@ namespace Antmicro.Renode.Peripherals.I2C
             // }
             if(isReadTransfer.Value)
             {
-                // Console.WriteLine($"%%%%Inside stm32f7_i2c_ start transfer : isReadTransfer.Value true, count : {(int)bytesToTransfer.Value}");
+                Console.WriteLine($"%%%%Inside stm32f7_i2c_ start transfer : isReadTransfer.Value true, count : {(int)bytesToTransfer.Value}");
                 transmitInterruptStatus = false;
                 // var data = currentSlave.Read((int)bytesToTransfer.Value);
                 int bytesToTransfer_count = (int)bytesToTransfer.Value;
                 for(int i = 0; i < bytesToTransfer_count; i++)
                 {   
-                    // Console.WriteLine($"selected reg : 0x{selectedRegister:X}");
+                    Console.WriteLine($"selected reg : {selectedRegister}");
                     if (configValues.TryGetValue(selectedRegister, out var value))
                     {
-                        Console.WriteLine($"selected reg : 0x{selectedRegister:X} found in config, value : 0x{value:X}");
+                        Console.WriteLine($"selected reg : {selectedRegister} found in config, value : {value}");
                         // data[i] = Convert.ToUInt32(value, 16);
-                        rxData.Enqueue(value);// hardcoded value in hex for offset present in config file
-                        // Console.WriteLine("rxData Enqueued !!");
+                        rxData.Enqueue(Convert.ToByte(value, 16));// hardcoded value in hex for offset present in config file
+                        Console.WriteLine("rxData Enqueued !!");
                     }
                     else{
-                        // Console.WriteLine($"selected reg : 0x{selectedRegister:X} not found in config , assigning random");
+                        Console.WriteLine($"selected reg : {selectedRegister} not found in config , assigning random");
                         // data[i] = (uint)random.Next(0, 256);
-                        // var randomValue = (byte)random.Next(0, 256);
-                        // Console.WriteLine($"Random value : {randomValue}");
-                        // rxData.Enqueue(randomValue); // else random value
+                        var randomValue = (byte)random.Next(0, 256);
+                        Console.WriteLine($"Random value : {randomValue}");
+                        rxData.Enqueue(randomValue); // else random value
                         // rxData.Enqueue(0xAA);
-                        Console.WriteLine($"selected reg : 0x{selectedRegister:X} not found in config, Fuzz data being sent : 0x{general_fuzz_data:X}");
-                        rxData.Enqueue(general_fuzz_data);
-                        // Console.WriteLine("rxData Enqueued !!!");
+                        Console.WriteLine("rxData Enqueued !!!");
                     }
                     selectedRegister++;
                 }
@@ -471,7 +462,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private void StopTransfer()
         {
-            // Console.WriteLine("%%%%Iside stm32f7_i2c_ stop transfer");
+            Console.WriteLine("%%%%Iside stm32f7_i2c_ stop transfer");
             masterMode = false;
             stopDetection.Value = true;
             // currentSlave?.FinishTransmission();
@@ -488,7 +479,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private uint ReceiveDataRead(uint oldValue)
         {
-            // Console.WriteLine("%%%%Iside stm32f7_i2c_receivedDataRead");
+            Console.WriteLine("%%%%Iside stm32f7_i2c_receivedDataRead");
             if(rxData.Count > 0)
             {
                 var value = rxData.Dequeue();
@@ -516,7 +507,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private void MasterTransmitDataWrite(uint oldValue, uint newValue)
         {
-            // Console.WriteLine($"%%%%Iside stm32f7_i2c_masterTransmitDataWrite : bytes to transfer : {(int)bytesToTransfer.Value}");
+            Console.WriteLine($"%%%%Iside stm32f7_i2c_masterTransmitDataWrite : bytes to transfer : {(int)bytesToTransfer.Value}");
             // if(currentSlave == null)
             // {
             //     this.Log(LogLevel.Warning, "Trying to send byte {0} to an unknown slave with address {1}.", newValue, currentSlaveAddress);
@@ -531,24 +522,24 @@ namespace Antmicro.Renode.Peripherals.I2C
                 // state = State.Idle; // added in FinishTransmission
                 foreach(var b in txData.ToArray())
                 {
-                    // Console.WriteLine($"** stm32f7_i2c_masterTransmitDataWrite : write to sensor, data : 0x{b:X}, state : {state}");
+                    Console.WriteLine($"** stm32f7_i2c_masterTransmitDataWrite : write to sensor, data : 0x{b:X}, state : {state}");
 
                     switch(state) // Do I need to check these states, or shall i don't care about what the MCU is writing to the sensor ?
                     {   
                     case State.Idle:
                         selectedRegister = b;
-                        // Console.WriteLine($"** stm32f7_i2c_masterTransmitDataWrite : write to sensor, data : 0x{b:X}, state : {state}");
+                        Console.WriteLine($"** stm32f7_i2c_masterTransmitDataWrite : write to sensor, data : 0x{b:X}, state : {state}");
                         state = State.ReceivedFirstByte;
                         break;
                     case State.ReceivedFirstByte:
                     case State.WritingWaitingForValue:
-                        // Console.WriteLine($"** stm32f7_i2c_masterTransmitDataWrite : write to sensor, data : 0x{b:X}, state : {state}");
+                        Console.WriteLine($"** stm32f7_i2c_masterTransmitDataWrite : write to sensor, data : 0x{b:X}, state : {state}");
                         // RegistersCollection.Write((byte)selectedRegister, b); //bme280 have 256 addressable registers the same as byte max value
                         data_val = b;
                         state = State.WaitingForAddress;
                         break;
                     case State.WaitingForAddress:
-                        // Console.WriteLine($"** stm32f7_i2c_masterTransmitDataWrite : write to sensor, data : 0x{b:X}, state : {state}");
+                        Console.WriteLine($"** stm32f7_i2c_masterTransmitDataWrite : write to sensor, data : 0x{b:X}, state : {state}");
                         selectedRegister = b;
                         state = State.WritingWaitingForValue;
                         break;
@@ -559,7 +550,7 @@ namespace Antmicro.Renode.Peripherals.I2C
                     }
                     if(selectedRegister == resetAddrSensor && data_val == resetRequestVal)
                     {
-                        // Console.WriteLine("Reset request for sensor");
+                        Console.WriteLine("Reset request for sensor");
                         state = State.Idle;
                     }
                 }
@@ -584,16 +575,16 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private void SlaveTransmitDataWrite(uint oldValue, uint newValue)
         {
-            // Console.WriteLine("%%%%Inside stm32f7_i2c_ slaveTransmitDataWrite");
+            Console.WriteLine("%%%%Inside stm32f7_i2c_ slaveTransmitDataWrite");
             txData.Enqueue((byte)newValue);
         }
 
         private void SetTransferCompleteFlags()
         {
-            // Console.WriteLine("%%%%Inside stm32f7_i2c_ SetTransferCompleteFlags");
+            Console.WriteLine("%%%%Inside stm32f7_i2c_ SetTransferCompleteFlags");
             if(!autoEnd.Value && !reload.Value)
             {
-                // Console.WriteLine($"no autoEnd.Value, state = {state}");
+                Console.WriteLine($"no autoEnd.Value, state = {state}");
                 transferComplete.Value = true;
             }
             if(autoEnd.Value)
@@ -615,12 +606,12 @@ namespace Antmicro.Renode.Peripherals.I2C
             }
             if(reload.Value)
             {
-                // Console.WriteLine($"@@@@@@@no autoEnd.Value, state = {state}");
+                Console.WriteLine($"@@@@@@@no autoEnd.Value, state = {state}");
                 transferCompleteReload.Value = true;
             }
             else
             {
-                // Console.WriteLine($"****no autoEnd.Value, state = {state}");
+                Console.WriteLine($"****no autoEnd.Value, state = {state}");
                 transmitInterruptStatus = false; //this is a guess based on a driver
             }
             state = State.Idle;
@@ -629,7 +620,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private void Update()
         {
-            // Console.WriteLine("%%%%Inside stm32f7_i2c_update");
+            Console.WriteLine("%%%%Inside stm32f7_i2c_update");
             var value = (transferCompleteInterruptEnabled.Value && (transferCompleteReload.Value || transferComplete.Value))
                 || (transferInterruptEnabled.Value && transmitInterruptStatus)
                 || (receiveInterruptEnabled.Value && isReadTransfer.Value && rxData.Count > 0) //RXNE is calculated dynamically
@@ -639,26 +630,14 @@ namespace Antmicro.Renode.Peripherals.I2C
             EventInterrupt.Set(value);
         }
         //Dictionary with value specific to sensor offset, the value at offset could be hardcoded (liek chip id, status, etc) or marked as 'F' that is to be fuzzed
-        // private Dictionary<long, string> LoadConfiguration(string filePath) 
-        // {
-        //     var config = new Dictionary<long, string>();
-        //     foreach (var line in File.ReadAllLines(filePath))
-        //     {
-        //         var parts = line.Split('=');
-        //         var offset = Convert.ToInt64(parts[0], 16);  // Parse offset in hex
-        //         config[offset] = parts[1];  // Store the value (hex or 'F'(for fuzzing)) , currently only storing the offset addr whose value has to be hardcoded
-        //     }
-        //     return config;
-        // }
-        private Dictionary<byte, byte> LoadConfiguration(string filePath) 
+        private Dictionary<long, string> LoadConfiguration(string filePath) 
         {
-            var config = new Dictionary<byte, byte>();
+            var config = new Dictionary<long, string>();
             foreach (var line in File.ReadAllLines(filePath))
             {
                 var parts = line.Split('=');
-                var offset = Convert.ToByte(parts[0], 16);
-                var val = Convert.ToByte(parts[1], 16);  // Parse offset in hex
-                config[offset] = val;  // Store the value (hex or 'F'(for fuzzing)) , currently only storing the offset addr whose value has to be hardcoded
+                var offset = Convert.ToInt64(parts[0], 16);  // Parse offset in hex
+                config[offset] = parts[1];  // Store the value (hex or 'F'(for fuzzing)) , currently only storing the offset addr whose value has to be hardcoded
             }
             return config;
         }
@@ -713,8 +692,8 @@ namespace Antmicro.Renode.Peripherals.I2C
             TransmitData = 0x28
         }
 
-        private Dictionary<byte, byte> configValues; // To store configuration from the file.
-        // private Random random;
+        private Dictionary<long, string> configValues; // To store configuration from the file.
+        private Random random;
         private byte selectedRegister;
 
         private enum State
@@ -727,11 +706,8 @@ namespace Antmicro.Renode.Peripherals.I2C
         }
 
         private State state;
-
-        private byte general_fuzz_data = 0x44;
         private const byte resetRequestVal = 0xB6; // change as per sensor datasheet
         private const byte resetAddrSensor = 0xE0; // change as per sensor datasheet
-
 
         // private bool readStatusRegisterFlag;
 

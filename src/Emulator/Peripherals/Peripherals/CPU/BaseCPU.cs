@@ -386,6 +386,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected override void OnResume()
         {
+            // Console.WriteLine("\n^^^^^^^^^^^^^^RESUME baseCPU.cs^^^^^^^^^^^^\n");
             singleStepSynchronizer.Enabled = IsSingleStepMode;
             StartCPUThread();
         }
@@ -397,6 +398,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected virtual void RequestPause()
         {
+            // Console.WriteLine("\n^^^^^^^^^^^^^^PAUSE baseCPU.cs^^^^^^^^^^^^\n");
             lock(pauseLock)
             {
                 isPaused = true;

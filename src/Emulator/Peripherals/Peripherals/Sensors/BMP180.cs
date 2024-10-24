@@ -26,6 +26,7 @@ namespace Antmicro.Renode.Peripherals.Sensors
 
         public void Reset()
         {
+            Console.WriteLine("#### BMP180 Reset");
             RegistersCollection.Reset();
             registerAddress = 0;
             this.Log(LogLevel.Noisy, "Reset registers");
@@ -33,6 +34,7 @@ namespace Antmicro.Renode.Peripherals.Sensors
 
         public void Write(byte[] data)
         {
+            Console.WriteLine($"#### BMP180 Write, length : {data.Length}, {Misc.PrettyPrintCollectionHex(data)}");
             if(data.Length == 0)
             {
                 this.Log(LogLevel.Warning, "Unexpected write with no data");
@@ -47,6 +49,7 @@ namespace Antmicro.Renode.Peripherals.Sensors
                 // skip the first byte as it contains register address
                 foreach(var b in data.Skip(1))
                 {
+                    Console.WriteLine("#### BMP180 Writing 0x{0:X} to register {1} (0x{1:X})", b, registerAddress);
                     this.Log(LogLevel.Noisy, "Writing 0x{0:X} to register {1} (0x{1:X})", b, registerAddress);
                     RegistersCollection.Write((byte)registerAddress, b);
                 }
@@ -59,11 +62,13 @@ namespace Antmicro.Renode.Peripherals.Sensors
 
         public byte[] Read(int count)
         {
+            Console.WriteLine("#### BMP180 Reading {0} bytes from register {1} (0x{1:X})", count, registerAddress);
             this.Log(LogLevel.Noisy, "Reading {0} bytes from register {1} (0x{1:X})", count, registerAddress);
             var result = new byte[count];
             for(var i = 0; i < result.Length; i++)
             {
                 result[i] = RegistersCollection.Read((byte)registerAddress);
+                Console.WriteLine("#### BMP180 Read value {0} from register {1} (0x{1:X})", result[i], registerAddress);
                 this.Log(LogLevel.Noisy, "Read value {0} from register {1} (0x{1:X})", result[i], registerAddress);
                 RegistersAutoIncrement();
             }
@@ -72,6 +77,7 @@ namespace Antmicro.Renode.Peripherals.Sensors
 
         public void FinishTransmission()
         {
+            Console.WriteLine("#### BMP180 Finish Transmission");
         }
 
         public decimal Temperature
@@ -177,6 +183,7 @@ namespace Antmicro.Renode.Peripherals.Sensors
 
         private int GetUncompensatedTemperature()
         {
+            Console.WriteLine("#### BMP180 GetUncompensatedTemperature");
             ushort ac5 = (ushort)((coeffCalibB2.Value << 8) + coeffCalibB3.Value);
             ushort ac6 = (ushort)((coeffCalibB4.Value << 8) + coeffCalibB5.Value);
             short mc = (short)((coeffCalibBC.Value << 8) + coeffCalibBD.Value);
@@ -196,6 +203,7 @@ namespace Antmicro.Renode.Peripherals.Sensors
 
         private void HandleMeasurement()
         {
+            Console.WriteLine("#### BMP180 HandleMeasurement set {0}", (MeasurementModes)ctrlMeasurement.Value);
             this.Log(LogLevel.Noisy, "HandleMeasurement set {0}", (MeasurementModes)ctrlMeasurement.Value);
             switch((MeasurementModes)ctrlMeasurement.Value)
             {
@@ -216,6 +224,7 @@ namespace Antmicro.Renode.Peripherals.Sensors
             // Clear SCO bit (start of conversion)
             startConversion.Value = false;
             this.Log(LogLevel.Noisy, "Conversion is complete");
+            Console.WriteLine("#### BMP180 : HandleMeasurement : Conversion is complete");
         }
 
         private IFlagRegisterField startConversion;

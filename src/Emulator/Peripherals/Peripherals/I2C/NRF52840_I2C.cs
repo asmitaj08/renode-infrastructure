@@ -5,6 +5,7 @@
 // Full license text is available in 'licenses/MIT.txt'.
 //
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Antmicro.Renode.Core;
@@ -13,6 +14,7 @@ using Antmicro.Renode.Core.Structure.Registers;
 using Antmicro.Renode.Logging;
 using Antmicro.Renode.Peripherals.Bus;
 using Antmicro.Renode.Utilities;
+using System.IO;
 
 namespace Antmicro.Renode.Peripherals.I2C
 {
@@ -31,6 +33,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public override void Reset()
         {
+            Console.WriteLine("%%% Inside nrf Reset");
             slaveToMasterBuffer.Clear();
             masterToSlaveBuffer.Clear();
 
@@ -44,11 +47,13 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public uint ReadDoubleWord(long offset)
         {
+            // Console.WriteLine($"%%% Inside nrf ReadDoubleWord: 0x{offset:X} i.e. {(Registers)offset}");
             return RegistersCollection.Read(offset);
         }
 
         public void WriteDoubleWord(long offset, uint value)
         {
+            // Console.WriteLine($"%%% Inside nrf WriteDoubleWord: 0x{offset:X} i.e. {(Registers)offset}, val : 0x{value:X}");
             RegistersCollection.Write(offset, value);
         }
 
@@ -212,13 +217,20 @@ namespace Antmicro.Renode.Peripherals.I2C
                     {
                         case 0:
                             enabled = false;
+                            // Console.WriteLine("%%%%%%%%% Enable Reg 0x500 enabled false");
                             break;
 
                         case 5:
                             enabled = true;
+                            // Console.WriteLine("%%%%%%%%% Enable Reg 0x500 enabled true");
                             break;
 
+                        // case 6:
+                        //     enabled = true;
+                        //     Console.WriteLine("%%%%%%%%% case 6 : Enable Reg 0x500 enabled true");
+                        //     break;
                         default:
+                            // Console.WriteLine("%%%%%%%%% Enable Reg 0x500 enabled wrong val");
                             this.Log(LogLevel.Warning, "Wrong enabled value");
                             break;
                     }
@@ -250,6 +262,7 @@ namespace Antmicro.Renode.Peripherals.I2C
                 {
                     if(selectedSlave == null)
                     {
+                        // Console.WriteLine("%%%%% Inside nrf No slave is currently attached at selected address 0x{0:X}", address.Value);
                         this.Log(LogLevel.Warning, "No slave is currently attached at selected address 0x{0:X}", address.Value);
                         addressNackError.Value = true;
                         errorInterruptPending.Value = true;
@@ -258,6 +271,7 @@ namespace Antmicro.Renode.Peripherals.I2C
                     }
 
                     this.Log(LogLevel.Noisy, "Enqueuing byte 0x{0:X}", val);
+                    // Console.WriteLine("%%%% masterToSlaveBuffer Enqueuing byte 0x{0:X}", val);
                     masterToSlaveBuffer.Enqueue((byte)val);
 
                     txInterruptPending.Value = true;
@@ -280,6 +294,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private bool TryFillReceivedBuffer(bool generateInterrupt)
         {
+            // Console.WriteLine("%%%%TryFillReceivedBuffer");
             if(selectedSlave == null)
             {
                 return false;
@@ -306,9 +321,11 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private bool TryReadFromSlave(out byte b)
         {
+            // Console.WriteLine("%%%% Inside nrf Trying to read from slave ");
             if(!enabled)
             {
                 this.Log(LogLevel.Warning, "Tried to read data on a disabled controller");
+                // Console.WriteLine("%%%% Inside nrf Tried to read data on a disabled controller ");
                 b = 0;
                 return false;
             }
@@ -327,24 +344,29 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private bool TrySendDataToSlave()
         {
+            // Console.WriteLine("%%%% Inside nrf Trying to send data to slave ");
             if(!enabled)
             {
                 this.Log(LogLevel.Warning, "Tried to send data on a disabled controller");
+                // Console.WriteLine("%%%% Inside nrf Trying to send data to slave : Tried to send data on a disabled controller");
                 return false;
             }
 
             if(!masterToSlaveBuffer.Any())
             {
+                // Console.WriteLine("%%%% Inside nrf Trying to send data to slave : masterToSlaveBuffer.Any NOT true");
                 return false;
             }
 
             if(selectedSlave == null)
             {
+                // Console.WriteLine("%%%% Inside nrf Trying to send data to slave :No slave is currently attached at selected address");
                 this.Log(LogLevel.Warning, "No slave is currently attached at selected address 0x{0:X}", address.Value);
                 return false;
             }
 
             var data = masterToSlaveBuffer.DequeueAll();
+            // Console.WriteLine("Sending {0} bytes to the device 0x{1:X} with val :0x{2:X}", data.Length, address.Value, data);
             this.Log(LogLevel.Noisy, "Sending {0} bytes to the device {1}", data.Length, address.Value);
             selectedSlave.Write(data);
 
@@ -353,6 +375,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private void StopTransmission()
         {
+            // Console.WriteLine("%%%% Inside nrf StopTransmission");
             transmissionInProgress = false;
 
             // send out buffered data to slave;
@@ -370,6 +393,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private void UpdateInterrupts()
         {
+            // Console.WriteLine("%%%% Inside nrf UpdateInterrupts");
             var flag = false;
 
             flag |= txInterruptEnabled.Value && txInterruptPending.Value;
@@ -432,4 +456,3 @@ namespace Antmicro.Renode.Peripherals.I2C
         }
     }
 }
-

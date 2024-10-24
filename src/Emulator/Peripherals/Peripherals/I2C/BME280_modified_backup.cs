@@ -16,9 +16,9 @@ using Antmicro.Renode.Utilities;
 using System.IO;
 namespace Antmicro.Renode.Peripherals.I2C
 {
-    public class BME280 : II2CPeripheral, IProvidesRegisterCollection<ByteRegisterCollection>
+    public class BME280_modified : II2CPeripheral, IProvidesRegisterCollection<ByteRegisterCollection>
     {
-        public BME280()
+        public BME280_modified()
         {
             // Console.WriteLine("** Inside BME280 constructor");
             RegistersCollection = new ByteRegisterCollection(this);
@@ -28,7 +28,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public void Reset()
         {
-            // Console.WriteLine("** BME280 Reset");
+            Console.WriteLine("** BME280 Reset");
             RegistersCollection.Reset();
             selectedRegister = 0x0;
             EncodeTemperature();
@@ -76,14 +76,20 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public byte[] Read(int count = 0)
         {
-            Console.WriteLine($"** Inside BME280 Read(), BUFlEN : {count}");
+            // Console.WriteLine($"** Inside BME280 Read(), BUFlEN : {count}");
             state = State.Reading; //reading can be started regardless of state, last selectedRegister is used
             byte[] buf = new byte[count];
-
             for(int i = 0; i < buf.Length; i++)
             {
                 //bme280 have 256 addressable registers, byte covers them all and allows roll-over like in real hardware
-                buf[i] = RegistersCollection.Read((byte)selectedRegister);
+                // buf[i] = RegistersCollection.Read((byte)selectedRegister);
+                if (reg.Contains((byte)selectedRegister)){
+                      buf[i] = general_fuzz_data;
+                }
+                else {
+                    buf[i] = RegistersCollection.Read((byte)selectedRegister);
+                }
+                
                 Console.WriteLine($"** Inside BME280 Read(), selectedReg : {selectedRegister}, state : {state}, count : {count}, data: 0x{buf[i]:X}");
 
                 selectedRegister++;
@@ -95,7 +101,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public void FinishTransmission()
         {
-            Console.WriteLine("** BME280 FinishTransmission");
+            // Console.WriteLine("** BME280 FinishTransmission");
             if(state != State.ReceivedFirstByte) //in case of reading we may (documentation permits this or repeated START) receive STOP before the read transfer
             {
                 if(state == State.WritingWaitingForValue)
@@ -104,6 +110,10 @@ namespace Antmicro.Renode.Peripherals.I2C
                 }
                 state = State.Idle;
             }
+        }
+        public void ReadFromFuzzer(byte[] data){
+                general_fuzz_data = data[0];
+                // Console.WriteLine($"%%%%Inside BME280 ReadFromFuzzer : data read {data}, {general_fuzz_data}");
         }
 
         public double Temperature
@@ -309,7 +319,9 @@ namespace Antmicro.Renode.Peripherals.I2C
             humMsb.Value = (byte)(h >> 8);
             // Console.WriteLine($"###### Inside Encode Humidity , humLsb : 0x{humLsb.Value:X}, humMsb : 0x{humMsb.Value:X}");
         }
-
+        
+        private byte general_fuzz_data = 0xAA ;
+        private static List<byte> reg = new List<byte> { 0xFE, 0xFD, 0xFC,0xFB,0xFA,0xF9,0xF8,0xF7 };
         private State state;
         private Registers selectedRegister;
 

@@ -307,6 +307,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected override void RequestPause()
         {
+            // Console.WriteLine("\n^^^^^^^^^^^^^^PAUSE translationalcpu.cs^^^^^^^^^^^^\n");
             base.RequestPause();
             TlibSetReturnRequest();
         }
@@ -1078,6 +1079,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public void AddHook(ulong addr, Action<ICpuSupportingGdb, ulong> hook)
         {
+            // Console.WriteLine("\n^^^^^^^^^^^^^^^^^^^CPUADDHOOK Translational CPU^^^^^^^^^^^^^^^\n");
             lock(hooks)
             {
                 if(!hooks.ContainsKey(addr))

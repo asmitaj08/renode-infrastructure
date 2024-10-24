@@ -38,7 +38,7 @@ namespace Antmicro.Renode.Hooks
             InnerInit();
 
             Hook = (_, pc) =>
-            {  // Console.WriteLine($"Inside  BlockPythonEngine Hook");
+            {  //Console.WriteLine($"^^^^^^^^^^^^^^^^^^Inside  BlockPythonEngine Hook");
                 Scope.SetVariable("pc", pc);
                 Execute(code, error =>
                 {
@@ -48,7 +48,7 @@ namespace Antmicro.Renode.Hooks
 
             HookWithSize = (pc, size) =>
             {
-                // Console.WriteLine($"Inside  BlockPythonEngine HookWithSize");
+                // Console.WriteLine($"^^^^^^^^^^^^^^^^Inside  BlockPythonEngine HookWithSize");
                 Scope.SetVariable("pc", pc);
                 Scope.SetVariable("size", size);
                 covMapPtr = get_cov_map_ptr();

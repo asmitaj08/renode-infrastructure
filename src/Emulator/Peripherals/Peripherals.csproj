@@ -191,6 +191,7 @@
     <Compile Include="Peripherals\USBDeprecated\USBKeyboard.cs" />
     <Compile Include="Peripherals\I2C\EFM32GGI2CController.cs" />
     <Compile Include="Peripherals\Sensors\BMP180.cs" />
+    <Compile Include="Peripherals\Sensors\BMP180_modified.cs" />
     <Compile Include="Peripherals\I2C\BMA180.cs" />
     <Compile Include="Peripherals\I2C\SHT21.cs" />
     <Compile Include="Peripherals\I2C\BMC050.cs" />
@@ -608,6 +609,7 @@
     <Compile Include="Peripherals\Timers\EFR32xG2_BURTC.cs" />
     <Compile Include="Peripherals\I2C\SHT45.cs" />
     <Compile Include="Peripherals\I2C\BME280.cs" />
+    <Compile Include="Peripherals\I2C\BME280_modified.cs" />
     <Compile Include="Peripherals\I2C\MB85RC1MT.cs" />
     <Compile Include="Peripherals\Miscellaneous\Zynq7000_SystemLevelControlRegisters.cs" />
     <Compile Include="Peripherals\Timers\LPC_CTimer.cs" />

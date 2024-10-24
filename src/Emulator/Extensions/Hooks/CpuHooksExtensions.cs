@@ -16,6 +16,7 @@ namespace Antmicro.Renode.Hooks
     {
         public static void AddHook(this ICPUWithHooks cpu, [AutoParameter]Machine m, ulong addr, string pythonScript)
         {
+            // Console.WriteLine($"^^^^^^^^^^^^^^^^^^Inside  CPU Add Hook^^^^^^^^^^^^^^^^^^^^^^^^^^^");
             var engine = new BlockPythonEngine(m, cpu, pythonScript);
             cpu.AddHook(addr, engine.Hook);
         }
