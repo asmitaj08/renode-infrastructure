@@ -7,7 +7,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Antmicro.Renode.Core;
+using Antmicro.Renode.Exceptions;
 using Antmicro.Renode.Core.Structure;
 using Antmicro.Renode.Utilities;
 using Antmicro.Renode.Peripherals.CPU;
@@ -20,7 +22,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 {
     public interface IBusController: IPeripheralContainer<IBusPeripheral, BusRangeRegistration>, IPeripheralRegister<IKnownSize, BusPointRegistration>,
         IPeripheralRegister<ICPU, CPURegistrationPoint>, IPeripheralRegister<IBusPeripheral, BusMultiRegistration>, IPeripheralRegister<IPeripheral, NullRegistrationPoint>,
-        ICanLoadFiles, IPeripheral, IMultibyteWritePeripheral
+        IPeripheralRegister<IBusPeripheral, BusParametrizedRegistration>, ICanLoadFiles, IPeripheral, IMultibyteWritePeripheral
     {
         byte ReadByte(ulong address, ICPU context = null);
         void WriteByte(ulong address, byte value, ICPU context = null);
@@ -46,16 +48,22 @@ namespace Antmicro.Renode.Peripherals.Bus
         IBusRegistered<IBusPeripheral> WhatIsAt(ulong address, ICPU context = null);
         IPeripheral WhatPeripheralIsAt(ulong address, ICPU context = null);
 
+        bool IsAddressRangeLocked(Range range, ICPU context = null);
+        void SetAddressRangeLocked(Range range, bool locked, ICPU context = null);
+
         void SetPeripheralEnabled(IPeripheral peripheral, bool value);
         bool IsPeripheralEnabled(IPeripheral peripheral);
 
         IEnumerable<ICPU> GetCPUs();
-        int GetCPUId(ICPU cpu);
+        int GetCPUSlot(ICPU cpu);
         ICPU GetCurrentCPU();
+        IEnumerable<ICPU> GetAllContextKeys();
+        IEnumerable<IBusRegistered<IBusPeripheral>> GetRegisteredPeripherals(ICPU context = null);
+        IEnumerable<IBusRegistered<IBusPeripheral>> GetRegistrationsForPeripheralType<T>(ICPU context = null);
         bool TryGetCurrentCPU(out ICPU cpu);
 
         void UnregisterFromAddress(ulong address, ICPU context = null);
-        void MoveRegistrationWithinContext(IBusPeripheral peripheral, ulong newAddress, ICPU context, Func<IEnumerable<IBusRegistered<IBusPeripheral>>, IBusRegistered<IBusPeripheral>> selector = null);
+        void MoveRegistrationWithinContext(IBusPeripheral peripheral, BusRangeRegistration newRegistration, ICPU context, Func<IEnumerable<IBusRegistered<IBusPeripheral>>, IBusRegistered<IBusPeripheral>> selector = null);
 
         void AddWatchpointHook(ulong address, SysbusAccessWidth width, Access access, BusHookDelegate hook);
         void RemoveWatchpointHook(ulong address, BusHookDelegate hook);
@@ -66,20 +74,27 @@ namespace Antmicro.Renode.Peripherals.Bus
         void SetHookBeforePeripheralWrite<T>(IBusPeripheral peripheral, Func<T, long, T> hook, Range? subrange = null);
         void ClearHookAfterPeripheralRead<T>(IBusPeripheral peripheral);
 
-        string FindSymbolAt(ulong offset);
-        ulong GetSymbolAddress(string symbolName);
-        bool TryFindSymbolAt(ulong offset, out string name, out Symbol symbol);
+        string FindSymbolAt(ulong offset, ICPU context = null);
+
+        bool TryGetAllSymbolAddresses(string symbolName, out IEnumerable<ulong> symbolAddresses, ICPU context = null);
+        bool TryFindSymbolAt(ulong offset, out string name, out Symbol symbol, ICPU context = null);
         string DecorateWithCPUNameAndPC(string str);
 
         void MapMemory(IMappedSegment segment, IBusPeripheral owner, bool relative = true, ICPUWithMappedMemory context = null);
         IBusRegistered<MappedMemory> FindMemory(ulong address, ICPU context = null);
+        bool IsMemory(ulong address, ICPU context = null);
 
         void Tag(Range range, string tag, ulong defaultValue = 0, bool pausing = false);
 
         void ApplySVD(string path);
 
+        void LoadSymbolsFrom(IELF elf, bool useVirtualAddress = false, ulong? textAddress = null, ICPU context = null);
         void LoadUImage(ReadFilePath fileName, IInitableCPU cpu = null);
-        void LoadELF(ReadFilePath fileName, bool useVirtualAddress = false, bool allowLoadsOnlyToMemory = true, IInitableCPU cpu = null);
+
+        SymbolLookup GetLookup(ICPU context = null);
+
+        void EnableAllTranslations(bool enable = true);
+        void EnableAllTranslations(IBusPeripheral busPeripheral, bool enable = true);
 
         IMachine Machine { get; }
 
@@ -87,7 +102,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         Endianess Endianess { get; }
 
-        SymbolLookup Lookup { get; }
+        event Action<IMachine> OnSymbolsChanged;
     }
 
     public static class BusControllerExtensions
@@ -102,9 +117,65 @@ namespace Antmicro.Renode.Peripherals.Bus
             bus.SetPeripheralEnabled(peripheral, false);
         }
 
+        public static void MoveBusMultiRegistrationWithinContext(this IBusController bus, IBusPeripheral peripheral, BusMultiRegistration newRegistration, ICPU cpu)
+        {
+            var regionName = newRegistration.ConnectionRegionName;
+            bus.MoveRegistrationWithinContext(peripheral, newRegistration, cpu,
+                selector: busRegisteredEnumerable =>
+                {
+                    return busRegisteredEnumerable.Where(
+                            busRegistered => (busRegistered.RegistrationPoint is BusMultiRegistration multiRegistration) && multiRegistration.ConnectionRegionName == regionName
+                        ).Single();
+                }
+            );
+        }
+
         public static void ZeroRange(this IBusController bus, long from, long size, ICPU context = null)
         {
             bus.ZeroRange(from.By(size), context);
+        }
+
+        public static ulong GetSymbolAddress(this IBusController bus, string symbolName, int index, ICPU context = null)
+        {
+            if(!bus.TryGetAllSymbolAddresses(symbolName, out var addressesEnumerable, context))
+            {
+                throw new RecoverableException($"Could not find any address for symbol: {symbolName}");
+            }
+            var addresses = addressesEnumerable.ToArray();
+            if(index < 0 || index >= addresses.Length)
+            {
+                var msg = (addresses.Length == 1)
+                    ? "there is only one address"
+                    : "there are only {addresses.Length} addresses";
+
+                throw new RecoverableException($"Wrong index {index}: {msg} (0-based index) for '{symbolName}'");
+            }
+            return addresses[index];
+        }
+
+        public static ulong GetSymbolAddress(this IBusController bus, string symbolName, ICPU context = null)
+        {
+            if(!bus.TryGetAllSymbolAddresses(symbolName, out var addressesEnumerable, context))
+            {
+                throw new RecoverableException($"Could not find any address for symbol: {symbolName}");
+            }
+            var addresses = addressesEnumerable.ToArray();
+            if(addresses.Length != 1)
+            {
+                throw new RecoverableException($"Found {addresses.Length} possible addresses for the symbol. Select which one you're interested in by providing a 0-based index or use the `GetAllSymbolAddresses` method");
+            }
+            return addresses[0];
+        }
+
+        // Specifying `textAddress` will override the address of the program text - the symbols will be applied
+        // as if the first loaded segment started at the specified address. This is equivalent to the ADDR parameter
+        // to GDB's add-symbol-file.
+        public static void LoadSymbolsFrom(this IBusController bus, ReadFilePath fileName, bool useVirtualAddress = false, ulong? textAddress = null, ICPU context = null)
+        {
+            using(var elf = ELFUtils.LoadELF(fileName))
+            {
+                bus.LoadSymbolsFrom(elf, useVirtualAddress, textAddress, context);
+            }
         }
     }
 }

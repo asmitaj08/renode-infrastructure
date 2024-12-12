@@ -6,32 +6,41 @@
 //
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using Antmicro.Renode.Core;
-using Antmicro.Renode.Core.Structure;
 using Antmicro.Renode.Core.Structure.Registers;
+using Antmicro.Renode.Core.Structure;
+using Antmicro.Renode.Exceptions;
 using Antmicro.Renode.Logging;
 using Antmicro.Renode.Peripherals.Bus;
+using Antmicro.Renode.Peripherals.I2C;
+using Antmicro.Renode.Peripherals.SPI;
 using Antmicro.Renode.Peripherals.UART;
 using Antmicro.Renode.Time;
-using Antmicro.Renode.Peripherals.SPI;
 using Antmicro.Renode.Utilities;
+using Antmicro.Migrant;
 
 namespace Antmicro.Renode.Peripherals.SCI
 {
     // Due to unusual register offsets we cannot use address translations
-    public class RenesasRA6M5_SCI : NullRegistrationPointPeripheralContainer<ISPIPeripheral>, IUART, IWordPeripheral, IBytePeripheral, IProvidesRegisterCollection<WordRegisterCollection>, IKnownSize
+    public class RenesasRA6M5_SCI : NullRegistrationPointPeripheralContainer<ISPIPeripheral>, IUART, IWordPeripheral, IBytePeripheral, IProvidesRegisterCollection<WordRegisterCollection>, IKnownSize,
+        IPeripheralContainer<IUART, NullRegistrationPoint>, IPeripheralContainer<II2CPeripheral, NumberRegistrationPoint<int>>
     {
-        public RenesasRA6M5_SCI(IMachine machine, ulong frequency, bool enableManchesterMode, bool enableFIFO) : base(machine)
+        public RenesasRA6M5_SCI(IMachine machine, ulong frequency, bool enableManchesterMode, bool enableFIFO, bool fullModel = true) : base(machine)
         {
             this.machine = machine;
             this.frequency = frequency;
+            i2cContainer = new SimpleContainerHelper<II2CPeripheral>(machine, this);
             ReceiveIRQ = new GPIO();
             TransmitIRQ = new GPIO();
             TransmitEndIRQ = new GPIO();
             receiveQueue = new Queue<ushort>();
+            iicTransmitQueue = new Queue<byte>();
             RegistersCollection = new WordRegisterCollection(this);
 
-            DefineRegisters(enableManchesterMode, enableFIFO);
+            DefineRegisters(enableManchesterMode, enableFIFO, fullModel);
+            Size = fullModel ? 0x100 : 0x20;
             Reset();
         }
 
@@ -66,12 +75,50 @@ namespace Antmicro.Renode.Peripherals.SCI
             fifoMode = false;
             manchesterMode = false;
             receiveQueue.Clear();
+            iicTransmitQueue.Clear();
 
             ReceiveIRQ.Unset();
             TransmitIRQ.Unset();
             TransmitEndIRQ.Unset();
             RegistersCollection.Reset();
+            peripheralMode = PeripheralMode.UART;
         }
+
+        public void Register(IUART peripheral, NullRegistrationPoint registrationPoint)
+        {
+            if(registeredUartPeripheral != null)
+            {
+                throw new RegistrationException($"UART peripheral alredy registered");
+            }
+
+            machine.RegisterAsAChildOf(this, peripheral, registrationPoint);
+
+            CharReceived += peripheral.WriteChar;
+            peripheral.CharReceived += WriteChar;
+
+            registeredUartPeripheral = peripheral;
+        }
+
+        public void Unregister(IUART peripheral)
+        {
+            CharReceived -= peripheral.WriteChar;
+            peripheral.CharReceived -= WriteChar;
+
+            registeredUartPeripheral = null;
+        }
+
+        public IEnumerable<NullRegistrationPoint> GetRegistrationPoints(IUART peripheral)
+        {
+            return registeredUartPeripheral != null ?
+                new[] { NullRegistrationPoint.Instance } :
+                Enumerable.Empty<NullRegistrationPoint>();
+        }
+
+        public virtual void Register(II2CPeripheral peripheral, NumberRegistrationPoint<int> registrationPoint) => i2cContainer.Register(peripheral, registrationPoint);
+
+        public virtual void Unregister(II2CPeripheral peripheral) => i2cContainer.Unregister(peripheral);
+
+        public IEnumerable<NumberRegistrationPoint<int>> GetRegistrationPoints(II2CPeripheral peripheral) => i2cContainer.GetRegistrationPoints(peripheral);
 
         public bool IsDataReadyFIFO { get => (ulong)receiveQueue.Count < receiveFIFOTriggerCount.Value; }
 
@@ -81,7 +128,7 @@ namespace Antmicro.Renode.Peripherals.SCI
         public bool IsReceiveDataFull { get => receiveQueue.Count > 0; }
 
         public WordRegisterCollection RegistersCollection { get; }
-        
+
         public GPIO ReceiveIRQ { get; }
 
         public GPIO TransmitIRQ { get; }
@@ -101,22 +148,171 @@ namespace Antmicro.Renode.Peripherals.SCI
 
         public Parity ParityBit => parityEnabled.Value ? parityBit : Parity.None;
 
-        public long Size => 0x20;
+        public long Size { get; }
 
+        IEnumerable<IRegistered<IUART, NullRegistrationPoint>> IPeripheralContainer<IUART, NullRegistrationPoint>.Children
+        {
+            get => registeredUartPeripheral != null ?
+                new [] { Registered.Create(registeredUartPeripheral, NullRegistrationPoint.Instance) } :
+                Enumerable.Empty<IRegistered<IUART, NullRegistrationPoint>>();
+        }
+
+        IEnumerable<IRegistered<II2CPeripheral, NumberRegistrationPoint<int>>> IPeripheralContainer<II2CPeripheral, NumberRegistrationPoint<int>>.Children =>
+            i2cContainer.Children;
+
+        [field: Transient]
         public event Action<byte> CharReceived;
 
         private void UpdateInterrupts()
         {
+            if(peripheralMode == PeripheralMode.IIC)
+            {
+                UpdateInterruptsInIICMode();
+                return;
+            }
             var rxState = receiveInterruptEnabled.Value && (fifoMode ? IsReceiveFIFOFull : IsReceiveDataFull);
             var txState = transmitInterruptEnabled.Value && (fifoMode ? transmitFIFOEmpty.Value : true);
             var teState = transmitEndInterruptEnabled.Value;
+
             this.DebugLog("ReceiveIRQ: {0}, TransmitIRQ: {1}, TransmitEndIRQ: {2}.", rxState ? "set" : "unset", txState ? "set" : "unset", teState ? "set" : "unset");
-            ReceiveIRQ.Set(rxState);
-            TransmitIRQ.Set(txState);
+            if(rxState)
+            {
+                ReceiveIRQ.Blink();
+            }
+            if(txState)
+            {
+                TransmitIRQ.Blink();
+            }
+            if(teState)
+            {
+                TransmitEndIRQ.Blink();
+            }
+        }
+
+        private void UpdateInterruptsInIICMode()
+        {
+            // This does not update the Transmit/Receive interrupts, as there are not status flags in this mode and they are expected just to blink
+            bool teState = transmitEndInterruptEnabled.Value && conditionCompletedFlag.Value;
+            this.DebugLog("TransmitEndIRQ: {0}.", teState ? "set" : "unset");
+
             TransmitEndIRQ.Set(teState);
         }
 
-        private void DefineRegisters(bool enableManchesterMode, bool enableFIFO)
+        private void BlinkTxIRQ()
+        {
+            Debug.Assert(peripheralMode == PeripheralMode.IIC);
+
+            if(transmitInterruptEnabled.Value)
+            {
+                TransmitIRQ.Blink();
+            }
+        }
+
+        private void FlushIICTransmitQueue()
+        {
+            if(iicTransmitQueue.Count != 0)
+            {
+                selectedIICSlave.Write(iicTransmitQueue.ToArray());
+                iicTransmitQueue.Clear();
+            }
+        }
+
+        private void EmulateIICStartStopCondition(IICCondition condition)
+        {
+            conditionCompletedFlag.Value = true;
+            transmitEnd.Value = true;
+            if(condition == IICCondition.Stop)
+            {
+                if(selectedIICSlave == null)
+                {
+                    this.WarningLog("No slave selected. This condition will have no effect");
+                    return;
+                }
+
+                switch(iicDirection)
+                {
+                    case IICTransactionDirection.Write:
+                        FlushIICTransmitQueue();
+                        break;
+                    case IICTransactionDirection.Read:
+                        receiveQueue.Clear();
+                        break;
+                    default:
+                        throw new ArgumentException("Unknown IIC direction");
+                }
+                selectedIICSlave.FinishTransmission();
+            }
+            else if(condition == IICCondition.Restart)
+            {
+                //Flush the register address
+                FlushIICTransmitQueue();
+            }
+
+            iicState = IICState.Idle;
+            iicDirection = IICTransactionDirection.Unset;
+            selectedIICSlave = null;
+            UpdateInterruptsInIICMode();
+        }
+
+        private void SetPeripheralMode()
+        {
+            if(smartCardMode.Value)
+            {
+                peripheralMode = PeripheralMode.SmartCardInterface;
+                if(i2cMode.Value)
+                {
+                    this.Log(LogLevel.Warning,
+                        "The IICM flag in the {0} register (SIMR1) should be unset for Smart Card Interface mode; it's set",
+                        nameof(Registers.IICMode1)
+                    );
+                }
+                return;
+            }
+
+            if(i2cMode.Value)
+            {
+                peripheralMode = PeripheralMode.IIC;
+                if(nonSmartCommunicationMode.Value != CommunicationMode.AsynchOrSimpleIIC)
+                {
+                    this.Log(LogLevel.Warning,
+                        "The CM flag in the {0} register (SMR) should be unset ({1}) for Simple I2C mode; it's set ({2})",
+                        nameof(Registers.SerialModeNonSmartCard), CommunicationMode.AsynchOrSimpleIIC, CommunicationMode.SynchOrSimpleSPI
+                    );
+                }
+
+                if(dataTransferDirection.Value != DataTransferDirection.MSBFirst)
+                {
+                    this.Log(LogLevel.Warning,
+                        "The SDIR flag in the {0} should be set ({1}) for Simple I2Cmode; it's unset ({2})",
+                        nameof(Registers.SmartCardMode), DataTransferDirection.MSBFirst, DataTransferDirection.LSBFirst
+                    );
+                }
+                return;
+            }
+
+            switch(nonSmartCommunicationMode.Value)
+            {
+                case CommunicationMode.AsynchOrSimpleIIC:
+                    if(i2cContainer.ChildCollection.Count != 0)
+                    {
+                        peripheralMode = PeripheralMode.IIC;
+                        return;
+                    }
+                    break;
+                case CommunicationMode.SynchOrSimpleSPI:
+                    if(RegisteredPeripheral != null)
+                    {
+                       peripheralMode = PeripheralMode.SPI;
+                       return;
+                    }
+                    break;
+                default:
+                    break;
+            }
+            peripheralMode = PeripheralMode.UART;
+        }
+
+        private void DefineRegisters(bool enableManchesterMode, bool enableFIFO, bool fullModel)
         {
             // Non-Smart Card Mode
             Registers.SerialModeNonSmartCard.DefineConditional(this, () => !smartCardMode.Value)
@@ -128,7 +324,8 @@ namespace Antmicro.Renode.Peripherals.SCI
                     writeCallback: (_, value) => parityBit = value ? Parity.Odd : Parity.Even)
                 .WithFlag(5, out parityEnabled, name: "PE")
                 .WithTaggedFlag("CHR", 6)
-                .WithTaggedFlag("CM", 7)
+                .WithEnumField<WordRegister, CommunicationMode>(7, 1, out nonSmartCommunicationMode,
+                    writeCallback: (_, __) => SetPeripheralMode(), name: "CM")
                 .WithReservedBits(8, 8);
 
             // Smart Card Mode
@@ -191,15 +388,19 @@ namespace Antmicro.Renode.Peripherals.SCI
                             this.Log(LogLevel.Warning, "Transmission is not enabled, ignoring byte 0x{0:X}", value);
                             return;
                         }
-                        if(RegisteredPeripheral == null)
-                        {
-                            // Act as an UART
-                            TransmitData((byte)value);
-                        }
-                        else
-                        {
-                            // Act as a SPI
-                            receiveQueue.Enqueue(RegisteredPeripheral.Transmit((byte)value));
+                        switch(peripheralMode) {
+                            case PeripheralMode.UART:
+                                TransmitUARTData((byte)value);
+                                break;
+                            case PeripheralMode.IIC:
+                                TransmitIICData((byte)value);
+                                // No need to update the interrupts - in IIC mode we just blink the Tx interrupt
+                                return;
+                            case PeripheralMode.SPI:
+                                TransmitSPIData((byte)value);
+                                break;
+                            default:
+                                throw new Exception($"Unknown peripheral mode {peripheralMode}");
                         }
                         UpdateInterrupts();
                     })
@@ -209,7 +410,7 @@ namespace Antmicro.Renode.Peripherals.SCI
             Registers.SerialStatusNonSmartCardNonFIFO.DefineConditional(this, () => !smartCardMode.Value && !fifoMode && !manchesterMode, 0x84)
                 .WithTaggedFlag("MPBT", 0)
                 .WithTaggedFlag("MPB", 1)
-                .WithFlag(2, FieldMode.Read, valueProviderCallback: _ => true, name: "TEND")
+                .WithFlag(2, out transmitEnd, FieldMode.Read, name: "TEND")
                 .WithTaggedFlag("PER", 3)
                 .WithTaggedFlag("FER", 4)
                 .WithTaggedFlag("ORER", 5)
@@ -261,6 +462,16 @@ namespace Antmicro.Renode.Peripherals.SCI
                 .WithValueField(0, 8, FieldMode.Read, name: "RDR",
                     valueProviderCallback: _ =>
                     {
+                        if(peripheralMode == PeripheralMode.IIC)
+                        {
+                            if(iicState != IICState.InTransaction)
+                            {
+                                this.WarningLog("Trying to read the received data in the wrong state");
+                            }
+                            BlinkTxIRQ();
+                            return TryReadFromIICSlave();
+                        }
+
                         if(!receiveQueue.TryDequeue(out var result))
                         {
                             this.Log(LogLevel.Warning, "Queue is empty, returning 0.");
@@ -275,11 +486,12 @@ namespace Antmicro.Renode.Peripherals.SCI
                 .WithFlag(0, out smartCardMode, name: "SMIF")
                 .WithReservedBits(1, 1)
                 .WithTaggedFlag("SINV", 2)
-                .WithTaggedFlag("SDIR", 3)
+                .WithEnumField(3, 1, out dataTransferDirection, name: "SDIR")
                 .WithTaggedFlag("CHR1", 4)
                 .WithReservedBits(5, 2)
                 .WithTaggedFlag("BCP2", 7)
-                .WithReservedBits(8, 8);
+                .WithReservedBits(8, 8)
+                .WithChangeCallback((_, __) => SetPeripheralMode());
 
             Registers.SerialExtendedMode.Define(this)
                 .WithTaggedFlag("ACS0", 0)
@@ -297,26 +509,60 @@ namespace Antmicro.Renode.Peripherals.SCI
                 .WithReservedBits(3, 13);
 
             Registers.IICMode1.Define(this)
-                .WithTaggedFlag("IICM", 0)
+                .WithFlag(0, out i2cMode, changeCallback: (_, __) => SetPeripheralMode(), name: "IICM")
                 .WithReservedBits(1, 2)
                 .WithTag("IICDL", 3, 5)
                 .WithReservedBits(8, 8);
 
             Registers.IICMode2.Define(this)
-                .WithTaggedFlag("IICINTM", 0)
+                .WithTag("IICINTM", 0, 1)
                 .WithTaggedFlag("IICCSC", 1)
                 .WithReservedBits(2, 3)
-                .WithTaggedFlag("IICACKT", 5)
+                .WithFlag(5, writeCallback: (_, val) => { if(val) BlinkTxIRQ(); }, name:"IICACKT")
                 .WithReservedBits(6, 10);
 
             Registers.IICMode3.Define(this)
-                .WithTaggedFlag("IICSTAREQ", 0)
-                .WithTaggedFlag("IICRSTAREQ", 1)
-                .WithTaggedFlag("IICSTPREQ", 2)
-                .WithTaggedFlag("IICSTIF", 3)
-                .WithTag("IICSDAS", 4, 2)
-                .WithTag("IICSCLS", 6, 2)
-                .WithReservedBits(8, 8);
+                .WithFlag(0, FieldMode.WriteOneToClear, writeCallback: (_, val) =>
+                    {
+                        if(val)
+                        {
+                            this.DebugLog("Start Condition Requested!");
+                            EmulateIICStartStopCondition(IICCondition.Start);
+                        }
+                    }, name: "IICSTAREQ")
+                .WithFlag(1, FieldMode.WriteOneToClear, writeCallback: (_, val) =>
+                    {
+                        if(val)
+                        {
+                            this.DebugLog("Restart Condition Requested!");
+                            EmulateIICStartStopCondition(IICCondition.Restart);
+                        }
+                    }, name: "IICRSTAREQ")
+                .WithFlag(2, FieldMode.WriteOneToClear, writeCallback: (_, val) =>
+                    {
+                        if(val)
+                        {
+                            this.DebugLog("Stop Condition Requested!");
+                            EmulateIICStartStopCondition(IICCondition.Stop);
+                        }
+                    }, name: "IICSTPREQ")
+                .WithFlag(3, out conditionCompletedFlag, FieldMode.WriteZeroToClear,name: "IICSTIF")
+                .WithValueField(4, 2, name: "IICSDAS")
+                .WithValueField(6, 2, name: "IICSCLS")
+                .WithReservedBits(8, 8)
+                .WithWriteCallback((_, val) =>
+                    {
+                        var conditionRequestBits = val & 0b111;
+                        if(conditionRequestBits != 0 && ((conditionRequestBits & (conditionRequestBits - 1)) != 0))
+                        {
+                            this.WarningLog("More than one IIC condition requested at the same register acces");
+                        }
+                        else if(conditionRequestBits == 0)
+                        {
+                            // conditionCompletedFlag being zeroed
+                            UpdateInterruptsInIICMode();
+                        }
+                    });
 
             Registers.IICStatus.Define(this)
                 .WithTaggedFlag("IICACKR", 0)
@@ -347,17 +593,29 @@ namespace Antmicro.Renode.Peripherals.SCI
 
             if(enableFIFO)
             {
+                // TransmitFIFODataLowByte (below) is an 8-bits wide window of this register
                 Registers.TransmitFIFOData.DefineConditional(this, () => fifoMode, 0xff)
                     .WithValueField(0, 9, FieldMode.Write, name: "TDAT",
                         writeCallback: (_, val) =>
                         {
-                            TransmitData((byte)(val >> 8));
-                            TransmitData((byte)val);
+                            TransmitUARTData((byte)(val >> 8));
+                            TransmitUARTData((byte)val);
                             transmitFIFOEmpty.Value = true;
                             UpdateInterrupts();
                         })
                     .WithTaggedFlag("MPBT", 9)
                     .WithReservedBits(10, 6);
+
+                // this is the upper 8-bits of transmitFIFOData register
+                Registers.TransmitFIFODataLowByte.DefineConditional(this, () => fifoMode, 0xff)
+                    .WithValueField(0, 8, FieldMode.Write, name: "TDATL",
+                        writeCallback: (_, val) =>
+                        {
+                            TransmitUARTData((byte)val);
+                            transmitFIFOEmpty.Value = true;
+                            UpdateInterrupts();
+                        })
+                    .WithReservedBits(9, 7);
             }
 
             Registers.ReceiveDataNonManchesterMode.DefineConditional(this, () => !manchesterMode && !fifoMode)
@@ -412,7 +670,7 @@ namespace Antmicro.Renode.Peripherals.SCI
                     .WithFlag(0, name: "FM",
                         writeCallback: (_, val) => fifoMode = val,
                         valueProviderCallback: _ => fifoMode)
-                    .WithFlag(1, name: "RFRST",
+                    .WithFlag(1, FieldMode.Read | FieldMode.WriteOneToClear, name: "RFRST",
                         writeCallback: (_, __) =>
                         {
                             if(fifoMode)
@@ -464,6 +722,11 @@ namespace Antmicro.Renode.Peripherals.SCI
                 .WithTaggedFlag("AET", 7)
                 .WithReservedBits(8, 8);
 
+            if(!fullModel)
+            {
+                return;
+            }
+
             if(enableManchesterMode)
             {
                 Registers.ManchesterMode.Define(this)
@@ -475,7 +738,7 @@ namespace Antmicro.Renode.Peripherals.SCI
                     .WithTag("SYNSEL", 5, 1)
                     .WithTag("SBSEL", 6, 1)
                     .WithFlag(7, name: "MANEN",
-                        writeCallback: (_, val) => manchesterMode = val, 
+                        writeCallback: (_, val) => manchesterMode = val,
                         valueProviderCallback: _ => manchesterMode)
                     .WithReservedBits(8, 8);
 
@@ -488,13 +751,13 @@ namespace Antmicro.Renode.Peripherals.SCI
                     .WithTag("RPLEN", 0, 3)
                     .WithTag("RPPAT", 4, 2)
                     .WithReservedBits(6, 10);
-                
+
                 Registers.ManchesterExtendedErrorStatus.Define(this)
                     .WithTag("PFER", 0, 1)
                     .WithTag("SYER", 1, 1)
                     .WithTag("SBER", 2, 1)
                     .WithReservedBits(3, 13);
-                
+
                 Registers.ManchesterExtendedErrorControl.Define(this)
                     .WithTag("PFEREN", 0, 1)
                     .WithTag("SYEREN", 1, 1)
@@ -639,94 +902,225 @@ namespace Antmicro.Renode.Peripherals.SCI
                 .WithReservedBits(8, 8);
         }
 
-        private void TransmitData(byte value)
+        private ulong TryReadFromIICSlave()
+        {
+            ushort readByte;
+            if(selectedIICSlave == null)
+            {
+                this.WarningLog("No peripheral selected. Will not perform read");
+                return 0UL;
+            }
+            if(!receiveQueue.TryDequeue(out readByte))
+            {
+                // This will obviously try to read too much bytes, but this is necessary, as we have no way of guessing how many bytes the driver intends to read
+                receiveQueue.EnqueueRange(selectedIICSlave.Read(IICReadBufferCount).Select(element => (ushort)element));
+
+                if(!receiveQueue.TryDequeue(out readByte))
+                {
+                    this.ErrorLog("Unable to get bytes from the peripheral");
+                    return 0ul;
+                }
+            }
+            return readByte;
+        }
+
+        private void TransmitUARTData(byte value)
         {
             CharReceived?.Invoke(value);
         }
 
-        private readonly IMachine machine;
+        private void TransmitIICData(byte value)
+        {
+            Debug.Assert((iicState == IICState.Idle) || (iicDirection != IICTransactionDirection.Unset), $"Incorrect communication direction {iicDirection} in state {iicState}");
+            switch(iicState)
+            {
+                case IICState.Idle:
+                    // Addressing frame
+                    var rwBit = (value & 0x1);
+                    var slaveAddress = value >> 1;
+                    iicDirection = (rwBit == 1) ? IICTransactionDirection.Read : IICTransactionDirection.Write;
+                    if(!i2cContainer.TryGetByAddress((int)slaveAddress, out selectedIICSlave))
+                    {
+                        this.WarningLog("Selecting unconnected IIC slave address: 0x{0:X}", slaveAddress);
+                    }
+                    this.DebugLog("Selected slave address 0x{0:X} for {1}", slaveAddress, iicDirection);
+                    iicState = IICState.InTransaction;
+                    conditionCompletedFlag.Value = false;
+                    BlinkTxIRQ();
+                    break;
+                case IICState.InTransaction:
+                    if(iicDirection == IICTransactionDirection.Write)
+                    {
+                        iicTransmitQueue.Enqueue(value);
+                        BlinkTxIRQ();
+                    }
+                    else
+                    {
+                        if(value == DummyTransmitByte)
+                        {
+                            this.DebugLog("Ignoring the dummy transmission");
+                            BlinkTxIRQ();
+                        }
+                    }
+                    break;
+                 default:
+                    throw new Exception("Unreachable");
+            }
+        }
+
+        private void TransmitSPIData(byte value)
+        {
+            if(RegisteredPeripheral == null)
+            {
+                this.WarningLog("No SPI peripheral connected");
+                return;
+            }
+            receiveQueue.Enqueue(RegisteredPeripheral.Transmit((byte)value));
+        }
+
+        // This peripheral might work in a 9-bit mode,
         private readonly Queue<ushort> receiveQueue;
+        private readonly Queue<byte> iicTransmitQueue;
         private readonly ulong frequency;
+        private readonly IMachine machine;
+        private readonly SimpleContainerHelper<II2CPeripheral> i2cContainer;
         private Parity parityBit = Parity.Even;
+
+        private IUART registeredUartPeripheral;
 
         private bool manchesterMode;
         private bool fifoMode;
+        private IICState iicState;
+        private II2CPeripheral selectedIICSlave;
+        private IICTransactionDirection iicDirection;
+        private PeripheralMode peripheralMode;
+
         private IFlagRegisterField transmitEnabled;
         private IFlagRegisterField hasTwoStopBits;
         private IFlagRegisterField parityEnabled;
         private IFlagRegisterField transmitEndInterruptEnabled;
+        private IFlagRegisterField transmitEnd;
         private IFlagRegisterField receiveEnabled;
         private IFlagRegisterField receiveInterruptEnabled;
         private IFlagRegisterField transmitInterruptEnabled;
         private IFlagRegisterField smartCardMode;
         private IFlagRegisterField transmitFIFOEmpty;
+        private IFlagRegisterField conditionCompletedFlag;
+        private IFlagRegisterField i2cMode;
         private IValueRegisterField receiveFIFOTriggerCount;
         private IValueRegisterField bitRate;
         private IValueRegisterField clockSource;
+        private IEnumRegisterField<DataTransferDirection> dataTransferDirection;
+        private IEnumRegisterField<CommunicationMode> nonSmartCommunicationMode;
+
 
         private const ulong MaxFIFOSize = 16;
         private const int InterruptDelay = 1;
+        private const int IICReadBufferCount = 24;
+        // This byte is used to trigger reception on IIC bus. It should not be transmitted
+        private const byte DummyTransmitByte = 0xFF;
+
+        private enum DataTransferDirection
+        {
+            LSBFirst = 0,
+            MSBFirst = 1,
+        }
+
+        private enum IICCondition
+        {
+            Start,
+            Stop,
+            Restart,
+        }
+
+        private enum CommunicationMode
+        {
+            AsynchOrSimpleIIC = 0,
+            SynchOrSimpleSPI = 1,
+        }
+
+        private enum IICState
+        {
+            Idle = 0,
+            InTransaction = 1,
+        }
+
+        private enum IICTransactionDirection
+        {
+            Unset,
+            Read,
+            Write,
+        }
+
+        private enum PeripheralMode
+        {
+            UART,
+            SPI,
+            IIC,
+            SmartCardInterface,
+        }
 
         private enum Registers
         {
-            SerialModeNonSmartCard = 0x00,
-            SerialModeSmartCard = 0x00,
-            BitRate = 0x01,
-            SerialControlNonSmartCard = 0x02,
-            SerialControlSmartCard = 0x02,
-            TransmitData = 0x03,
-            SerialStatusNonSmartCardNonFIFO = 0x04,
-            SerialStatusNonSmartCardFIFO = 0x04,
-            SerialStatusSmartCard = 0x04,
-            SerialStatusManchesterMode = 0x04,
-            ReceiveData = 0x05,
-            SmartCardMode = 0x06,
-            SerialExtendedMode = 0x07,
-            NoiseFilterSetting = 0x08,
-            IICMode1 = 0x09,
-            IICMode2 = 0x0A,
-            IICMode3 = 0x0B,
-            IICStatus = 0x0C,
-            SPIMode = 0x0D,
-            TransmitDataNonManchesterMode = 0xE,
-            TransmitDataManchesterMode = 0xE,
-            TransmitFIFOData = 0xE,
-            ReceiveDataNonManchesterMode = 0x10,
-            ReceiveDataManchesterMode = 0x10,
-            ReceiveFIFOData = 0x10,
-            ModulationDuty = 0x12,
-            DataCompareMatchControl = 0x13,
-            FIFOControl = 0x14,
-            FIFODataCount = 0x16,
-            LineStatus = 0x18,
-            CompareMatchData = 0x1A,
-            SerialPort = 0x1C,
-            AdjustmentCommunicationTiming = 0x1D,
-            ExtendedSerialModuleEnable = 0x20,
-            ManchesterMode = 0x20,
-            Control0 = 0x21,
-            Control1 = 0x22,
-            TransmitManchesterPrefaceSetting = 0x22,
-            Control2 = 0x23,
-            ReceiveManchesterPrefaceSetting = 0x23,
-            Control3 = 0x24,
-            ManchesterExtendedErrorStatus = 0x24,
-            PortControl = 0x25,
-            ManchesterExtendedErrorControl = 0x25,
-            InterruptControl = 0x26,
-            Status = 0x27,
-            StatusClear = 0x28,
-            ControlField0Data = 0x29,
-            ControlField0CompareEnable = 0x2A,
-            ControlField0RecieveData = 0x2B,
-            PrimaryControlField1Data = 0x2C,
-            SecondaryControlField1Data = 0x2D,
-            ControlField1CompareEnable = 0x2E,
-            ControlField1ReceiveData = 0x2F,
-            TimerControl = 0x30,
-            TimerMode = 0x31,
-            TimerPrescaler = 0x32,
-            TimerCount = 0x33,
+            SerialModeNonSmartCard = 0x00,  // SMR
+            SerialModeSmartCard = 0x00,  // SMR_SMCI
+            BitRate = 0x01,  // BRR
+            SerialControlNonSmartCard = 0x02,  // SCR
+            SerialControlSmartCard = 0x02,  // SCR_SMCI
+            TransmitData = 0x03,  // TDR
+            SerialStatusNonSmartCardNonFIFO = 0x04,  // SSR
+            SerialStatusNonSmartCardFIFO = 0x04,  // SSR_FIFO
+            SerialStatusSmartCard = 0x04,  // SSR_SMCI
+            SerialStatusManchesterMode = 0x04,  // SSR_MANC
+            ReceiveData = 0x05,  // RDR
+            SmartCardMode = 0x06,  // SCMR
+            SerialExtendedMode = 0x07,  // SEMR
+            NoiseFilterSetting = 0x08,  // SNFR
+            IICMode1 = 0x09,  // SIMR1
+            IICMode2 = 0x0A,  // SIMR2
+            IICMode3 = 0x0B,  // SIMR3
+            IICStatus = 0x0C,  // SISR
+            SPIMode = 0x0D,  // SPMR
+            TransmitDataNonManchesterMode = 0xE,  // TDRHL
+            TransmitDataManchesterMode = 0xE,  // TDRHL_MAN
+            TransmitFIFOData = 0xE,  // FTDRHL
+            TransmitFIFODataLowByte = 0xF,  // FTDRL
+            ReceiveDataNonManchesterMode = 0x10,  // RDRHL
+            ReceiveDataManchesterMode = 0x10,  // RDRHL_MAN
+            ReceiveFIFOData = 0x10,  // FRDRHL
+            ModulationDuty = 0x12,  // MDDR
+            DataCompareMatchControl = 0x13,  // DCCR
+            FIFOControl = 0x14,  // FCR
+            FIFODataCount = 0x16,  // FDR
+            LineStatus = 0x18,  // LSR
+            CompareMatchData = 0x1A,  // CDR
+            SerialPort = 0x1C,  // SPTR
+            AdjustmentCommunicationTiming = 0x1D,  // ACTR
+            ExtendedSerialModuleEnable = 0x20,  // ESMER
+            ManchesterMode = 0x20,  // MMR
+            Control0 = 0x21,  // CR0
+            Control1 = 0x22,  // CR1
+            TransmitManchesterPrefaceSetting = 0x22,  // TMPR
+            Control2 = 0x23,  // CR2
+            ReceiveManchesterPrefaceSetting = 0x23,  // RMPR
+            Control3 = 0x24,  // CR3
+            ManchesterExtendedErrorStatus = 0x24,  // MESR
+            PortControl = 0x25,  // PCR
+            ManchesterExtendedErrorControl = 0x25,  // MECR
+            InterruptControl = 0x26,  // ICR
+            Status = 0x27,  // STR
+            StatusClear = 0x28,  // STCR
+            ControlField0Data = 0x29,  // CF0DR
+            ControlField0CompareEnable = 0x2A,  // CF0CR
+            ControlField0RecieveData = 0x2B,  // CF0RR
+            PrimaryControlField1Data = 0x2C,  // PCF1DR
+            SecondaryControlField1Data = 0x2D,  // SCF1DR
+            ControlField1CompareEnable = 0x2E,  // CF1CR
+            ControlField1ReceiveData = 0x2F,  // CF1RR
+            TimerControl = 0x30,  // TCR
+            TimerMode = 0x31,  // TMR
+            TimerPrescaler = 0x32,  // TPRE
+            TimerCount = 0x33,  // TCNT
         }
     }
 }

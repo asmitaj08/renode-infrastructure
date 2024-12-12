@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2023 Western Digital Corporation
 //
 // This file is licensed under the MIT License.
@@ -21,7 +21,7 @@ namespace Antmicro.Renode.Core
     public interface IMachine: IEmulationElement
     {
         void AddUserStateHook(Func<string, bool> predicate, Action<string> hook);
-        void AppendDirtyAddresses(uint cpuId, long[] addresses);
+        void AppendDirtyAddresses(ICPU cpu, long[] addresses);
         void AttachGPIO(IPeripheral source, int sourceNumber, IGPIOReceiver destination, int destinationNumber, int? localReceiverNumber = null);
         void AttachGPIO(IPeripheral source, IGPIOReceiver destination, int destinationNumber, int? localReceiverNumber = null);
         void AttachGPIO(IPeripheral source, string connectorName, IGPIOReceiver destination, int destinationNumber, int? localReceiverNumber = null);
@@ -33,7 +33,7 @@ namespace Antmicro.Renode.Core
         IEnumerable<IPeripheral> GetChildrenPeripherals(IPeripheral peripheral);
         string[,] GetClockSourceInfo();
         string GetLocalName(IPeripheral peripheral);
-        long[] GetNewDirtyAddressesForCore(uint id);
+        long[] GetNewDirtyAddressesForCore(ICPU cpu);
         IEnumerable<IPeripheral> GetParentPeripherals(IPeripheral peripheral);
         IEnumerable<IRegistrationPoint> GetPeripheralRegistrationPoints(IPeripheral parentPeripheral, IPeripheral childPeripheral);
         IEnumerable<T> GetPeripheralsOfType<T>();
@@ -48,7 +48,8 @@ namespace Antmicro.Renode.Core
         void InitAtomicMemoryState();
         bool IsRegistered(IPeripheral peripheral);
         IManagedThread ObtainManagedThread(Action action, uint frequency, string name = "managed thread", IEmulationElement owner = null, Func<bool> stopCondition = null);
-        IDisposable ObtainPausedState();
+        IManagedThread ObtainManagedThread(Action action, TimeInterval period, string name = "managed thread", IEmulationElement owner = null, Func<bool> stopCondition = null);
+        IDisposable ObtainPausedState(bool internalPause = false);
         void Pause();
         void PauseAndRequestEmulationPause(bool precise = false);
         void PlayFrom(ReadFilePath fileName);
@@ -62,8 +63,8 @@ namespace Antmicro.Renode.Core
         void ScheduleAction(TimeInterval delay, Action<TimeInterval> action, string name = null);
         void SetLocalName(IPeripheral peripheral, string name);
         void Start();
-        void StartGdbServer(int port, bool autostartEmulation, bool blockOnStep);
-        void StartGdbServer(int port, bool autostartEmulation = false, ICpuSupportingGdb cpu = null, bool blockOnStep = true);
+        void StartGdbServer(int port, bool autostartEmulation = true, string cpuCluster = "");
+        void StartGdbServer(int port, bool autostartEmulation, ICluster<ICpuSupportingGdb> cpu);
         void StopGdbServer(int? port = null);
         string ToString();
         bool TryGetAnyName(IPeripheral peripheral, out string name);
@@ -93,6 +94,7 @@ namespace Antmicro.Renode.Core
         DateTime RealTimeClockDateTime { get; }
         RealTimeClockMode RealTimeClockMode { get; set; }
         DateTime RealTimeClockStart { get; }
+        bool InternalPause { get; }
 
         event Action<IMachine> MachineReset;
         event Action<IMachine, PeripheralsChangedEventArgs> PeripheralsChanged;

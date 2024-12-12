@@ -18,7 +18,7 @@ namespace Antmicro.Renode.Peripherals.CPU
     public interface ICPU : IPeripheral, IHasOwnLife
     {
         string Architecture { get; }
-        uint Id { get; }
+        uint MultiprocessingId { get; }
         string Model { get; }
         RegisterValue PC { get; set; }
         bool IsHalted { get; set; }
@@ -28,12 +28,12 @@ namespace Antmicro.Renode.Peripherals.CPU
         /// by the object.
         /// </summary>
         bool OnPossessedThread { get; }
-        ulong ExecutedInstructions {get;}
+        ulong ExecutedInstructions { get; }
         void SyncTime();
         event Action<HaltArguments> Halted;
         TimeHandle TimeHandle { get; }
 
-        ulong Step(int count = 1, bool? blocking = null);
+        ulong Step(int count = 1);
         ExecutionMode ExecutionMode { get; set; }
 
         ELFSharp.ELF.Endianess Endianness { get; }
@@ -51,7 +51,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             {
                 machineName += ".";
             }
-            return "{0}{1}[{2}]".FormatWith(machineName, machine.GetLocalName(cpu), machine.SystemBus.GetCPUId(cpu));
+            return "{0}{1}[{2}]".FormatWith(machineName, machine.GetLocalName(cpu), machine.SystemBus.GetCPUSlot(cpu));
         }
     }
 }

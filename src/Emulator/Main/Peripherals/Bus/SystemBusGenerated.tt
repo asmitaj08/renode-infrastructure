@@ -1,6 +1,6 @@
 ﻿<#
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -26,15 +26,11 @@
 */
 
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using Antmicro.Renode.Core;
 using Antmicro.Renode.Exceptions;
 using Antmicro.Renode.Logging;
-using Antmicro.Renode.Peripherals.Bus;
 using Antmicro.Renode.Peripherals.Bus.Wrappers;
 using Antmicro.Renode.Peripherals.CPU;
-using Antmicro.Renode.Utilities.Collections;
 
 using Range = Antmicro.Renode.Core.Range;
 
@@ -47,32 +43,22 @@ namespace Antmicro.Renode.Peripherals.Bus
     {
         var type = entry.Key;
         var name = entry.Value;
-
-        // Read/Write methods come in two flavors - one with an explicit ICPU context and the second one without it.
-        // Their logic is mostly duplicated, the only difference is a call to `TryGetCurrentCPU`.
-        // For performance reasons we want to avoid calling it if not necessary, and that's why we don't implement one of them as a wrapper for the second one.
 #>
         public <#= type #> Read<#= name #>(ulong address, ICPU context = null)
         {
+            var accessWidth = SysbusAccessWidth.<#=name#>;
+            if(IsAddressRangeLocked(address.By((ulong)accessWidth), context))
+            {
+                this.Log(LogLevel.Warning, "Tried to read {0} bytes at 0x{1:X} which is inside a locked address range, returning 0",
+                    (uint)accessWidth, address);
+                return 0;
+            }
+
             using(SetLocalContext(context))
             {
-                ulong startAddress, endAddress;
-
-                var accessMethods = globalPeripherals.FindAccessMethods(address, out startAddress, out endAddress);
-                if(accessMethods == null)
+                if(!TryFindPeripheralAccessMethods(address, context, out var accessMethods, out var startAddress))
                 {
-                    if(context != null)
-                    {
-                        accessMethods = cpuLocalPeripherals[context].FindAccessMethods(address, out startAddress, out endAddress);
-                    }
-                    else if(TryGetCurrentCPU(out var currentCPU))
-                    {
-                        accessMethods = cpuLocalPeripherals[currentCPU].FindAccessMethods(address, out startAddress, out endAddress);
-                    }
-                }
-                if(accessMethods == null)
-                {
-                    return (<#= type #>)ReportNonExistingRead(address, SysbusAccessWidth.<#=name#>);
+                    return (<#= type #>)ReportNonExistingRead(address, accessWidth);
                 }
                 if(!IsPeripheralEnabled(accessMethods.Peripheral))
                 {
@@ -104,25 +90,19 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void Write<#=name#>(ulong address, <#=type#> value, ICPU context = null)
         {
+            var accessWidth = SysbusAccessWidth.<#=name#>;
+            if(IsAddressRangeLocked(address.By((ulong)accessWidth), context))
+            {
+                this.Log(LogLevel.Warning, "Tried to write {0} bytes (0x{1:X}) at 0x{2:X} which is inside a locked address range, write ignored",
+                    (uint)accessWidth, value, address);
+                return;
+            }
+
             using(SetLocalContext(context))
             {
-                ulong startAddress, endAddress;
-
-                var accessMethods = globalPeripherals.FindAccessMethods(address, out startAddress, out endAddress);
-                if(accessMethods == null)
+                if(!TryFindPeripheralAccessMethods(address, context, out var accessMethods, out var startAddress))
                 {
-                    if(context != null)
-                    {
-                        accessMethods = cpuLocalPeripherals[context].FindAccessMethods(address, out startAddress, out endAddress);
-                    }
-                    else if(TryGetCurrentCPU(out var currentCPU))
-                    {
-                        accessMethods = cpuLocalPeripherals[currentCPU].FindAccessMethods(address, out startAddress, out endAddress);
-                    }
-                }
-                if(accessMethods == null)
-                {
-                    ReportNonExistingWrite(address, value, SysbusAccessWidth.<#=name#>);
+                    ReportNonExistingWrite(address, value, accessWidth);
                     return;
                 }
                 if(!IsPeripheralEnabled(accessMethods.Peripheral))
@@ -203,8 +183,22 @@ namespace Antmicro.Renode.Peripherals.Bus
         }
 #>
         }
+
 <#
     }
 #>
+        private bool TryFindPeripheralAccessMethods(ulong address, ICPU context, out PeripheralAccessMethods accessMethods, out ulong startAddress)
+        {
+            if(context != null || TryGetCurrentCPU(out context))
+            {
+                accessMethods = peripheralsCollectionByContext[context].FindAccessMethods(address, out startAddress, out var _);
+                if(accessMethods != null)
+                {
+                    return true;
+                }
+            }
+            accessMethods = peripheralsCollectionByContext[null].FindAccessMethods(address, out startAddress, out _);
+            return accessMethods != null;
+        }
     }
 }

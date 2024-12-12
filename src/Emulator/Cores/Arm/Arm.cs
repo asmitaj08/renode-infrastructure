@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -8,12 +8,11 @@
 using System;
 using System.Linq;
 using Antmicro.Renode.Core;
+using Antmicro.Renode.Debugging;
 using Antmicro.Renode.Logging;
 using Antmicro.Renode.Utilities.Binding;
 using System.Collections.Generic;
-using Antmicro.Renode.Time;
 using Antmicro.Renode.Peripherals.Bus;
-using Antmicro.Renode.Peripherals.Memory;
 using Antmicro.Renode.Peripherals.UART;
 using Antmicro.Renode.Core.Structure;
 using Antmicro.Renode.Exceptions;
@@ -26,11 +25,19 @@ namespace Antmicro.Renode.Peripherals.CPU
     [GPIO(NumberOfInputs = 2)]
     public abstract partial class Arm : TranslationCPU, ICPUWithHooks, IPeripheralRegister<SemihostingUart, NullRegistrationPoint>, IPeripheralRegister<ArmPerformanceMonitoringUnit, NullRegistrationPoint>
     {
-        public Arm(string cpuType, IMachine machine, uint cpuId = 0, Endianess endianness = Endianess.LittleEndian, uint? numberOfMPURegions = null) : base(cpuId, cpuType, machine, endianness)
+        public Arm(string cpuType, IMachine machine, uint cpuId = 0, Endianess endianness = Endianess.LittleEndian, uint? numberOfMPURegions = null, ArmSignalsUnit signalsUnit = null)
+            : base(cpuId, cpuType, machine, endianness)
         {
             if(numberOfMPURegions.HasValue)
             {
                 this.NumberOfMPURegions = numberOfMPURegions.Value;
+            }
+
+            if(signalsUnit != null)
+            {
+                // There's no such unit in hardware but we need to share certain signals between cores.
+                this.signalsUnit = signalsUnit;
+                signalsUnit.RegisterCPU(this);
             }
         }
 
@@ -75,15 +82,58 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public override List<GDBFeatureDescriptor> GDBFeatures { get { return new List<GDBFeatureDescriptor>(); } }
 
-        public uint ID
+        public bool ImplementsPMSA => MemorySystemArchitecture == MemorySystemArchitectureType.Physical_PMSA;
+        public bool ImplementsVMSA => MemorySystemArchitecture == MemorySystemArchitectureType.Virtual_VMSA;
+        public abstract MemorySystemArchitectureType MemorySystemArchitecture { get; }
+
+        public virtual uint ExceptionVectorAddress
+        {
+            get => TlibGetExceptionVectorAddress();
+            set
+            {
+                // It's "arm-m" for CortexM.
+                DebugHelper.Assert(Architecture == "arm");
+
+                if(ExceptionVectorAddress == value)
+                {
+                    return;
+                }
+                TlibSetExceptionVectorAddress(value);
+
+                // On HW, in Arm CPUs, such a change is only possible in:
+                // * ARMv6K and ARMv7-A CPUs with Security Extensions using VBAR/MVBAR,
+                // * ARMv8-A and ARMv8-R CPUs using VBAR_EL{1..3},
+                // * Cortex-M CPUs using VTOR and
+                // * pre-ARMv8 CPUs using VINITHI signal to use Hivecs which uses 0xFFFF_0000.
+                //
+                // Cortex-M overrides this property so let's only make sure it isn't used there.
+                // ARMv8-A and ARMv8-R are handled by unrelated ARMv8A and ARMv8R classes.
+                //
+                // Let's allow this customization for all the remaining Arm CPUs with info log
+                // when changing to value other than 0x0 and 0xFFFF_0000 that it might not be
+                // supported on hardware.
+                var cpuSupportsVBAR = IsSystemRegisterAccessible("VBAR", isWrite: false);
+                const uint hivecsVectorAddress = 0xFFFF0000u;
+                if(!cpuSupportsVBAR && value != 0x0 && value != hivecsVectorAddress)
+                {
+                    this.Log(LogLevel.Info,
+                            "Successfully set {0} to 0x{1:X} on a CPU supporting neither VBAR nor VTOR; "
+                            + "such customization might not be possible on hardware.",
+                            nameof(ExceptionVectorAddress), value
+                    );
+                }
+            }
+        }
+
+        public uint ModelID
         {
             get
             {
-                return TlibGetCpuId();
+                return TlibGetCpuModelId();
             }
             set
             {
-                TlibSetCpuId(value);
+                TlibSetCpuModelId(value);
             }
         }
 
@@ -163,21 +213,21 @@ namespace Antmicro.Renode.Peripherals.CPU
         {
             if(instruction.Opc1 == 4 && instruction.Opc2 == 0 && instruction.CRm == 0 && instruction.CRn == 15) // CBAR
             {
-                // scu
-                var scus = machine.GetPeripheralsOfType<ArmSnoopControlUnit>().ToArray();
-                switch(scus.Length)
+                // SCU's offset from CBAR is 0x0 so let's just return its address.
+                var scusRegistered = machine.SystemBus.Children.Where(registered => registered.Peripheral is ArmSnoopControlUnit);
+                switch(scusRegistered.Count())
                 {
                     case 0:
-                        this.Log(LogLevel.Warning, "Trying to read SCU address, but SCU was not found - returning 0x0.");
+                        this.Log(LogLevel.Warning, "Tried to establish CBAR from SCU address but found no SCU registered for this CPU, returning 0x0.");
                         return 0;
                     case 1:
-                        return (uint)((BusRangeRegistration)(machine.GetPeripheralRegistrationPoints(machine.SystemBus, scus[0]).Single())).Range.StartAddress;
+                        return checked((uint)scusRegistered.Single().RegistrationPoint.StartingPoint);
                     default:
-                        this.Log(LogLevel.Error, "Trying to read SCU address, but more than one instance was found. Aborting.");
+                        this.Log(LogLevel.Error, "Tried to establish CBAR from SCU address but found more than one SCU. Aborting.");
                         throw new CpuAbortException();
                 }
             }
-            this.Log(LogLevel.Warning, "Unknown CP15 32-bit read - {0} - returning 0x0", instruction);
+            this.Log(LogLevel.Warning, "Unknown CP15 32-bit read - {0}, returning 0x0", instruction);
             return 0;
         }
 
@@ -188,7 +238,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected virtual ulong Read64CP15Inner(Coprocessor64BitMoveInstruction instruction)
         {
-            this.Log(LogLevel.Warning, "Unknown CP15 64-bit read - {0} - returning 0x0", instruction);
+            this.Log(LogLevel.Warning, "Unknown CP15 64-bit read - {0}, returning 0x0", instruction);
             return 0;
         }
 
@@ -263,7 +313,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             TlibSetSevOnPending(value ? 1 : 0);
         }
 
-        public void RegisterTCMRegion(MappedMemory memory, uint interfaceIndex, uint regionIndex)
+        public void RegisterTCMRegion(IMemory memory, uint interfaceIndex, uint regionIndex)
         {
             Action<IMachine, MachineStateChangedEventArgs> hook = null;
             hook = (_, args) =>
@@ -307,6 +357,12 @@ namespace Antmicro.Renode.Peripherals.CPU
             TlibSetSystemRegister(name, value, 1u /* log_unhandled_access: true */);
         }
 
+        private bool IsSystemRegisterAccessible(string name, bool isWrite)
+        {
+            var result = TlibCheckSystemRegisterAccess(name, isWrite ? 1u : 0u);
+            return (SystemRegisterCheckReturnValue)result == SystemRegisterCheckReturnValue.AccessValid;
+        }
+
         private void ValidateSystemRegisterAccess(string name, bool isWrite)
         {
             switch((SystemRegisterCheckReturnValue)TlibCheckSystemRegisterAccess(name, isWrite ? 1u : 0u))
@@ -323,7 +379,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
-        private bool TryRegisterTCMRegion(MappedMemory memory, uint interfaceIndex, uint regionIndex)
+        private bool TryRegisterTCMRegion(IMemory memory, uint interfaceIndex, uint regionIndex)
         {
             ulong address;
             if(!TCMConfiguration.TryFindRegistrationAddress((SystemBus)machine.SystemBus, this, memory, out address))
@@ -350,7 +406,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         private uint DoSemihosting()
         {
             var uart = semihostingUart;
-            //this.Log(LogLevel.Error, "Semihosing, r0={0:X}, r1={1:X} ({2:X})", this.GetRegisterUnsafe(0), this.GetRegisterUnsafe(1), this.TranslateAddress(this.GetRegisterUnsafe(1)));
+            //this.Log(LogLevel.Error, "Semihosing, r0={0:X}, r1={1:X} ({2:X})", this.GetRegister(0), this.GetRegister(1), this.TranslateAddress(this.GetRegister(1)));
 
             uint operation = R[0];
             uint r1 = R[1];
@@ -383,6 +439,14 @@ namespace Antmicro.Renode.Peripherals.CPU
         }
 
         [Export]
+        private void FillConfigurationSignalsState(IntPtr allocatedStatePointer)
+        {
+            // It's OK not to set the fields if there's no ArmConfigurationSignals.
+            // Default values of structure's fields are neutral to the simulation.
+            signalsUnit?.FillConfigurationStateStruct(allocatedStatePointer, this);
+        }
+
+        [Export]
         private uint IsWfiAsNop()
         {
             return WfiAsNop ? 1u : 0u;
@@ -407,6 +471,13 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
+        public enum MemorySystemArchitectureType
+        {
+            None,
+            Physical_PMSA,
+            Virtual_VMSA,
+        }
+
         private enum SystemRegisterCheckReturnValue
         {
             RegisterNotFound = 1,
@@ -415,12 +486,13 @@ namespace Antmicro.Renode.Peripherals.CPU
         }
 
         private readonly List<TCMConfiguration> defaultTCMConfiguration = new List<TCMConfiguration>();
+        private readonly ArmSignalsUnit signalsUnit;
 
         // 649:  Field '...' is never assigned to, and will always have its default value null
 #pragma warning disable 649
 
         [Import]
-        private ActionUInt32 TlibSetCpuId;
+        private ActionUInt32 TlibSetCpuModelId;
 
         [Import]
         private FuncUInt32 TlibGetItState;
@@ -429,7 +501,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         private FuncUInt32UInt32 TlibEvaluateConditionCode;
 
         [Import]
-        private FuncUInt32 TlibGetCpuId;
+        private FuncUInt32 TlibGetCpuModelId;
 
         [Import]
         private ActionInt32 TlibSetThumb;
@@ -465,6 +537,12 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         [Import]
         public ActionUInt32 TlibPmuSetDebug;
+
+        [Import]
+        public FuncUInt32 TlibGetExceptionVectorAddress;
+
+        [Import]
+        public ActionUInt32 TlibSetExceptionVectorAddress;
 
 #pragma warning restore 649
 

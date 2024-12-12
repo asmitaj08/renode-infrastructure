@@ -154,7 +154,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             {
                 if(machine.SystemBus.TryGetCurrentCPU(out var cpu))
                 {
-                    return ConnectedMIC.CPUGetInterrupt((int)cpu.Id);
+                    return ConnectedMIC.CPUGetInterrupt((int)cpu.MultiprocessingId);
                 }
                 else
                 {
@@ -171,7 +171,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             {
                 if(machine.SystemBus.TryGetCurrentCPU(out var cpu))
                 {
-                    ConnectedMIC.CPUAckInterrupt((int)cpu.Id, interruptNumber);
+                    ConnectedMIC.CPUAckInterrupt((int)cpu.MultiprocessingId, interruptNumber);
                 }
                 else
                 {
@@ -197,7 +197,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         {
             if(!cpuIdinitialized)
             {
-                int cpuid = machine.SystemBus.GetCPUId(this);
+                int cpuid = machine.SystemBus.GetCPUSlot(this);
                 // Only update ASR17 for slave cores 1-15
                 if(cpuid > 0 && cpuid < 16)
                 {
@@ -229,18 +229,6 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
-        protected override void BeforeSave(IntPtr statePtr)
-        {
-            base.BeforeSave(statePtr);
-            TlibBeforeSave(statePtr);
-        }
-
-        protected override void AfterLoad(IntPtr statePtr)
-        {
-            base.AfterLoad(statePtr);
-            TlibAfterLoad(statePtr);
-        }
-
         private bool cpuIdinitialized = false;
         private bool entryPointInitialized;
         private bool isPowerDown;
@@ -259,12 +247,6 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         [Import]
         private Action TlibSetWfi;
-
-        [Import]
-        private ActionIntPtr TlibBeforeSave;
-
-        [Import]
-        private ActionIntPtr TlibAfterLoad;
 
         #pragma warning restore 649
 

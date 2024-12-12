@@ -92,6 +92,7 @@
     <Compile Include="UserInterface\Commands\MonitorPathCommand.cs" />
     <Compile Include="UserInterface\Commands\LogLevelCommand.cs" />
     <Compile Include="UserInterface\Commands\LoggerFileCommand.cs" />
+    <Compile Include="UserInterface\Commands\NetworkLoggerCommand.cs" />
     <Compile Include="UserInterface\Commands\PauseCommand.cs" />
     <Compile Include="UserInterface\Commands\StartCommand.cs" />
     <Compile Include="UserInterface\Commands\SetCommand.cs" />
@@ -118,6 +119,8 @@
     <Compile Include="UserInterface\Commands\VerboseCommand.cs" />
     <Compile Include="Hooks\CpuHooksExtensions.cs" />
     <Compile Include="Hooks\BlockPythonEngine.cs" />
+    <Compile Include="Hooks\PSCIPythonEngine.cs" />
+    <Compile Include="Hooks\PSCIHookExtensions.cs" />
     <Compile Include="UserInterface\Exceptions\ParametersMismatchException.cs" />
     <Compile Include="UserInterface\Commands\ShowBackendAnalyzerCommand.cs" />
     <Compile Include="UserInterface\Commands\AnalyzersCommand.cs" />
@@ -161,6 +164,7 @@
     <Compile Include="Utilities\GDB\Commands\ThreadAliveCommand.cs" />
     <Compile Include="Utilities\GDB\Commands\ThreadAttachedCommand.cs" />
     <Compile Include="Utilities\GDB\Commands\ThreadContextCommand.cs" />
+    <Compile Include="Utilities\GDB\Commands\Trace32Commands.cs" />
     <Compile Include="Utilities\USBIP\USBIPServer.cs" />
     <Compile Include="Utilities\USBIP\InterfaceDescriptor.cs" />
     <Compile Include="Utilities\USBIP\DeviceDescriptor.cs" />

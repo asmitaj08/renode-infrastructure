@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -19,7 +19,7 @@ namespace Antmicro.Renode.UnitTests.Mocks
         public EmptyCPU(IMachine machine, string model = "emptyCPU") : base(0, model, machine, ELFSharp.ELF.Endianess.LittleEndian)
         {
         }
-        
+
         public virtual void Load(PrimitiveReader reader)
         {
         }
@@ -28,10 +28,15 @@ namespace Antmicro.Renode.UnitTests.Mocks
         {
         }
 
+        public override ExecutionResult ExecuteInstructions(ulong numberOfInstructionsToExecute, out ulong numberOfExecutedInstructions)
+        {
+            numberOfExecutedInstructions = 0;
+            return ExecutionResult.Interrupted;
+        }
+
         public override string Architecture => "empty";
 
         public override ulong ExecutedInstructions => 0;
-        
 
         public override RegisterValue PC
         {
@@ -42,12 +47,6 @@ namespace Antmicro.Renode.UnitTests.Mocks
             set
             {
             }
-        }
-
-        protected override ExecutionResult ExecuteInstructions(ulong numberOfInstructionsToExecute, out ulong numberOfExecutedInstructions)
-        {
-            numberOfExecutedInstructions = 0;
-            return ExecutionResult.Interrupted;
         }
     }
 }

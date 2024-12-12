@@ -11,6 +11,8 @@
 <#
     string CLASS_NAME = null;
     string HEADER_FILE = null;
+    string ACCESSOR_PREFIX = null;
+
     string PC_REGISTER = null;
     string FALLBACK_SET_REGISTER = null;
     string FALLBACK_GET_REGISTER = null;
@@ -23,4 +25,5 @@
     var REGISTERS_FROM_BASE_CLASS = new List<string>();
     var GENERAL_REGISTERS = new List<string>();
     var UNSETTABLE_REGISTERS = new List<string>();
+    var OVERRIDE_DEFINITIONS = true;
 #>

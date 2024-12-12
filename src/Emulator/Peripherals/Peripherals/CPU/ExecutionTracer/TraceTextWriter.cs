@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -35,6 +35,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         public override void Write(ExecutionTracer.Block block)
         {
             var pc = block.FirstInstructionPC;
+            var pcVirtual = block.FirstInstructionVirtualPC;
             var counter = 0;
             var hasAdditionalData = block.AdditionalDataInTheBlock.TryDequeue(out var nextAdditionalData);
 
@@ -62,7 +63,7 @@ namespace Antmicro.Renode.Peripherals.CPU
                             break;
 
                         case TraceFormat.Disassembly:
-                            var symbol = AttachedCPU.Bus.FindSymbolAt(pc);
+                            var symbol = AttachedCPU.Bus.FindSymbolAt(pc, AttachedCPU);
                             var disassembly = result.ToString().Replace("\t", " ");
                             if(symbol != null)
                             {
@@ -74,12 +75,13 @@ namespace Antmicro.Renode.Peripherals.CPU
                             }
                             break;
                     }
-                    while(hasAdditionalData && (nextAdditionalData.PC == result.PC))
+                    while(hasAdditionalData && (nextAdditionalData.PC == pcVirtual))
                     {
                         stringBuilder.AppendFormat("{0}\n", nextAdditionalData.GetStringRepresentation());
                         hasAdditionalData = block.AdditionalDataInTheBlock.TryDequeue(out nextAdditionalData);
                     }
                     pc += (ulong)result.OpcodeSize;
+                    pcVirtual += (ulong)result.OpcodeSize;
                     counter++;
                 }
                 FlushIfNecessary();

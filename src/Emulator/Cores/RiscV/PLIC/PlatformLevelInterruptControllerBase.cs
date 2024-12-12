@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -28,6 +28,8 @@ namespace Antmicro.Renode.Peripherals.IRQControllers.PLIC
                 connections[i] = new GPIO();
             }
             Connections = connections;
+
+            this.prioritiesEnabled = prioritiesEnabled;
 
             irqSources = new IrqSource[numberOfSources];
             for(var i = 0u; i < numberOfSources; i++)
@@ -80,7 +82,15 @@ namespace Antmicro.Renode.Peripherals.IRQControllers.PLIC
                 this.Log(LogLevel.Noisy, "Setting GPIO number #{0} to value {1}", number, value);
                 var irq = irqSources[number];
                 irq.State = value;
-                irq.IsPending |= value;
+
+                if(value)
+                {
+                    foreach(var irqContext in irqContexts)
+                    {
+                        irqContext.MarkSourceAsPending(irq);
+                    }
+                }
+
                 RefreshInterrupts();
             }
         }
@@ -165,12 +175,32 @@ namespace Antmicro.Renode.Peripherals.IRQControllers.PLIC
             }
         }
 
+        protected void AddContextPriorityThresholdRegister(Dictionary<long, DoubleWordRegister> registersMap, long offset, uint hartId)
+        {
+            this.Log(LogLevel.Noisy, "Adding Context {0} threshold priority register address 0x{1:X}", hartId, offset);
+            registersMap.Add(offset, new DoubleWordRegister(this)
+                .WithValueField(0, 32,
+                    valueProviderCallback: _ =>
+                    {
+                        // TODO: implement
+                        return 0;
+                    },
+                    writeCallback: (_, value) =>
+                    {
+                        // TODO: implement
+                        // Only log a warning if the software attempts to set a nonzero threshold as the model behaves as if it is 0
+                        this.Log(prioritiesEnabled && value != 0 ? LogLevel.Warning : LogLevel.Noisy, "Setting priority threshold for Context {0} not supported", hartId);
+                    }));
+        }
+
         protected virtual bool IsIrqSourceAvailable(int number)
         {
             return number >= 0 && number < irqSources.Length;
         }
 
         protected DoubleWordRegisterCollection registers;
+
+        protected readonly bool prioritiesEnabled;
 
         protected readonly IrqSource[] irqSources;
         protected readonly IrqContext[] irqContexts;

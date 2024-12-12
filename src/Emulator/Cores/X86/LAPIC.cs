@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Antmicro.Renode.Core;
 using Antmicro.Renode.Core.Structure.Registers;
+using Antmicro.Renode.Peripherals.CPU;
 using Antmicro.Renode.Peripherals.Bus;
 using Antmicro.Renode.Utilities;
 using Antmicro.Renode.Peripherals.Timers;
@@ -20,7 +21,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 {
     public sealed class LAPIC : IDoubleWordPeripheral, IIRQController, IKnownSize
     {
-        public LAPIC(IMachine machine)
+        public LAPIC(IMachine machine, int id = 0)
         {
             // frequency guessed from driver and zephyr code
             localTimer = new LimitTimer(machine.ClockSource, 32000000, this, nameof(localTimer), direction: Direction.Descending, workMode: WorkMode.OneShot, eventEnabled: true, divider: 2);
@@ -37,8 +38,10 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 }
             };
             IRQ = new GPIO();
+            ID = id;
             DefineRegisters();
             Reset();
+            this.machine = machine;
         }
 
         public void OnGPIO(int number, bool value)
@@ -142,10 +145,16 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 
         public GPIO IRQ { get; private set; }
 
+        public int ID { get; }
+
         private void DefineRegisters()
         {
             var addresses = new Dictionary<long, DoubleWordRegister>
             {
+                {(long)Registers.LocalAPICId, new DoubleWordRegister(this)
+                                .WithReservedBits(0, 24)
+                                .WithValueField(24, 8, FieldMode.Read, valueProviderCallback: _ => (ulong)this.ID)
+                },
                 {(long)Registers.LocalAPICVersion, new DoubleWordRegister(this, Version + (MaxLVTEntry << 16))
                                 .WithValueField(0, 8, FieldMode.Read, valueProviderCallback: _ => Version)
                                 .WithValueField(16, 8, FieldMode.Read, valueProviderCallback: _ => MaxLVTEntry)
@@ -161,6 +170,45 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 {(long)Registers.SpuriousInterrupt, new DoubleWordRegister(this, 0xFF)
                                 .WithTag("Spurious Vector, older bits", 4, 4)
                                 .WithFlag(8, out lapicEnabled, changeCallback: ApicEnabledChanged, name: "APIC S/W enable/disable")
+                },
+                {(long)Registers.InterruptCommandLo, new DoubleWordRegister(this)
+                                .WithTag("Vector", 0, 8)
+                                .WithValueField(8, 3, out var deliveryMode, name: "Delivery Mode")
+                                .WithTaggedFlag("Destination Mode", 11)
+                                .WithReservedBits(12, 2)
+                                .WithTaggedFlag("Level", 14)
+                                .WithTaggedFlag("Trigger Mode", 15)
+                                .WithReservedBits(16, 2)
+                                .WithTag("Destination Shorthand", 18, 2)
+                                .WithReservedBits(20, 12)
+                                .WithWriteCallback((_,__) =>
+                                {
+                                    switch((LocalVectorTableDeliveryMode)deliveryMode.Value)
+                                    {
+                                        case LocalVectorTableDeliveryMode.SIPI:
+                                            // Find the CPU of LAPIC with specified ID
+                                            var cpu = machine.SystemBus.GetCPUs().OfType<BaseX86>()
+                                                .FirstOrDefault(x => (ulong)x.Lapic.ID == destination.Value);
+
+                                            if(cpu == null)
+                                            {
+                                                this.WarningLog("There is no cpu having LAPIC with id {0}. Not sending IPI", destination.Value);
+                                            }
+                                            else
+                                            {
+                                                this.InfoLog("Unhalting cpu having LAPIC with id {0}", destination.Value);
+                                                cpu.IsHalted = false;
+                                            }
+                                            break;
+
+                                        default:
+                                            this.WarningLog("Received unsupported delivery mode value: {0}", deliveryMode.Value);
+                                            break;
+                                    }
+                                })
+                },
+                {(long)Registers.InterruptCommandHi, new DoubleWordRegister(this)
+                                .WithValueField(0, 32, out destination, name: "Destination Field")
                 },
                 {(long)Registers.LocalVectorTablePerformanceMonitorCounters, new DoubleWordRegister(this, 0x10000)
                                 .WithTag("Vector", 0, 8)
@@ -321,9 +369,11 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
         private DoubleWordRegisterCollection registers;
         private IFlagRegisterField localTimerMasked;
         private IValueRegisterField localTimerVector;
+        private IValueRegisterField destination;
         private IFlagRegisterField lapicEnabled;
 
         private readonly object sync = new object();
+        private readonly IMachine machine;
 
         private IRQState[] interrupts = new IRQState[availableVectors];
         private Stack<int> activeIrqs = new Stack<int>();
@@ -347,6 +397,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             SMI = 2,
             NMI = 4,
             INIT = 5,
+            SIPI = 6,
             ExtINT = 7
             //other values are reserved
         }
@@ -368,8 +419,8 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             InterruptRequest = 0x200,
             ErrorStatus = 0x280,
             LocalVectorTableCMCI = 0x2F0,
-            InterruptCommandHi = 0x300,
-            InterruptCommandLo = 0x310,
+            InterruptCommandLo = 0x300,
+            InterruptCommandHi = 0x310,
             LocalVectorTableTimer = 0x320,
             LocalVectorTableThermal = 0x330,
             LocalVectorTablePerformanceMonitorCounters = 0x340,

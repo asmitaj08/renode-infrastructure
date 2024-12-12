@@ -35,7 +35,11 @@ using Machine = Antmicro.Renode.Core.Machine;
 
 namespace Antmicro.Renode.Peripherals.CPU
 {
-    public abstract class BaseCPU : CPUCore, ICPU, IDisposable, ITimeSink, IInitableCPU
+    /// <summary>
+    /// <see cref="BaseCPU"/> implements <see cref="ICluster{T}"/> interface
+    /// to seamlessly handle either cluster or CPU as a parameter to different methods.
+    /// </summary>
+    public abstract class BaseCPU : CPUCore, ICluster<BaseCPU>, ICPU, IDisposable, ITimeSink, IInitableCPU
     {
         protected BaseCPU(uint id, string cpuType, IMachine machine, Endianess endianness, CpuBitness bitness = CpuBitness.Bits32)
             : base(id)
@@ -53,46 +57,9 @@ namespace Antmicro.Renode.Peripherals.CPU
             isPaused = true;
 
             singleStepSynchronizer = new Synchronizer();
-        }
+            EmulationManager.Instance.CurrentEmulation.SingleStepBlockingChanged += () => UpdateHaltedState();
 
-        public string[,] GetRegistersValues()
-        {
-            var result = new Dictionary<string, ulong>();
-            var properties = GetType().GetProperties();
-
-            //uint may be marked with [Register]
-            var registerInfos = properties.Where(x => x.CanRead && x.GetCustomAttributes(false).Any(y => y is RegisterAttribute));
-            foreach(var registerInfo in registerInfos)
-            {
-                try
-                {
-                    result.Add(registerInfo.Name, (ulong)((dynamic)registerInfo.GetGetMethod().Invoke(this, null)));
-                }
-                catch(TargetInvocationException ex)
-                {
-                    if(!(ex.InnerException is RegisterValueUnavailableException))
-                    {
-                        // Something actually went wrong, unwrap exception
-                        ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
-                    }
-                    // Otherwise value is not available, ignore
-                }
-            }
-
-            //every field that is IRegister, contains properties interpreted as registers.
-            var compoundRegisters = properties.Where(x => typeof(IRegisters).IsAssignableFrom(x.PropertyType));
-            foreach(var register in compoundRegisters)
-            {
-                var compoundRegister = (IRegisters)register.GetGetMethod().Invoke(this, null);
-                foreach(var key in compoundRegister.Keys)
-                {
-                    result.Add("{0}{1}".FormatWith(register.Name, key), (ulong)(((dynamic)compoundRegister)[key]));
-                }
-
-            }
-            var table = new Table().AddRow("Name", "Value");
-            table.AddRows(result, x => x.Key, x => "0x{0:X}".FormatWith(x.Value));
-            return table.ToArray();
+            Clustered = new BaseCPU[] { this };
         }
 
         public virtual void InitFromElf(IELF elf)
@@ -112,12 +79,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             SetPCFromEntryPoint(uImage.EntryPoint);
         }
 
-        public ulong Step(bool blocking)
-        {
-            return Step(1, blocking);
-        }
-
-        public ulong Step(int count = 1, bool? blocking = null)
+        public ulong Step(int count = 1)
         {
             if(IsHalted)
             {
@@ -127,8 +89,26 @@ namespace Antmicro.Renode.Peripherals.CPU
 
             lock(singleStepSynchronizer.Guard)
             {
-                ChangeExecutionModeToSingleStep(blocking);
-                Resume();
+                ExecutionMode = ExecutionMode.SingleStep;
+
+                // Starting emulation has to be done after changing ExecutionMode. Otherwise, continuous CPUs won't be waiting for step command.
+                var emulation = EmulationManager.Instance.CurrentEmulation;
+                if(!emulation.IsStarted)
+                {
+                    var emulationCPUs = emulation.Machines.SelectMany(x => x.SystemBus.GetCPUs());
+                    var continuousCPUs = emulationCPUs.Where(x => x.ExecutionMode == ExecutionMode.Continuous);
+                    if(continuousCPUs.Any())
+                    {
+                        this.Log(LogLevel.Info, "Automatically starting all CPUs due to '{0}' including CPUs with {1} {2}: {3}", nameof(Step),
+                            ExecutionMode.Continuous, nameof(ExecutionMode), Misc.PrettyPrintCollection(continuousCPUs, x => x.GetName())
+                            );
+                    }
+                    emulation.StartAll();
+                }
+                else
+                {
+                    Resume();
+                }
 
                 this.Log(LogLevel.Noisy, "Stepping {0} step(s)", count);
 
@@ -139,7 +119,7 @@ namespace Antmicro.Renode.Peripherals.CPU
                 }
 
                 // Invoking this to allow virtual time to be granted, without setting currentHaltedState to false
-                if(executionMode == ExecutionMode.SingleStepNonBlocking)
+                if(!IsSingleStepBlocking)
                 {
                     UpdateHaltedState(ignoreExecutionMode: true);
                 }
@@ -185,11 +165,17 @@ namespace Antmicro.Renode.Peripherals.CPU
             // by default do nothing
         }
 
+        public abstract ExecutionResult ExecuteInstructions(ulong numberOfInstructionsToExecute, out ulong numberOfExecutedInstructions);
+
         public abstract string Architecture { get; }
 
         public Endianess Endianness { get; }
 
         public IBusController Bus => machine.SystemBus;
+
+        public IEnumerable<ICluster<BaseCPU>> Clusters { get; } = new List<ICluster<BaseCPU>>(0);
+
+        public IEnumerable<BaseCPU> Clustered { get; }
 
         public string Model { get; }
 
@@ -246,11 +232,16 @@ namespace Antmicro.Renode.Peripherals.CPU
                         if(started && !isPaused)
                         {
                             wasRunningWhenHalted = true;
-                            Pause(new HaltArguments(HaltReason.Pause, Id), checkPauseGuard: false);
+                            Pause(new HaltArguments(HaltReason.Pause, this), checkPauseGuard: false);
                         }
                     }
                     else
                     {
+                        if(State == CPUState.InReset)
+                        {
+                            State = CPUState.Running;
+                        }
+
                         if(wasRunningWhenHalted)
                         {
                             Resume();
@@ -273,6 +264,10 @@ namespace Antmicro.Renode.Peripherals.CPU
                     return;
                 }
                 state = value;
+                if(oldState == CPUState.InReset)
+                {
+                    OnLeavingResetState();
+                }
                 StateChanged?.Invoke(this, oldState, value);
             }
         }
@@ -331,6 +326,8 @@ namespace Antmicro.Renode.Peripherals.CPU
         public abstract ulong ExecutedInstructions { get; }
         public abstract RegisterValue PC { get; set; }
 
+        public bool IsPaused => isPaused;
+
         protected virtual void InnerPause(bool onCpuThread, bool checkPauseGuard)
         {
             RequestPause();
@@ -384,16 +381,24 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
+        protected virtual void OnLeavingResetState()
+        {
+            // Intentionally left blank.
+        }
+
         protected override void OnResume()
         {
-            // Console.WriteLine("\n^^^^^^^^^^^^^^RESUME baseCPU.cs^^^^^^^^^^^^\n");
+            if(State == CPUState.InReset && !currentHaltedState)
+            {
+                State = CPUState.Running;
+            }
             singleStepSynchronizer.Enabled = IsSingleStepMode;
             StartCPUThread();
         }
 
         protected override void OnPause()
         {
-            Pause(new HaltArguments(HaltReason.Pause, Id), checkPauseGuard: true);
+            Pause(new HaltArguments(HaltReason.Pause, this), checkPauseGuard: true);
         }
 
         protected virtual void RequestPause()
@@ -407,19 +412,6 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
-        protected bool ChangeExecutionModeToSingleStep(bool? blocking = null)
-        {
-            var mode = ExecutionMode;
-            var isNonBlocking = mode == ExecutionMode.SingleStepNonBlocking;
-            if(blocking == isNonBlocking)
-            {
-                this.Log(LogLevel.Warning, "Changing current step configuration from {0} to {1}", mode, blocking.Value ? ExecutionMode.SingleStepBlocking : ExecutionMode.SingleStepNonBlocking);
-            }
-            blocking = blocking ?? mode != ExecutionMode.SingleStepNonBlocking;
-            ExecutionMode = blocking.Value ? ExecutionMode.SingleStepBlocking : ExecutionMode.SingleStepNonBlocking;
-            return blocking.Value;
-        }
-
         protected virtual void DisposeInner(bool silent = false)
         {
             disposing = true;
@@ -428,7 +420,8 @@ namespace Antmicro.Renode.Peripherals.CPU
                 this.NoisyLog("About to dispose CPU.");
             }
             started = false;
-            Pause(new HaltArguments(HaltReason.Abort, Id), checkPauseGuard: false);
+            Pause(new HaltArguments(HaltReason.Abort, this), checkPauseGuard: false);
+            singleStepSynchronizer.Enabled = false;
         }
 
         protected void InvokeHalted(HaltArguments arguments)
@@ -468,7 +461,7 @@ restart:
                                     using(this.ObtainSinkInactiveState())
                                     {
                                         this.Log(LogLevel.Noisy, "Waiting for a step instruction (PC=0x{0:X8}).", PC.RawValue);
-                                        InvokeHalted(new HaltArguments(HaltReason.Step, Id));
+                                        InvokeHalted(new HaltArguments(HaltReason.Step, this));
                                         if(!singleStepSynchronizer.WaitForStepCommand())
                                         {
                                             this.Trace();
@@ -559,18 +552,11 @@ restart:
                 this.Trace();
                 return CpuResult.NothingExecuted;
             }
-
-            if(State != CPUState.Running)
-            {
-                // Here we know for sure that the machine has been started and the CPU isn't halted.
-                // Currently, the state can be Aborted, InReset and Running so stepping etc. is ignored.
-                State = CPUState.Running;
-            }
-
             this.Trace($"CPU thread body running... granted {interval.Ticks} ticks");
             var mmuFaultThrown = false;
             var initialExecutedResiduum = executedResiduum;
             var initialTotalElapsedTime = TimeHandle.TotalElapsedTime;
+            TimeInterval virtualTimeAhead;
 
             var instructionsToExecuteThisRound = interval.ToCPUCycles(PerformanceInMips, out ulong ticksResiduum);
             if(instructionsToExecuteThisRound <= executedResiduum)
@@ -586,11 +572,9 @@ restart:
             {
                 this.Trace($"CPU thread body in progress; {instructionsLeftThisRound} instructions left...");
 
-                var instructionsToNearestLimit = InstructionsToNearestLimit();
-
                 // this puts a limit on instructions to execute in one round
                 // and makes timers update independent of the current quantum
-                var toExecute = Math.Min(instructionsToNearestLimit, instructionsLeftThisRound);
+                var toExecute = Math.Min(InstructionsToNearestLimit(), instructionsLeftThisRound);
 
                 if(skipInstructions > 0)
                 {
@@ -605,6 +589,9 @@ restart:
                     // call SyncTime during ExecuteInstructions
                 }
 
+                // set upper limit on instructions to execute to `int.MaxValue`
+                // as otherwise it would overflow further down in ExecuteInstructions
+                toExecute = Math.Min(toExecute, int.MaxValue);
                 var result = ExecutionResult.Ok;
                 if(toExecute > 0)
                 {
@@ -612,7 +599,7 @@ restart:
 
                     result = ExecuteInstructions(toExecute, out var executed);
                     this.Trace($"CPU executed {executed} instructions and returned {result}");
-                    machine.Profiler?.Log(new InstructionEntry((byte)Id, ExecutedInstructions));
+                    machine.Profiler?.Log(new InstructionEntry(machine.SystemBus.GetCPUSlot(this), ExecutedInstructions));
                     ReportProgress(executed);
                 }
                 if(ExecutionFinished(result))
@@ -627,15 +614,15 @@ restart:
                         this.Trace();
                         var instructionsToSkip = Math.Min(InstructionsToNearestLimit(), instructionsLeftThisRound);
 
-                        if(!machine.LocalTimeSource.AdvanceImmediately)
+                        virtualTimeAhead = machine.LocalTimeSource.ElapsedVirtualHostTimeDifference;
+                        if(!machine.LocalTimeSource.AdvanceImmediately && virtualTimeAhead.Ticks > 0 && instructionsToSkip > 0)
                         {
-                            var intervalToSleep = TimeInterval.FromCPUCycles(instructionsToSkip, PerformanceInMips, out var unused).ToTimeSpan();
-                            var interrupted = sleeper.Sleep(intervalToSleep, out var intervalSlept);
-
-                            if(interrupted)
-                            {
-                                instructionsToSkip = TimeInterval.FromTimeSpan(intervalSlept).ToCPUCycles(PerformanceInMips, out var _);
-                            }
+                            // Don't fall behind realtime by sleeping
+                            var intervalToSleep = TimeInterval.FromCPUCycles(instructionsToSkip, PerformanceInMips, out var cyclesResiduum).WithTicksMin(virtualTimeAhead.Ticks);
+                            sleeper.Sleep(intervalToSleep.ToTimeSpan(out var nsResiduum), out var intervalSlept);
+                            // If we have a CPU of less than 10 MIPS, it might be the case that the interval slept (which is in units of 100 ns)
+                            // is less than 1 instruction. Just round up it in this case.
+                            instructionsToSkip = Math.Max(TimeInterval.FromTimeSpan(intervalSlept, nsResiduum).ToCPUCycles(PerformanceInMips, out var _) + cyclesResiduum, 1);
                         }
 
                         ReportProgress(instructionsToSkip);
@@ -658,6 +645,20 @@ restart:
                     this.Trace(result.ToString());
                     break;
                 }
+            }
+
+            // If AdvanceImmediately is not enabled, and virtual time has surpassed host time,
+            // sleep to make up the difference.
+            // However, if pause was requested, we want to exit as soon as possible without sleeping,
+            // because it was requested from interactive context (e.g. "pause" monitor command).
+            virtualTimeAhead = machine.LocalTimeSource.ElapsedVirtualHostTimeDifference;
+            if(!machine.LocalTimeSource.AdvanceImmediately && virtualTimeAhead.Ticks > 0 && !isPaused)
+            {
+                // Ignore the return value, if the sleep is interrupted we'll make up any extra
+                // remaining difference next time. Preserve the interrupt request so that if this
+                // extra sleep is interrupted due to a CPU pause, it will be picked up by the WFI
+                // handling above.
+                sleeper.Sleep(virtualTimeAhead.ToTimeSpan(), out var _, preserveInterruptRequest: true);
             }
 
             this.Trace("CPU thread body finished");
@@ -683,7 +684,7 @@ restart:
                 // reportedInstructions + executedResiduum + instructionsLeft = instructionsToExecuteThisRound
                 // reportedInstructions is divisible by instructionsPerTick and instructionsToExecuteThisRound is divisible by instructionsPerTick
                 // so instructionsLeft + executedResiduum is divisible by instructionsPerTick and residuum is 0
-                var timeLeft = TimeInterval.FromCPUCycles(instructionsLeft + executedResiduum, PerformanceInMips, out var residuum) + TimeInterval.FromTicks(ticksResiduum);
+                var timeLeft = TimeInterval.FromCPUCycles(instructionsLeft + executedResiduum, PerformanceInMips, out var residuum) + TimeInterval.FromMicroseconds(ticksResiduum);
                 DebugHelper.Assert(residuum == 0);
                 if(instructionsLeft > 0)
                 {
@@ -759,7 +760,7 @@ restart:
 
         protected virtual bool UpdateHaltedState(bool ignoreExecutionMode = false)
         {
-            var shouldBeHalted = (isHaltedRequested || (executionMode == ExecutionMode.SingleStepNonBlocking && !ignoreExecutionMode));
+            var shouldBeHalted = isHaltedRequested || (IsSingleStepMode && !IsSingleStepBlocking && !ignoreExecutionMode);
 
             if(shouldBeHalted == currentHaltedState)
             {
@@ -786,10 +787,10 @@ restart:
             set => skipInstructions = value;
         }
 
-        protected abstract ExecutionResult ExecuteInstructions(ulong numberOfInstructionsToExecute, out ulong numberOfExecutedInstructions);
+        protected static bool IsSingleStepBlocking => EmulationManager.Instance.CurrentEmulation.SingleStepBlocking;
 
         protected bool InDebugMode => DebuggerConnected && ShouldEnterDebugMode && IsSingleStepMode;
-        protected bool IsSingleStepMode => executionMode == ExecutionMode.SingleStepNonBlocking || executionMode == ExecutionMode.SingleStepBlocking;
+        protected bool IsSingleStepMode => executionMode == ExecutionMode.SingleStep;
 
         protected bool shouldEnterDebugMode;
         protected bool neverWaitForInterrupt;

@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2022 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using Antmicro.Migrant;
+using Antmicro.Renode.Utilities;
 
 namespace Antmicro.Renode.Time
 {
@@ -20,6 +21,7 @@ namespace Antmicro.Renode.Time
             this.skipAdvancesHigherThanNearestLimit = skipAdvancesHigherThanNearestLimit;
             clockEntries = new List<ClockEntry>();
             clockEntriesUpdateHandlers = new List<UpdateHandlerDelegate>();
+            unaccountedTimes = new List<TimeInterval>();
             toNotify = new List<Action>();
             nearestLimitIn = TimeInterval.Maximal;
             sync = new object();
@@ -78,6 +80,7 @@ namespace Antmicro.Renode.Time
                 UpdateLimits();
                 clockEntries.Add(entry);
                 clockEntriesUpdateHandlers.Add(null);
+                unaccountedTimes.Add(TimeInterval.Empty);
                 UpdateUpdateHandler(clockEntries.Count - 1);
                 UpdateLimits();
             }
@@ -98,6 +101,7 @@ namespace Antmicro.Renode.Time
                     {
                         clockEntries.Add(factoryIfNonExistent());
                         clockEntriesUpdateHandlers.Add(null);
+                        unaccountedTimes.Add(TimeInterval.Empty);
                         UpdateUpdateHandler(clockEntries.Count - 1);
                     }
                     else
@@ -118,12 +122,58 @@ namespace Antmicro.Renode.Time
         {
             lock(sync)
             {
-                UpdateLimits();
-                var result = clockEntries.FirstOrDefault(x => x.Handler == handler);
-                if(result.Handler == null)
+                var i = clockEntries.IndexOf(x => x.Handler == handler);
+                if(i == -1)
                 {
                     throw new KeyNotFoundException();
                 }
+                var result = clockEntries[i];
+
+                // Perform a full update of the clock entry we're getting
+                if(!result.Enabled)
+                {
+                    return result;
+                }
+                if(updateAlreadyInProgress.Value)
+                {
+                    return result;
+                }
+                updateAlreadyInProgress.Value = true;
+                try
+                {
+                    var updateHandler = clockEntriesUpdateHandlers[i];
+                    if(updateHandler(ref result, elapsed + unaccountedTimes[i], ref nearestLimitIn))
+                    {
+                        result.Handler();
+                    }
+                    // This elapsed time is now accounted for this entry so clear it
+                    unaccountedTimes[i] = TimeInterval.Empty;
+                }
+                finally
+                {
+                    updateAlreadyInProgress.Value = false;
+                }
+                clockEntries[i] = result;
+
+                // Clear elapsed and deposit it as unaccounted time on all other enabled clock entries
+                var triggerFullUpdate = false;
+                for(int j = 0; j < clockEntries.Count; ++j)
+                {
+                    if(i != j && clockEntries[j].Enabled)
+                    {
+                        unaccountedTimes[j] += elapsed;
+                        triggerFullUpdate |= unaccountedTimes[j] >= nearestLimitIn;
+                    }
+                }
+                elapsed = TimeInterval.Empty;
+
+                if(triggerFullUpdate)
+                {
+                    UpdateLimits();
+                    // unaccountedTimes cleared by Update
+                    result = clockEntries[i];
+                }
+
                 return result;
             }
         }
@@ -165,6 +215,7 @@ namespace Antmicro.Renode.Time
                 UpdateLimits();
                 clockEntries.RemoveAt(indexToRemove);
                 clockEntriesUpdateHandlers.RemoveAt(indexToRemove);
+                unaccountedTimes.RemoveAt(indexToRemove);
                 UpdateLimits();
             }
             NotifyNumberOfEntriesChanged(oldCount, clockEntries.Count);
@@ -189,6 +240,7 @@ namespace Antmicro.Renode.Time
                 result = clockEntries.ToArray();
                 clockEntries.Clear();
                 clockEntriesUpdateHandlers.Clear();
+                unaccountedTimes.Clear();
             }
             NotifyNumberOfEntriesChanged(oldCount, 0);
             return result;
@@ -220,80 +272,55 @@ namespace Antmicro.Renode.Time
 
         private static bool HandleDirectionDescendingPositiveRatio(ref ClockEntry entry, TimeInterval time, ref TimeInterval nearestTickIn)
         {
-            var ticksByRatio = time.Ticks * (ulong)entry.Ratio;
-            var isReached = ticksByRatio >= entry.Value;
-            entry.ValueResiduum = 0;
+            var emulatorTicks = time.Ticks;
+            var entryTicks = emulatorTicks * entry.Ratio + entry.ValueResiduum;
+            var isReached = entryTicks.Integer >= entry.Value;
+            entry.ValueResiduum = entryTicks.Fractional;
             if(isReached)
             {
                 entry.Value = entry.Period;
+                entry.ValueResiduum = Fraction.Zero;
                 entry = entry.With(enabled: entry.Enabled & (entry.WorkMode != WorkMode.OneShot));
             }
             else
             {
-                entry.Value -= ticksByRatio;
+                entry.Value -= entryTicks.Integer;
             }
 
-            nearestTickIn = nearestTickIn.WithTicksMin((entry.Value - 1) / (ulong)entry.Ratio + 1);
-            return isReached;
-        }
-
-        private static bool HandleDirectionDescendingNegativeRatio(ref ClockEntry entry, TimeInterval time, ref TimeInterval nearestTickIn)
-        {
-            var ratio = (ulong)(-entry.Ratio);
-            var ticksByRatio = (time.Ticks + entry.ValueResiduum) / ratio;
-            var isReached = ticksByRatio >= entry.Value;
-            entry.ValueResiduum = (time.Ticks + entry.ValueResiduum) % ratio;
-
-            if(isReached)
+            var emulatorTicksToLimit = (entry.Value - entry.ValueResiduum) / entry.Ratio;
+            var wholeTicksToLimit = emulatorTicksToLimit.Integer;
+            if(wholeTicksToLimit < uint.MaxValue && emulatorTicksToLimit.Fractional.Numerator != 0)
             {
-                // TODO: maybe issue warning if its lower than zero
-                entry.Value = entry.Period;
-                entry = entry.With(enabled: entry.Enabled & (entry.WorkMode != WorkMode.OneShot));
+                wholeTicksToLimit += 1;
             }
-            else
-            {
-                entry.Value -= ticksByRatio;
-            }
-
-            nearestTickIn = nearestTickIn.WithTicksMin(entry.Value * ratio - entry.ValueResiduum);
+            nearestTickIn = nearestTickIn.WithTicksMin(wholeTicksToLimit);
             return isReached;
         }
 
         private static bool HandleDirectionAscendingPositiveRatio(ref ClockEntry entry, TimeInterval time, ref TimeInterval nearestTickIn)
         {
-            var flag = false;
-
-            entry.Value += time.Ticks * (ulong)entry.Ratio;
-            entry.ValueResiduum = 0;
-
-            if(entry.Value >= entry.Period)
-            {
-                flag = true;
-                entry.Value = 0;
-                entry = entry.With(enabled: entry.Enabled & (entry.WorkMode != WorkMode.OneShot));
-            }
-
-            nearestTickIn = nearestTickIn.WithTicksMin((entry.Period - entry.Value - 1) / (ulong)entry.Ratio + 1);
-            return flag;
-        }
-
-        private static bool HandleDirectionAscendingNegativeRatio(ref ClockEntry entry, TimeInterval time, ref TimeInterval nearestTickIn)
-        {
-            var flag = false;
-            ulong ratio = (ulong)(-entry.Ratio);
-
-            entry.Value += (time.Ticks + entry.ValueResiduum) / ratio;
-            entry.ValueResiduum = (time.Ticks + entry.ValueResiduum) % ratio;
+            var emulatorTicks = time.Ticks;
+            var entryTicks = emulatorTicks * entry.Ratio + entry.ValueResiduum;
+            var isReached = false;
+            entry.Value += entryTicks.Integer;
+            entry.ValueResiduum = entryTicks.Fractional;
 
             if(entry.Value >= entry.Period)
             {
-                flag = true;
+                isReached = true;
                 entry.Value = 0;
+                entry.ValueResiduum = Fraction.Zero;
                 entry = entry.With(enabled: entry.Enabled & (entry.WorkMode != WorkMode.OneShot));
             }
 
-            nearestTickIn = nearestTickIn.WithTicksMin(((entry.Period - entry.Value) * ratio) - entry.ValueResiduum);
-            return flag;
+            var emulatorTicksToLimit = (entry.Period - entry.Value - entry.ValueResiduum) / entry.Ratio;
+            var wholeTicksToLimit = emulatorTicksToLimit.Integer;
+            if(wholeTicksToLimit < uint.MaxValue && emulatorTicksToLimit.Fractional.Numerator != 0)
+            {
+                wholeTicksToLimit += 1;
+            }
+            nearestTickIn = nearestTickIn.WithTicksMin(wholeTicksToLimit);
+            return isReached;
         }
 
         private void AdvanceInner(TimeInterval time, bool immediately)
@@ -369,11 +396,12 @@ namespace Antmicro.Renode.Time
                         {
                             continue;
                         }
-                        if(updateHandler(ref clockEntry, time, ref nearestLimitIn) && !alreadyRunHandlers.Contains(clockEntry.Handler))
+                        if(updateHandler(ref clockEntry, time + unaccountedTimes[i], ref nearestLimitIn) && !alreadyRunHandlers.Contains(clockEntry.Handler))
                         {
                             toNotify.Add(clockEntry.Handler);
                         }
                         clockEntries[i] = clockEntry;
+                        unaccountedTimes[i] = TimeInterval.Empty;
                     }
                 }
                 try
@@ -399,25 +427,11 @@ namespace Antmicro.Renode.Time
         {
             if(clockEntries[clockEntryIndex].Direction == Direction.Descending)
             {
-                if(clockEntries[clockEntryIndex].Ratio > 0)
-                {
-                    clockEntriesUpdateHandlers[clockEntryIndex] = HandleDirectionDescendingPositiveRatio;
-                }
-                else
-                {
-                    clockEntriesUpdateHandlers[clockEntryIndex] = HandleDirectionDescendingNegativeRatio;
-                }
+                clockEntriesUpdateHandlers[clockEntryIndex] = HandleDirectionDescendingPositiveRatio;
             }
             else
             {
-                if(clockEntries[clockEntryIndex].Ratio > 0)
-                {
-                    clockEntriesUpdateHandlers[clockEntryIndex] = HandleDirectionAscendingPositiveRatio;
-                }
-                else
-                {
-                    clockEntriesUpdateHandlers[clockEntryIndex] = HandleDirectionAscendingNegativeRatio;
-                }
+                clockEntriesUpdateHandlers[clockEntryIndex] = HandleDirectionAscendingPositiveRatio;
             }
         }
 
@@ -433,6 +447,7 @@ namespace Antmicro.Renode.Time
         private readonly List<Action> toNotify;
         private readonly List<ClockEntry> clockEntries;
         private readonly List<UpdateHandlerDelegate> clockEntriesUpdateHandlers;
+        private readonly List<TimeInterval> unaccountedTimes;
         private readonly object sync;
 
         private delegate bool UpdateHandlerDelegate(ref ClockEntry entry, TimeInterval time, ref TimeInterval nearestTickIn);

@@ -22,6 +22,8 @@ using Antmicro.Renode.Network;
 using System.Diagnostics;
 using Antmicro.Renode.Core.Structure.Registers;
 using System.Threading;
+using Antmicro.Renode.Peripherals.CPU;
+using Antmicro.Renode.Logging.Profiling;
 
 namespace Antmicro.Renode.Utilities
 {
@@ -472,6 +474,11 @@ namespace Antmicro.Renode.Utilities
             return true;
         }
 
+        public static IEnumerable<int> ConcatRangeFromTo(this IEnumerable<int> enumerable, int start, int stopIncluded)
+        {
+            return enumerable.Concat(Enumerable.Range(start, stopIncluded - start + 1));
+        }
+
         // MoreLINQ - Extensions to LINQ to Objects
         // Copyright (c) 2008 Jonathan Skeet. All rights reserved.
         public static IEnumerable<TSource> DistinctBy<TSource, TKey>(this IEnumerable<TSource> source, Func<TSource, TKey> keySelector,
@@ -544,6 +551,20 @@ namespace Antmicro.Renode.Utilities
             }
         }
 
+        public static TValue GetOrDefault<TKey, TValue>(this IReadOnlyDictionary<TKey, TValue> @this, TKey key)
+        {
+            return @this.GetOrDefault(key, default(TValue));
+        }
+
+        public static TValue GetOrDefault<TKey, TValue>(this IReadOnlyDictionary<TKey, TValue> @this, TKey key, TValue defaultValue)
+        {
+            if(@this.TryGetValue(key, out var value))
+            {
+                return value;
+            }
+            return defaultValue;
+        }
+
         public static byte HiByte(this UInt16 value)
         {
             return (byte)((value >> 8) & 0xFF);
@@ -552,6 +573,22 @@ namespace Antmicro.Renode.Utilities
         public static byte LoByte(this UInt16 value)
         {
             return (byte)(value & 0xFF);
+        }
+
+        public static ulong BinaryToGray(ulong binaryEncoding)
+        {
+            return binaryEncoding ^ (binaryEncoding >> 1);
+        }
+
+        public static ulong GrayToBinary(ulong grayEncoding)
+        {
+            ulong binaryEncoding = grayEncoding;
+            while(grayEncoding > 0)
+            {
+                grayEncoding >>= 1;
+                binaryEncoding ^= grayEncoding;
+            }
+            return binaryEncoding;
         }
 
         public static bool TryFromResourceToTemporaryFile(this Assembly assembly, string resourceName, out string outputFileFullPath, string nonstandardOutputFilename = null)
@@ -831,7 +868,6 @@ namespace Antmicro.Renode.Utilities
             return (ushort) (x >> 16);
         }
 
-
         public enum TransportLayerProtocol
         {
             ICMP = 0x1,
@@ -984,14 +1020,21 @@ namespace Antmicro.Renode.Utilities
             arr[id2] = tmp;
         }
 
-        public static bool EndiannessSwapInPlace(byte[] input, int width)
+        public static bool EndiannessSwapInPlace(byte[] input, int width, int offset = 0, int? length = null)
         {
-            if(input.Length % width != 0)
+            if(offset > input.Length)
             {
                 return false;
             }
 
-            for(var i = 0; i < input.Length; i += width)
+            var bytesFromOffset = input.Length - offset;
+            var len = length ?? bytesFromOffset;
+            if(len > bytesFromOffset || len % width != 0)
+            {
+                return false;
+            }
+
+            for(var i = offset; i < offset + len; i += width)
             {
                 for(var j = 0; j < width / 2; j++)
                 {
@@ -1229,6 +1272,11 @@ namespace Antmicro.Renode.Utilities
         public static string PrettyPrintCollectionHex<T>(IEnumerable<T> collection)
         {
             return PrettyPrintCollection(collection, x => "0x{0:X}".FormatWith(x));
+        }
+
+        public static LazyHexString<T> ToLazyHexString<T>(this IEnumerable<T> collection)
+        {
+            return new LazyHexString<T>(collection);
         }
 
         public static UInt32 ToUInt32Smart(this byte[] @this)
@@ -1486,6 +1534,17 @@ namespace Antmicro.Renode.Utilities
             }
         }
 
+        public static T[] CopyAndResize<T>(this T[] source, int length)
+        {
+            if(source.Length == length)
+            {
+                return source.ToArray();
+            }
+            var data = new T[length];
+            Array.Copy(source, data, Math.Min(source.Length, length));
+            return data;
+        }
+
         public static int CountTrailingZeroes(uint value)
         {
             int count = 0;
@@ -1647,6 +1706,25 @@ namespace Antmicro.Renode.Utilities
             // This will enumerate the collection twice - it might be not optimal for performance sensitive operations
             return @this.Skip(Math.Max(0, @this.Count() - count));
         }
+
+        public static IEnumerable<T[]> Chunk<T>(this IEnumerable<T> @this, int size)
+        {
+            var buffer = new Queue<T>();
+            foreach(var item in @this)
+            {
+                buffer.Enqueue(item);
+                if(buffer.Count == size)
+                {
+                    yield return buffer.ToArray();
+                    buffer.Clear();
+                }
+            }
+
+            if(buffer.Count > 0)
+            {
+                yield return buffer.ToArray();
+            }
+        }
 #endif
 
         public static ulong CastToULong(dynamic number)
@@ -1656,6 +1734,74 @@ namespace Antmicro.Renode.Utilities
                 return (ulong)number;
             }
             throw new ArgumentException($"Can't cast {number.GetType()} to ulong", "number");
+        }
+
+        public static IEnumerable<T> Prefix<T>(IEnumerable<T> enumerable, Func<T, T, T> function)
+        {
+            var enumerator = enumerable.GetEnumerator();
+            // Using `out var` here causes a compiler crash in Mono 6.8.0.105+dfsg-3.3 from Debian
+            if(!enumerator.TryGetNext(out T prefix))
+            {
+                yield break;
+            }
+            while(enumerator.MoveNext())
+            {
+                yield return prefix;
+                prefix = function(prefix, enumerator.Current);
+            }
+            yield return prefix;
+        }
+
+        public static void AddIf<T>(this ICollection<T> collection, bool condition, T item)
+        {
+            if(condition)
+            {
+                collection.Add(item);
+            }
+        }
+
+        public static bool IsStructType(Type type)
+        {
+            // According to docs, IsValueType return true for structs, enums and primitive types
+            return type.IsValueType && !type.IsPrimitive && !type.IsEnum;
+        }
+
+        public static MpuAccess MemoryOperationToMpuAccess(MemoryOperation operation)
+        {
+            switch(operation)
+            {
+                case MemoryOperation.InsnFetch:
+                    return MpuAccess.InstructionFetch;
+                case MemoryOperation.MemoryIOWrite:
+                case MemoryOperation.MemoryWrite:
+                    return MpuAccess.Write;
+                case MemoryOperation.MemoryIORead:
+                case MemoryOperation.MemoryRead:
+                    return MpuAccess.Read;
+                default:
+                    throw new ArgumentException("Invalid conversion from MemoryOperation to MpuAccess");
+            }
+        }
+
+        public static ulong GCD(ulong a, ulong b)
+        {
+            while(a != 0 && b != 0)
+            {
+                if(a > b)
+                {
+                    a %= b;
+                }
+                else
+                {
+                    b %= a;
+                }
+            }
+            return a | b;
+        }
+
+        public static ulong LCM(ulong a, ulong b)
+        {
+            return a / GCD(a, b) * b;
         }
 
         public static DateTime UnixEpoch = new DateTime(1970, 1, 1);
@@ -1671,6 +1817,21 @@ namespace Antmicro.Renode.Utilities
 
         public MethodInfo Method { get; }
         public T Attribute { get; }
+    }
+
+    public class LazyHexString<T>
+    {
+        public LazyHexString(IEnumerable<T> collection)
+        {
+            this.collection = collection;
+        }
+
+        public override string ToString()
+        {
+            return Misc.PrettyPrintCollectionHex(collection);
+        }
+
+        private readonly IEnumerable<T> collection;
     }
 }
 

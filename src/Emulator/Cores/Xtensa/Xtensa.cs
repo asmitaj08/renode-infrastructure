@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2022 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -72,7 +72,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             set
             {
                 base.ExecutionMode = value;
-                TlibUpdateExecutionMode((uint)value);
+                TlibSetSingleStep(IsSingleStepMode ? 1u : 0u);
             }
         }
 
@@ -111,7 +111,10 @@ namespace Antmicro.Renode.Peripherals.CPU
 
                 var buf = Bus.ReadBytes(vaddr, (int)len);
                 var bufString = System.Text.Encoding.ASCII.GetString(buf);
-                semihostingUart.SemihostingWriteString(bufString);
+                using(ObtainGenericPauseGuard())
+                {
+                    semihostingUart.SemihostingWriteString(bufString);
+                }
 
                 A[2] = bufString.Length;
                 A[3] = 0; // errno
@@ -165,7 +168,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         private ActionUInt32UInt32 TlibSetIrqPendingBit;
 
         [Import]
-        private ActionUInt32 TlibUpdateExecutionMode;
+        private ActionUInt32 TlibSetSingleStep;
 #pragma warning restore 649
 
         private enum XtensaSimcallOperation : uint

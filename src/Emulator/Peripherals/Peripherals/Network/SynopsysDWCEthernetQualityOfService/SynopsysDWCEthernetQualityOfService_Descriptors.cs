@@ -1,11 +1,12 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 //  This file is licensed under the MIT License.
 //  Full license text is available in 'licenses/MIT.txt'.
 //
 using System;
 using Antmicro.Renode.Core.Structure.Registers;
+using Antmicro.Renode.Logging;
 using Antmicro.Renode.Network;
 using Antmicro.Renode.Peripherals.Bus;
 using Antmicro.Renode.Peripherals.CPU;
@@ -15,41 +16,6 @@ namespace Antmicro.Renode.Peripherals.Network
 {
     public partial class SynopsysDWCEthernetQualityOfService
     {
-        private TxDescriptor GetTxDescriptor(ulong index = 0)
-        {
-            var descriptor = new TxDescriptor(Bus, txDescriptorRingCurrent.Value, cpuContext);
-            descriptor.Fetch();
-            return descriptor;
-        }
-
-        private RxDescriptor GetRxDescriptor()
-        {
-            var descriptor = new RxDescriptor(Bus, rxDescriptorRingCurrent.Value, cpuContext);
-            descriptor.Fetch();
-            return descriptor;
-        }
-
-        private void IncreaseTxDescriptorPointer()
-        {
-            IncreaseDescriptorPointer(txDescriptorRingCurrent, txDescriptorRingStart, txDescriptorRingLength);
-            txFinishedRing = txDescriptorRingCurrent.Value == txDescriptorRingTail.Value;
-        }
-
-        private void IncreaseRxDescriptorPointer()
-        {
-            IncreaseDescriptorPointer(rxDescriptorRingCurrent, rxDescriptorRingStart, rxDescriptorRingLength);
-            rxFinishedRing = rxDescriptorRingCurrent.Value == rxDescriptorRingTail.Value;
-        }
-
-        private void IncreaseDescriptorPointer(IValueRegisterField current, IValueRegisterField start, IValueRegisterField length)
-        {
-            var size = descriptorSkipLength.Value * 4 + Descriptor.Size;
-            var offset = current.Value - start.Value;
-            offset += size;
-            offset %= length.Value * size;
-            current.Value = start.Value + offset;
-        }
-
         private abstract class Descriptor
         {
             public Descriptor(IBusController bus, ulong address, ICPU cpuContext = null)
@@ -173,7 +139,7 @@ namespace Antmicro.Renode.Peripherals.Network
                 // bits 0:23 of 4th double word are reserved
                 [PacketField, Offset(doubleWords: 3, bits: 24), Width(1)] // BUF1V
                 public bool buffer1AddressValid;
-                [PacketField, Offset(doubleWords: 3, bits: 24), Width(1)] // BUF2V
+                [PacketField, Offset(doubleWords: 3, bits: 25), Width(1)] // BUF2V
                 public bool buffer2AddressValid;
                 // bits 26:29 of 4th double word are reserved
                 [PacketField, Offset(doubleWords: 3, bits: 30), Width(1)] // IOC
@@ -191,7 +157,7 @@ namespace Antmicro.Renode.Peripherals.Network
                     return PrettyString;
                 }
 
-                public string PrettyString => $@"NormalWriteBackTxDescriptor {{
+                public string PrettyString => $@"NormalWriteBackRxDescriptor {{
     outerVlanTag: 0x{outerVlanTag:X},
     innerVlanTag: 0x{innerVlanTag:X},
     payloadType: {payloadType},
@@ -470,7 +436,7 @@ namespace Antmicro.Renode.Peripherals.Network
                     return PrettyString;
                 }
 
-                public string PrettyString => $@"NormalWriteBackDescriptor {{
+                public string PrettyString => $@"NormalWriteBackTxDescriptor {{
     txPacketTimestamp: 0x{txPacketTimestamp:X},
     ipHeaderError: {ipHeaderError},
     deferredBit: {deferredBit},

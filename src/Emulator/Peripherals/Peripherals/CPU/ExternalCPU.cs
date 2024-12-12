@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -49,7 +49,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             // [Here goes an invocation disposing the external simulator (if needed)]
             // [This can be used to clean all unmanaged resources used to communicate with the simulator]
         }
-        
+
         public void OnGPIO(int number, bool value)
         {
             this.NoisyLog("IRQ {0}, value {1}", number, value);
@@ -72,11 +72,35 @@ namespace Antmicro.Renode.Peripherals.CPU
             return 0;
         }
 
+        public override ExecutionResult ExecuteInstructions(ulong numberOfInstructionsToExecute, out ulong numberOfExecutedInstructions)
+        {
+            instructionsExecutedThisRound = 0UL;
+
+            try
+            {
+                // [Here comes the invocation of the external simulator for the given amount of instructions]
+                // [This is the place where simulation of acutal instructions is to be executed]
+            }
+            catch(Exception)
+            {
+                this.NoisyLog("CPU exception detected, halting.");
+                InvokeHalted(new HaltArguments(HaltReason.Abort, this));
+                return ExecutionResult.Aborted;
+            }
+            finally
+            {
+                numberOfExecutedInstructions = instructionsExecutedThisRound;
+                totalExecutedInstructions += instructionsExecutedThisRound;
+            }
+
+            return ExecutionResult.Ok;
+        }
+
         public override string Architecture => "Unknown";
 
-        public override RegisterValue PC 
-        { 
-            get 
+        public override RegisterValue PC
+        {
+            get
             {
                 return GetRegisterValue32(PCRegisterId);
             }
@@ -88,30 +112,6 @@ namespace Antmicro.Renode.Peripherals.CPU
         }
 
         public override ulong ExecutedInstructions => totalExecutedInstructions;
-
-        protected override ExecutionResult ExecuteInstructions(ulong numberOfInstructionsToExecute, out ulong numberOfExecutedInstructions)
-        { 
-            instructionsExecutedThisRound = 0UL;
-
-            try
-            {
-                // [Here comes the invocation of the external simulator for the given amount of instructions]
-                // [This is the place where simulation of acutal instructions is to be executed]
-            }
-            catch(Exception)
-            {
-                this.NoisyLog("CPU exception detected, halting.");
-                InvokeHalted(new HaltArguments(HaltReason.Abort, Id));
-                return ExecutionResult.Aborted;
-            }
-            finally
-            {
-                numberOfExecutedInstructions = instructionsExecutedThisRound;
-                totalExecutedInstructions += instructionsExecutedThisRound;
-            }
-
-            return ExecutionResult.Ok;
-        }
 
         private ulong instructionsExecutedThisRound;
         private ulong totalExecutedInstructions;

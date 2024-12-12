@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -16,13 +16,25 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using Antmicro.Renode.Utilities;
 using Antmicro.Renode.Peripherals.CPU;
+using Antmicro.Renode.Peripherals.IRQControllers.ARM_GenericInterruptControllerModel;
 
 namespace Antmicro.Renode.Peripherals.IRQControllers
 {
+    // NOTE: Memory mapped Virtual CPU Interface is currently not supported.
+    //       It can be accesses only through system registers.
     public class ARM_GenericInterruptController : IARMCPUsConnectionsProvider, IBusPeripheral, ILocalGPIOReceiver, INumberedGPIOOutput, IIRQController
     {
-        public ARM_GenericInterruptController(IMachine machine, bool supportsTwoSecurityStates = true, ARM_GenericInterruptControllerVersion architectureVersion = DefaultArchitectureVersion, uint sharedPeripheralCount = 960)
+        public ARM_GenericInterruptController(IMachine machine, bool supportsTwoSecurityStates = true, ARM_GenericInterruptControllerVersion architectureVersion = ARM_GenericInterruptControllerVersion.Default, uint sharedPeripheralCount = 960)
         {
+            if(architectureVersion == ARM_GenericInterruptControllerVersion.GICv1)
+            {
+                // On GICv1, `GICD_ITARGETSRn` supports up to 8 CPU targets, so we ignore higher affinity levels completely
+                affinityToIdMask = 0xFF;
+            }
+            else
+            {
+                affinityToIdMask = uint.MaxValue;
+            }
             busController = machine.GetSystemBus(this);
 
             if(sharedPeripheralCount > InterruptsDecoder.MaximumSharedPeripheralCount)
@@ -37,7 +49,15 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             // Once security is disabled it's impossible to enable it
             // So it is impossible to enable security for the GIC that doesn't support two security states
             this.supportsTwoSecurityStates = supportsTwoSecurityStates;
-            this.ArchitectureVersion = architectureVersion;
+            if(architectureVersion == ARM_GenericInterruptControllerVersion.Default)
+            {
+                this.Log(LogLevel.Warning, "GIC architecture version not explicitly set. Defaulting to v3");
+                this.ArchitectureVersion = DefaultArchitectureVersion;
+            }
+            else
+            {
+                this.ArchitectureVersion = architectureVersion;
+            }
 
             this.irqsDecoder = new InterruptsDecoder(sharedPeripheralCount, identifierBits: 10);
 
@@ -67,8 +87,6 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             // The rest may behave differently for various security settings, but the layout of fields doesn't change
             distributorDoubleWordRegisters = new DoubleWordRegisterCollection(this, BuildDistributorDoubleWordRegistersMap());
             distributorQuadWordRegisters = new QuadWordRegisterCollection(this, BuildDistributorQuadWordRegistersMap());
-            redistributorDoubleWordRegisters = new DoubleWordRegisterCollection(this, BuildRedistributorDoubleWordRegistersMap());
-            redistributorQuadWordRegisters = new QuadWordRegisterCollection(this, BuildRedistributorQuadWordRegistersMap());
             cpuInterfaceRegisters = new DoubleWordRegisterCollection(this, BuildCPUInterfaceRegistersMap());
             cpuInterfaceSystemRegisters = new QuadWordRegisterCollection(this, BuildCPUInterfaceSystemRegistersMap());
 
@@ -80,7 +98,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             LockExecuteAndUpdate(() =>
                 {
                     ackControl = false;
-                    enableFIQ = false;
+                    enableFIQ = ArchitectureVersionAtLeast3;
                     disabledSecurity = false;
                     affinityRoutingEnabledSecure = false;
                     affinityRoutingEnabledNonSecure = false;
@@ -103,8 +121,6 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             distributorRegistersDisabledSecurityView.Reset();
             distributorDoubleWordRegisters.Reset();
             distributorQuadWordRegisters.Reset();
-            redistributorDoubleWordRegisters.Reset();
-            redistributorQuadWordRegisters.Reset();
             cpuInterfaceRegistersSecureView.Reset();
             cpuInterfaceRegistersNonSecureView.Reset();
             cpuInterfaceRegistersDisabledSecurityView.Reset();
@@ -114,7 +130,18 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 
         public void AttachCPU(IARMSingleSecurityStateCPU cpu)
         {
-            var processorNumber = cpu.Id;
+            if(ArchitectureVersion == ARM_GenericInterruptControllerVersion.GICv1)
+            {
+                var affinities = cpuEntries.Keys.Select(c => c.Affinity).Select(a => new Affinity(a.AllLevels & ~affinityToIdMask));
+                var highAffinity = cpu.Affinity.AllLevels & ~affinityToIdMask;
+                if(affinities.Any(a => highAffinity != a.AllLevels))
+                {
+                    throw new RecoverableException($"Previously registered CPUs have Affinities above Aff0 different from {new Affinity(highAffinity)}."
+                        + $" This is illegal for {nameof(ARM_GenericInterruptControllerVersion.GICv1)}.");
+                }
+            }
+            var processorNumber = cpu.Affinity.AllLevels & affinityToIdMask;
+            this.Log(LogLevel.Noisy, "Trying to attach CPU {0}", cpu.Affinity);
             if(TryGetCPUEntry(processorNumber, out var existingCPUEntry))
             {
                 throw new RecoverableException($"The CPU with the Processor Number {processorNumber} already exists.");
@@ -134,6 +161,13 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             }
             else
             {
+                if(this.supportsTwoSecurityStates)
+                {
+                    cpu.Log(LogLevel.Info, "CPU is attached to GIC supporting Security Extensions."
+                            + " This CPU doesn't implement Security Extensions so all its GIC accesses will be {0}. GIC's '{1}'"
+                            + " constructor argument can be set to 'false' to create GIC without support for Security Extensions.",
+                            cpu.SecurityState, nameof(supportsTwoSecurityStates));
+                }
                 cpuEntry = new CPUEntry(this, cpu, groups.Keys, cpuMappedConnections);
             }
             cpuEntry.PrivateInterruptChanged += OnPrivateInterrupt;
@@ -169,7 +203,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
         {
             LockExecuteAndUpdate(() =>
                 {
-                    var registerExists = IsDistributorByteAccessible(offset) && TryWriteByteToDoubleWordCollection(distributorDoubleWordRegisters, offset, value);
+                    var registerExists = IsDistributorByteAccessible(offset) && Utils.TryWriteByteToDoubleWordCollection(distributorDoubleWordRegisters, offset, value, this);
                     LogWriteAccess(registerExists, value, "Distributor (byte access)", offset, (DistributorRegisters)offset);
                 }
             );
@@ -181,7 +215,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             byte value = 0;
             LockExecuteAndUpdate(() =>
                 {
-                    var registerExists = IsDistributorByteAccessible(offset) && TryReadByteFromDoubleWordCollection(distributorDoubleWordRegisters, offset, out value);
+                    var registerExists = IsDistributorByteAccessible(offset) && Utils.TryReadByteFromDoubleWordCollection(distributorDoubleWordRegisters, offset, out value, this);
                     LogReadAccess(registerExists, value, "Distributor (byte access)", offset, (DistributorRegisters)offset);
                 }
             );
@@ -195,7 +229,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 {
                     var registerExists = TryWriteRegisterSecurityView(offset, value, distributorDoubleWordRegisters,
                         distributorRegistersSecureView, distributorRegistersNonSecureView, distributorRegistersDisabledSecurityView);
-                    registerExists = registerExists || TryWriteDoubleWordToQuadWordCollection(distributorQuadWordRegisters, offset, value);
+                    registerExists = registerExists || Utils.TryWriteDoubleWordToQuadWordCollection(distributorQuadWordRegisters, offset, value, this);
                     LogWriteAccess(registerExists, value, "Distributor", offset, (DistributorRegisters)offset);
                 }
             );
@@ -209,7 +243,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 {
                     var registerExists = TryReadRegisterSecurityView(offset, out value, distributorDoubleWordRegisters,
                         distributorRegistersSecureView, distributorRegistersNonSecureView, distributorRegistersDisabledSecurityView);
-                    registerExists = registerExists || TryReadDoubleWordFromQuadWordCollection(distributorQuadWordRegisters, offset, out value);
+                    registerExists = registerExists || Utils.TryReadDoubleWordFromQuadWordCollection(distributorQuadWordRegisters, offset, out value, this);
                     LogReadAccess(registerExists, value, "Distributor", offset, (DistributorRegisters)offset);
                 }
             );
@@ -230,76 +264,6 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             ulong value = 0;
             LockExecuteAndUpdate(() =>
                 LogWriteAccess(distributorQuadWordRegisters.TryRead(offset, out value), value, "Distributor", offset, (DistributorRegisters)offset)
-            );
-            return value;
-        }
-
-        [ConnectionRegion("redistributor")]
-        public void WriteByteToRedistributor(long offset, byte value)
-        {
-            LockExecuteAndUpdate(() =>
-                {
-                    var registerExists = IsRedistributorByteAccessible(offset) && TryWriteByteToDoubleWordCollection(redistributorDoubleWordRegisters, offset, value);
-                    LogWriteAccess(registerExists, value, "Redistributor (byte access)", offset, (RedistributorRegisters)offset);
-                }
-            );
-        }
-
-        [ConnectionRegion("redistributor")]
-        public byte ReadByteFromRedistributor(long offset)
-        {
-            byte value = 0;
-            LockExecuteAndUpdate(() =>
-                {
-                    var registerExists = IsRedistributorByteAccessible(offset) && TryReadByteFromDoubleWordCollection(redistributorDoubleWordRegisters, offset, out value);
-                    LogReadAccess(registerExists, value, "Redistributor (byte access)", offset, (RedistributorRegisters)offset);
-                }
-            );
-            return value;
-        }
-
-        [ConnectionRegion("redistributor")]
-        public void WriteDoubleWordToRedistributor(long offset, uint value)
-        {
-            LockExecuteAndUpdate(() =>
-                {
-                    // Only a few virtual quad word registers can't be double word accessed, assume all accesses are valid.
-                    var registerExists = redistributorDoubleWordRegisters.TryWrite(offset, value)
-                        || TryWriteDoubleWordToQuadWordCollection(redistributorQuadWordRegisters, offset, value);
-                    LogWriteAccess(registerExists, value, "Redistributor", offset, (RedistributorRegisters)offset);
-                }
-            );
-        }
-
-        [ConnectionRegion("redistributor")]
-        public uint ReadDoubleWordFromRedistributor(long offset)
-        {
-            uint value = 0;
-            LockExecuteAndUpdate(() =>
-                {
-                    // Only a few virtual quad word registers can't be double word accessed, assume all accesses are valid.
-                    var registerExists = redistributorDoubleWordRegisters.TryRead(offset, out value)
-                        || TryReadDoubleWordFromQuadWordCollection(redistributorQuadWordRegisters, offset, out value);
-                    LogReadAccess(registerExists, value, "Redistributor", offset, (RedistributorRegisters)offset);
-                }
-            );
-            return value;
-        }
-
-        [ConnectionRegion("redistributor")]
-        public void WriteQuadWordToRedistributor(long offset, ulong value)
-        {
-            LockExecuteAndUpdate(() =>
-                LogWriteAccess(redistributorQuadWordRegisters.TryWrite(offset, value), value, "Redistributor", offset, (RedistributorRegisters)offset)
-            );
-        }
-
-        [ConnectionRegion("redistributor")]
-        public ulong ReadQuadWordFromRedistributor(long offset)
-        {
-            ulong value = 0;
-            LockExecuteAndUpdate(() =>
-                LogReadAccess(redistributorQuadWordRegisters.TryRead(offset, out value), value, "Redistributor", offset, (RedistributorRegisters)offset)
             );
             return value;
         }
@@ -355,7 +319,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 this.Log(LogLevel.Warning, "Generated interrupt isn't a Shared Peripheral Interrupt, interrupt identifier: {0}", irqId);
                 return;
             }
-            this.Log(LogLevel.Debug, "Setting signal of the interrupt with id {0} to {1}.", irqId, value);
+            this.Log(LogLevel.Debug, "Setting Shared Peripheral Interrupt #{0} signal to {1}", irqId, value);
             LockExecuteAndUpdate(() =>
                 sharedInterrupts[irqId].State.AssertAsPending(value)
             );
@@ -379,8 +343,225 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             }
         }
 
+        public IEnumerable<ArmGicRedistributorRegistration> GetRedistributorRegistrations()
+        {
+            return this.GetMachine().GetSystemBus(this).GetRegistrationPoints(this).OfType<ArmGicRedistributorRegistration>();
+        }
+
+        public void LockExecuteAndUpdate(Action action)
+        {
+            lock(locker)
+            {
+                action();
+                UpdateBestPendingInterrupts();
+                foreach(var cpu in cpuEntries.Values)
+                {
+                    cpu.UpdateSignals();
+                }
+            }
+        }
+
+        public void LogWriteAccess(bool registerExists, object value, string collectionName, long offset, object prettyOffset)
+        {
+            this.Log(LogLevel.Noisy, "{0} writes to 0x{1:X} ({2}) register of {3}, value 0x{4:X}.", GetAskingCPUEntry().Name, offset, prettyOffset, collectionName, value);
+            if(!registerExists)
+            {
+                this.Log(LogLevel.Warning, "Unhandled write to 0x{0:X} register of {1}, value 0x{2:X}.", offset, collectionName, value);
+            }
+        }
+
+        public void LogReadAccess(bool registerExists, object value, string collectionName, long offset, object prettyOffset)
+        {
+            if(!registerExists)
+            {
+                this.Log(LogLevel.Warning, "Unhandled read from 0x{0:X} register of {1}.", offset, collectionName);
+            }
+            this.Log(LogLevel.Noisy, "{0} reads from 0x{1:X} ({2}) register of {3}, returned 0x{4:X}.", GetAskingCPUEntry().Name, offset, prettyOffset, collectionName, value);
+        }
+
+        public bool TryGetCPUEntry(uint processorNumber, out CPUEntry cpuEntry)
+        {
+            var exists = cpusByProcessorNumberCache.TryGetValue(processorNumber, out var cpu);
+            cpuEntry = exists ? cpuEntries[cpu] : null;
+            return exists;
+        }
+
+        public bool TryGetCPUEntryForCPU(IARMSingleSecurityStateCPU cpu, out CPUEntry cpuEntry)
+        {
+            return cpuEntries.TryGetValue(cpu, out cpuEntry);
+        }
+
+        public CPUEntry GetCPUEntry(uint processorNumber)
+        {
+            if(!TryGetCPUEntry(processorNumber, out var cpuEntry))
+            {
+                throw new RecoverableException($"There is no CPU with the Processor Number {processorNumber}.");
+            }
+            return cpuEntry;
+        }
+
+        public IEnumerable<DoubleWordRegister> BuildInterruptSetEnableRegisters(InterruptId startId, InterruptId endId, string name, Func<CPUEntry> cpuEntryProvider = null)
+        {
+            return BuildInterruptFlagRegisters(startId, endId, name,
+                writeCallback: (irq, val) => irq.Config.Enabled |= val,
+                valueProviderCallback: irq => irq.Config.Enabled,
+                cpuEntryProvider: cpuEntryProvider
+            );
+        }
+
+        public IEnumerable<DoubleWordRegister> BuildInterruptClearEnableRegisters(InterruptId startId, InterruptId endId, string name, Func<CPUEntry> cpuEntryProvider = null)
+        {
+            return BuildInterruptFlagRegisters(startId, endId, name,
+                writeCallback: (irq, val) => irq.Config.Enabled &= !val,
+                valueProviderCallback: irq => irq.Config.Enabled,
+                cpuEntryProvider: cpuEntryProvider
+            );
+        }
+
+        public IEnumerable<DoubleWordRegister> BuildInterruptPriorityRegisters(InterruptId startId, InterruptId endId, string name, Func<CPUEntry> cpuEntryProvider = null)
+        {
+            return BuildInterruptEnumRegisters<InterruptPriority>(startId, endId, name, 4,
+                writeCallback: (irq, val) => irq.Config.Priority = val,
+                valueProviderCallback: irq => irq.Config.Priority,
+                cpuEntryProvider: cpuEntryProvider
+            );
+        }
+
+        public IEnumerable<DoubleWordRegister> BuildPrivateInterruptTargetsRegisters(InterruptId startId, InterruptId endId, string name)
+        {
+            return BuildInterruptValueRegisters(startId, endId, name, 4,
+                valueProviderCallback: _ => GetAskingCPUEntry().TargetFieldFlag
+            );
+        }
+
+        public IEnumerable<DoubleWordRegister> BuildSharedInterruptTargetsRegisters(InterruptId startId, InterruptId endId, string name)
+        {
+            return BuildInterruptValueRegisters(startId, endId, name, 4,
+                writeCallback: (irq, val) =>
+                    {
+                        if(IsAffinityRoutingEnabled(GetAskingCPUEntry()))
+                        {
+                            this.Log(LogLevel.Warning, "Trying to write ITARGETSR register when Affinity Routing is enabled, write ignored.");
+                            return;
+                        }
+                        var validTargets = legacyCpusAttachedMask & val;
+                        ((SharedInterrupt)irq).TargetCPUs = (byte)validTargets;
+                        if(validTargets != val)
+                        {
+                            this.Log(LogLevel.Warning, "Interrupt {0} configured to target an invalid CPU, id: {1}, writes ignored.", irq.Identifier, String.Join(", ", BitHelper.GetSetBits(validTargets ^ val)));
+                        }
+                    },
+                valueProviderCallback: irq =>
+                    {
+                        if(IsAffinityRoutingEnabled(GetAskingCPUEntry()))
+                        {
+                            this.Log(LogLevel.Warning, "Trying to read ITARGETSR register when Affinity Routing is enabled, returning 0.");
+                            return 0;
+                        }
+                        return ((SharedInterrupt)irq).TargetCPUs;
+                    }
+            );
+        }
+
+        public IEnumerable<DoubleWordRegister> BuildInterruptConfigurationRegisters(InterruptId startId, InterruptId endId, string name, bool isReadonly = false, Func<CPUEntry> cpuEntryProvider = null)
+        {
+            Action<Interrupt, InterruptTriggerType> writeCallback = null;
+            if(!isReadonly)
+            {
+                writeCallback = (irq, val) =>
+                {
+                    irq.State.TriggerType = val;
+                    if(val != InterruptTriggerType.LevelSensitive && val != InterruptTriggerType.EdgeTriggered)
+                    {
+                        this.Log(LogLevel.Error, "Setting an unknown interrupt trigger type, value {0}", val);
+                    }
+                };
+            }
+            return BuildInterruptEnumRegisters<InterruptTriggerType>(startId, endId, name, 16,
+                writeCallback: writeCallback,
+                valueProviderCallback: irq => irq.State.TriggerType,
+                cpuEntryProvider: cpuEntryProvider
+            );
+        }
+
+        public IEnumerable<DoubleWordRegister> BuildInterruptSetActiveRegisters(InterruptId startId, InterruptId endId, string name)
+        {
+            return BuildInterruptFlagRegisters(startId, endId, name,
+                writeCallback: (irq, val) => irq.State.Active |= val,
+                valueProviderCallback: irq => irq.State.Active
+            );
+        }
+
+        public IEnumerable<DoubleWordRegister> BuildInterruptClearActiveRegisters(InterruptId startId, InterruptId endId, string name)
+        {
+            return BuildInterruptFlagRegisters(startId, endId, name,
+                writeCallback: (irq, val) => irq.State.Active &= !val,
+                valueProviderCallback: irq => irq.State.Active
+            );
+        }
+
+        public IEnumerable<DoubleWordRegister> BuildInterruptSetPendingRegisters(InterruptId startId, InterruptId endId, string name)
+        {
+            return BuildInterruptFlagRegisters(startId, endId, name,
+                writeCallback: (irq, val) => irq.State.Pending |= val,
+                valueProviderCallback: irq => irq.State.Pending
+            );
+        }
+
+        public IEnumerable<DoubleWordRegister> BuildInterruptClearPendingRegisters(InterruptId startId, InterruptId endId, string name, Func<CPUEntry> cpuEntryProvider = null)
+        {
+            return BuildInterruptFlagRegisters(startId, endId, name,
+                writeCallback: (irq, val) => irq.State.Pending &= !val,
+                valueProviderCallback: irq => irq.State.Pending,
+                cpuEntryProvider: cpuEntryProvider
+            );
+        }
+
+        public IEnumerable<DoubleWordRegister> BuildInterruptGroupRegisters(InterruptId startId, InterruptId endId, string name, Func<CPUEntry> cpuEntryProvider = null)
+        {
+            return BuildInterruptFlagRegisters(startId, endId, name,
+                writeCallback: (irq, val) => irq.Config.GroupBit = val,
+                valueProviderCallback: irq => irq.Config.GroupBit,
+                allowAccessWhenNonSecureGroup: false,
+                cpuEntryProvider: cpuEntryProvider
+            );
+        }
+
+        public IEnumerable<DoubleWordRegister> BuildInterruptGroupModifierRegisters(InterruptId startId, InterruptId endId, string name, Func<CPUEntry> cpuEntryProvider = null)
+        {
+            return BuildInterruptFlagRegisters(startId, endId, name,
+                writeCallback: (irq, val) =>
+                    {
+                        if(!DisabledSecurity)
+                        {
+                            irq.Config.GroupModifierBit = val;
+                        }
+                        else
+                        {
+                            // The Zephyr uses this field as usual, so the log message isn't a warning
+                            this.Log(LogLevel.Debug, "The group modifier register is reserved for the disabled security, write ignored.");
+                        }
+                    },
+                valueProviderCallback: irq => irq.Config.GroupModifierBit,
+                allowAccessWhenNonSecureGroup: false,
+                cpuEntryProvider: cpuEntryProvider
+            );
+        }
+
+        public IEnumerable<DoubleWordRegister> BuildPrivateOrSharedPeripheralInterruptStatusRegisters(InterruptId startId, InterruptId endId, string name)
+        {
+            return BuildInterruptFlagRegisters(startId, endId, name,
+                valueProviderCallback: irq => irq.State.Pending
+            );
+        }
+
+        public long PeripheralIdentificationOffset => ArchitectureVersionAtLeast3
+            ? (long)RedistributorRegisters.PeripheralIdentification2_v3v4
+            : (long)RedistributorRegisters.PeripheralIdentification2_v1v2;
+
         public IReadOnlyDictionary<int, IGPIO> Connections { get; private set; }
         public IEnumerable<IARMSingleSecurityStateCPU> AttachedCPUs => cpuEntries.Keys;
+        public InterruptsDecoder IrqsDecoder => irqsDecoder;
 
         public bool DisabledSecurity
         {
@@ -446,6 +627,8 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             }
         }
 
+        public bool AffinityRoutingEnabledBoth => DisabledSecurity || AffinityRoutingEnabledSecure && AffinityRoutingEnabledNonSecure;
+
         /// <summary>
         /// Setting this property to true will causes all interrupts to be reported to a core with lowest ID, which configuration allows it to take.
         ///
@@ -455,6 +638,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
         public bool ForceLowestIdCpuAsInterruptTarget { get; set; }
 
         public ARM_GenericInterruptControllerVersion ArchitectureVersion { get; }
+        public bool ArchitectureVersionAtLeast3 => ArchitectureVersion >= ARM_GenericInterruptControllerVersion.GICv3;
         public uint CPUInterfaceProductIdentifier { get; set; } = DefaultCPUInterfaceProductIdentifier;
         public uint DistributorProductIdentifier { get; set; } = DefaultDistributorProductIdentifier;
         public byte CPUInterfaceRevision { get; set; } = DefaultRevisionNumber;
@@ -462,6 +646,10 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
         public byte DistributorVariant { get; set; } = DefaultVariantNumber;
         public byte DistributorRevision { get; set; } = DefaultRevisionNumber;
         public uint DistributorImplementer { get; set; } = DefaultImplementerIdentification;
+        public uint RedistributorProductIdentifier { get; set; } = DefaultRedistributorProductIdentifier;
+        public byte RedistributorVariant { get; set; } = DefaultVariantNumber;
+        public byte RedistributorRevision { get; set; } = DefaultRevisionNumber;
+        public uint RedistributorImplementer { get; set; } = DefaultImplementerIdentification;
 
         public event Action<IARMSingleSecurityStateCPU> CPUAttached;
 
@@ -473,7 +661,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 this.Log(LogLevel.Warning, "Generated interrupt isn't a Private Peripheral Interrupt, interrupt identifier: {0}", irqId);
                 return;
             }
-            this.Log(LogLevel.Debug, "Setting signal of the interrupt with id {0} to {1} for {2}.", irqId, value, cpu.Name);
+            this.Log(LogLevel.Debug, "Setting Private Peripheral Interrupt #{0} signal to {1} for {2}", irqId, value, cpu.Name);
             LockExecuteAndUpdate(() =>
                 cpu.PrivatePeripheralInterrupts[irqId].State.AssertAsPending(value)
             );
@@ -486,13 +674,6 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             DebugHelper.Assert(irqsDecoder.IsSoftwareGenerated(irqId), $"Invalid interrupt identifier ({irqId}), it doesn't indicate an SGI.");
             this.Log(LogLevel.Noisy, "The {0} requests an SGI with id {1}.", requestingCPU.Name, irqId);
 
-            if(ArchitectureVersion > ARM_GenericInterruptControllerVersion.GICv2)
-            {
-                this.Log(LogLevel.Warning, "The GIC supports Software Generated Interrupts only for GICv2 or older.");
-                // GICv3 with disabled Affinity Routing uses the same mechanism of handling SGIs as GICv2.
-                // There is no return here to provide at least partial support of GICv3.
-            }
-
             var targetCPUs = new List<CPUEntry>();
             switch(request.TargetCPUsType)
             {
@@ -503,15 +684,15 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                     targetCPUs.AddRange(cpuEntries.Values.Where(cpu => cpu != requestingCPU));
                     break;
                 case SoftwareGeneratedInterruptRequest.TargetType.TargetList:
-                    foreach(var processorNumber in BitHelper.GetSetBits(request.TargetsList))
+                    foreach(var affinity in request.TargetsList)
                     {
-                        if(TryGetCPUEntry((uint)processorNumber, out var targetCPU))
+                        if(TryGetCPUEntry(affinity.AllLevels, out var targetCPU))
                         {
                             targetCPUs.Add(targetCPU);
                         }
                         else
                         {
-                            this.Log(LogLevel.Debug, "There is no target CPU with the Processor Number {0} for an SGI request.", processorNumber);
+                            this.Log(LogLevel.Debug, "There is no target CPU with the affinity {0} for an SGI request.", affinity);
                         }
                     }
                     break;
@@ -520,6 +701,62 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                     return;
             }
 
+            if(IsAffinityRoutingEnabled(requestingCPU))
+            {
+                OnSGIAffinityRouting(requestingCPU, targetCPUs, request);
+            }
+            else
+            {
+                OnSGILegacyRouting(requestingCPU, targetCPUs, request);
+            }
+        }
+
+        private void OnSGIAffinityRouting(CPUEntry requestingCPU, List<CPUEntry> targetCPUs, SoftwareGeneratedInterruptRequest request)
+        {
+            var isOtherSecurityState = GroupTypeToIsStateSecure(request.TargetGroup) != requestingCPU.IsStateSecure;
+            if(isOtherSecurityState && !AffinityRoutingEnabledBoth)
+            {
+                this.Log(LogLevel.Debug, "Generating SGIs for the other Security state is only supported when affinity rouing is enabled for both Security states.");
+                return;
+            }
+            var irqId = request.InterruptId;
+            foreach(var target in targetCPUs)
+            {
+                var interrupt = target.SoftwareGeneratedInterruptsUnknownRequester[irqId];
+                this.Log(LogLevel.Noisy, "Trying to request interrupt for target {0}, interrupt group type {1}, request group {2}, access in {3} state.",
+                    target.Name, interrupt.Config.GroupType, request.TargetGroup, requestingCPU.IsStateSecure ? "secure" : "non-secure");
+
+                if(ShouldAssertSGIAffinityRouting(requestingCPU, request, interrupt, target.NonSecureSGIAccess[(uint)irqId]))
+                {
+                    this.Log(LogLevel.Noisy, "Setting Software Generated Interrupt #{0} signal for {1}", irqId, target.Name);
+                    // SGIs are triggered by a register access so the method is already called inside a lock.
+                    interrupt.State.AssertAsPending(true);
+                }
+                else
+                {
+                    this.Log(LogLevel.Noisy, "SGI #{0} not forwarded for {1}.", irqId, target.Name);
+                }
+            }
+        }
+
+        private bool ShouldAssertSGIAffinityRouting(CPUEntry requestingCPU, SoftwareGeneratedInterruptRequest request, SoftwareGeneratedInterrupt interrupt,
+            NonSecureAccess targetNonSecureAccess)
+        {
+            if(requestingCPU.IsStateSecure)
+            {
+                return request.TargetGroup == interrupt.Config.GroupType ||
+                    request.TargetGroup == GroupType.Group1Secure && interrupt.Config.GroupType == GroupType.Group0 && DisabledSecurity;
+            }
+            if(request.TargetGroup == interrupt.Config.GroupType || interrupt.Config.GroupType == GroupType.Group0)
+            {
+                return request.TargetGroup == GroupType.Group1NonSecure || DisabledSecurity || NonSecureAccessPermitsGroup(targetNonSecureAccess, request.TargetGroup);
+            }
+            return request.TargetGroup == GroupType.Group1NonSecure && interrupt.Config.GroupType == GroupType.Group1Secure && NonSecureAccessPermitsGroup(targetNonSecureAccess, request.TargetGroup);
+        }
+
+        private void OnSGILegacyRouting(CPUEntry requestingCPU, List<CPUEntry> targetCPUs, SoftwareGeneratedInterruptRequest request)
+        {
+            var irqId = request.InterruptId;
             foreach(var target in targetCPUs)
             {
                 if(!target.SoftwareGeneratedInterruptsLegacyRequester.TryGetValue(requestingCPU, out var interrupts))
@@ -529,14 +766,83 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 }
 
                 var interrupt = interrupts[irqId];
-                if(interrupt.Config.GroupType == request.TargetGroup)
+                this.Log(LogLevel.Noisy, "Trying to request interrupt for target {0}, interrupt group type (GICD_IGROUPRn) {1}, request group (NSATT) {2}, access in {3} state.",
+                    target.Name, interrupt.Config.GroupType, request.TargetGroup, requestingCPU.IsStateSecure ? "secure" : "non-secure");
+
+                if(ShouldAssertSGILegacyRouting(requestingCPU, request, interrupt))
                 {
-                    this.Log(LogLevel.Noisy, "Setting signal of the interrupt with id {0} for {1}.", irqId, target.Name);
+                    this.Log(LogLevel.Noisy, "Setting Software Generated Interrupt #{0} signal for {1}", irqId, target.Name);
                     // SGIs are triggered by a register access so the method is already called inside a lock.
                     interrupt.State.AssertAsPending(true);
                 }
-                // According to the specification, interrupt with a group different than a target group is just ignored.
+                else
+                {
+                    this.Log(LogLevel.Noisy, "SGI #{0} not forwarded for {1}.", irqId, target.Name);
+                }
             }
+        }
+
+        private bool ShouldAssertSGILegacyRouting(CPUEntry requestingCPU, SoftwareGeneratedInterruptRequest request, SoftwareGeneratedInterrupt interrupt)
+        {
+            // See: "SGI generation when the GIC implements the Security Extensions" for the truth table
+            // Without the Security Extension, this is irrelevant
+            if(DisabledSecurity)
+            {
+                return true;
+            }
+            // If GICD_SGIR write is done in non-secure mode, only Group1 is forwarded
+            else if(!requestingCPU.IsStateSecure)
+            {
+                return interrupt.Config.GroupType != GroupType.Group0;
+            }
+            // According to the specification, interrupt with a group different than a target group is just ignored, if GICD_SGIR write is done in secure mode.
+            else if(requestingCPU.IsStateSecure && interrupt.Config.GroupType == request.TargetGroup)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool NonSecureAccessPermitsGroup(NonSecureAccess access, GroupType type)
+        {
+            // To maintain the principle that as the value increases additional accesses are permitted
+            // Arm strongly recommends that implementations treat the reserved value as 0b10.
+            // That's why we compare `access` using the >= operator.
+            switch(type)
+            {
+                case GroupType.Group1NonSecure:
+                    return true;
+                case GroupType.Group1Secure:
+                    return access >= NonSecureAccess.BothGroupsPermitted;
+                case GroupType.Group0:
+                    return access >= NonSecureAccess.SecureGroup0Permitted;
+                default:
+                    throw new ArgumentOutOfRangeException($"There is no valid GroupType for value: {type}.");
+            }
+        }
+
+        private bool GroupTypeToIsStateSecure(GroupType type)
+        {
+            switch(type)
+            {
+                case GroupType.Group0:
+                case GroupType.Group1Secure:
+                    return true;
+                case GroupType.Group1NonSecure:
+                    return false;
+                default:
+                    throw new ArgumentOutOfRangeException($"There is no valid GroupType for value: {type}.");
+            }
+        }
+
+        private GroupType GetGroup1ForSecurityState(bool isSecure)
+        {
+            return isSecure
+                // When System register access is not enabled for Secure EL1, or when GICD_CTLR.DS == 1,
+                // the Distributor treats Secure Group 1 interrupts as Group 0 interrupts
+                ? DisabledSecurity ? GroupType.Group0 : GroupType.Group1Secure
+                : GroupType.Group1NonSecure;
         }
 
         // The GIC uses the latest CPU state and the latest groups configuration to choose a correct interrupt signal to assert.
@@ -548,38 +854,38 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             }
         }
 
-        private void LockExecuteAndUpdate(Action action)
+        // Returns the best pending interrupt for given candidates.
+        // If null is returned, that means there's no pending interrupt.
+        private T FindBestPendingInterrupt<T>(IEnumerable<T> pendingCandidates) where T : Interrupt
         {
-            lock(locker)
+            var bestPending = pendingCandidates.FirstOrDefault();
+            foreach(var irq in pendingCandidates.Skip(1))
             {
-                action();
-                UpdateBestPendingInterrupts();
-                foreach(var cpu in cpuEntries.Values)
+                if(irq.Config.Priority < bestPending.Config.Priority)
                 {
-                    cpu.UpdateSignals();
+                    bestPending = irq;
+                    if(bestPending.Config.Priority == InterruptPriority.Highest)
+                    {
+                        break;
+                    }
                 }
             }
+            return bestPending;
         }
 
         private void UpdateBestPendingInterrupts()
         {
             foreach(var cpu in cpuEntries.Values)
             {
-                var pendingCandidates = GetAllPendingCandidateInterrupts(cpu);
-                var bestPending = pendingCandidates.FirstOrDefault();
-                foreach(var irq in pendingCandidates.Skip(1))
+                if(cpu.VirtualCPUInterfaceEnabled)
                 {
-                    if(irq.Config.Priority < bestPending.Config.Priority)
-                    {
-                        bestPending = irq;
-                        if(bestPending.Config.Priority == InterruptPriority.Highest)
-                        {
-                            break;
-                        }
-                    }
+                    cpu.BestPendingVirtual = FindBestPendingInterrupt(GetAllPendingCandidateVirtualInterrupts(cpu));
                 }
-                // Setting the bestPending to null indicates there is no pending interrupt
-                cpu.BestPending = bestPending;
+                else
+                {
+                    cpu.BestPendingVirtual = null;
+                }
+                cpu.BestPending = FindBestPendingInterrupt(GetAllPendingCandidateInterrupts(cpu));
             }
         }
 
@@ -605,7 +911,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 
         private IEnumerable<Interrupt> GetAllEnabledInterrupts(CPUEntry cpu)
         {
-            var enabledGroups = groups.Keys.Where(type => groups[type].Enabled && cpu.Groups[type].Enabled).ToArray();
+            var enabledGroups = groups.Keys.Where(type => groups[type].Enabled && cpu.Groups.Physical[type].Enabled).ToArray();
             IEnumerable<SharedInterrupt> filteredSharedInterrupts = sharedInterrupts.Values;
             return cpu.AllPrivateAndSoftwareGeneratedInterrupts
                 .Concat(GetSharedInterruptsTargetingCPU(cpu))
@@ -617,9 +923,24 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             return cpu.AllPrivateAndSoftwareGeneratedInterrupts.Concat(sharedInterrupts.Values);
         }
 
+        private Func<Interrupt, bool> InterruptPriorityFilter(InterruptPriority priorityMask, InterruptPriority runningPriority)
+        {
+            return irq => irq.State.Pending && !irq.State.Active && irq.Config.Priority < priorityMask && irq.Config.Priority < runningPriority;
+        }
+
         private IEnumerable<Interrupt> GetAllPendingCandidateInterrupts(CPUEntry cpu)
         {
-            return GetAllEnabledInterrupts(cpu).Where(irq => irq.State.Pending && !irq.State.Active && irq.Config.Priority < cpu.PriorityMask && irq.Config.Priority < cpu.RunningPriority);
+            var filter = InterruptPriorityFilter(cpu.PhysicalPriorityMask, cpu.RunningInterrupts.PhysicalPriority);
+            return GetAllEnabledInterrupts(cpu).Where(filter);
+        }
+
+        private IEnumerable<VirtualInterrupt> GetAllPendingCandidateVirtualInterrupts(CPUEntry cpu)
+        {
+            var enabledGroups = groups.Keys.Where(type => cpu.Groups.Virtual[type].Enabled).ToArray();
+            var filter = InterruptPriorityFilter(cpu.VirtualPriorityMask, cpu.RunningInterrupts.VirtualPriority);
+            return cpu
+                .VirtualInterrupts
+                .Where(irq => enabledGroups.Contains(irq.Config.GroupType) && filter(irq));
         }
 
         private Dictionary<long, DoubleWordRegister> BuildDistributorDoubleWordRegistersMap()
@@ -678,15 +999,22 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 {(long)DistributorRegisters.SoftwareGeneratedInterruptControl, new DoubleWordRegister(this)
                     .WithReservedBits(26, 6)
                     .WithEnumField<DoubleWordRegister, SoftwareGeneratedInterruptRequest.TargetType>(24, 2, out var type, FieldMode.Write, name: "TargetListFilter")
-                    .WithValueField(16, 8, out var list, FieldMode.Write, name: "TargetsList")
+                    .WithValueField(16, 8, out var targetList, FieldMode.Write, name: "TargetsList")
                     .WithFlag(15, out var group, FieldMode.Write, name: "GroupFilterSecureAccess")
                     .WithReservedBits(4, 10)
                     .WithValueField(0, 4, out var id, FieldMode.Write, name: "SoftwareGeneratedInterruptIdentifier")
-                    .WithWriteCallback((_, __) => OnSoftwareGeneratedInterrupt(GetAskingCPUEntry(),
-                        new SoftwareGeneratedInterruptRequest(type.Value, (uint)list.Value, group.Value ? GroupType.Group1 : GroupType.Group0, new InterruptId((uint)id.Value)))
-                    )
+                    .WithWriteCallback((_, __) =>
+                    {
+                        var list = new Affinity[]{};
+                        if(type.Value == SoftwareGeneratedInterruptRequest.TargetType.TargetList)
+                        {
+                            list = BitHelper.GetSetBits(targetList.Value).Select(n => new Affinity((byte)n)).ToArray();
+                        }
+                        var interrupt =  new SoftwareGeneratedInterruptRequest(type.Value, list, group.Value ? GroupType.Group1 : GroupType.Group0, new InterruptId((uint)id.Value));
+                        OnSoftwareGeneratedInterrupt(GetAskingCPUEntry(), interrupt);
+                    })
                 },
-                {GetPeripheralIdentificationOffset(), new DoubleWordRegister(this)
+                {PeripheralIdentificationOffset, new DoubleWordRegister(this)
                     .WithReservedBits(8, 24)
                     .WithEnumField<DoubleWordRegister, ARM_GenericInterruptControllerVersion>(4, 4, FieldMode.Read, name: "ArchitectureVersion",
                         valueProviderCallback: _ => ArchitectureVersion
@@ -697,51 +1025,70 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 
             // All BuildInterrupt*Registers methods create registers with respect for Security State
             // There is no separate view (RegistersCollection) for this kind of registers, because their layout are independent of Security State
-            AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptSetEnable_0,
+            Utils.AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptSetEnable_0,
                 BuildInterruptSetEnableRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.SharedPeripheralLast, "InterruptSetEnable")
             );
 
-            AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptClearEnable_0,
+            Utils.AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptClearEnable_0,
                 BuildInterruptClearEnableRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.SharedPeripheralLast, "InterruptClearEnable")
             );
 
-            AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptPriority_0,
+            Utils.AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptPriority_0,
                 BuildInterruptPriorityRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.SharedPeripheralLast, "InterruptPriority")
             );
 
-            AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptProcessorTargets_0,
+            Utils.AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptProcessorTargets_0,
                 BuildPrivateInterruptTargetsRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.PrivatePeripheralLast, "InterruptProcessorTargets")
             );
-            AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptProcessorTargets_8,
+            Utils.AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptProcessorTargets_8,
                 BuildSharedInterruptTargetsRegisters(irqsDecoder.SharedPeripheralFirst, irqsDecoder.SharedPeripheralLast, "InterruptProcessorTargets")
             );
 
-            AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptConfiguration_0,
+            Utils.AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptConfiguration_0,
                 BuildInterruptConfigurationRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.SoftwareGeneratedLast, "InterruptConfiguration", isReadonly: true)
             );
-            AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptConfiguration_1,
+            Utils.AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptConfiguration_1,
                 BuildInterruptConfigurationRegisters(irqsDecoder.PrivatePeripheralFirst, irqsDecoder.SharedPeripheralLast, "InterruptConfiguration")
             );
 
-            AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptSetActive_0,
+            Utils.AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptSetActive_0,
                 BuildInterruptSetActiveRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.SharedPeripheralLast, "InterruptSetActive")
             );
 
-            AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptClearActive_0,
+            Utils.AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptClearActive_0,
                 BuildInterruptClearActiveRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.SharedPeripheralLast, "InterruptClearActive")
             );
 
-            AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptClearPending_0,
+            Utils.AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptSetPending_0,
+                BuildInterruptSetPendingRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.SharedPeripheralLast, "InterruptSetPending")
+            );
+
+            Utils.AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptClearPending_0,
                 BuildInterruptClearPendingRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.SharedPeripheralLast, "InterruptClearPending")
             );
 
-            AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptGroup_0,
+            Utils.AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptGroup_0,
                 BuildInterruptGroupRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.SharedPeripheralLast, "InterruptGroup")
             );
 
-            AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptGroupModifier_0,
-                BuildInterruptGroupModifierRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.SharedPeripheralLast, "InterruptGroupModifier")
-            );
+            // The range between 0xD00-0xDFC is implementation defined for GICv1 and GICv2.
+            if(ArchitectureVersionAtLeast3)
+            {
+                Utils.AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptGroupModifier_0_PPIStatus,
+                    BuildInterruptGroupModifierRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.SharedPeripheralLast, "InterruptGroupModifier")
+                );
+            }
+            else
+            {
+                // See e.g. https://developer.arm.com/documentation/ddi0416/b/programmers-model/distributor-register-descriptions and https://developer.arm.com/documentation/ddi0471/b/programmers-model/distributor-register-summary
+                Utils.AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptGroupModifier_0_PPIStatus,
+                    BuildPrivateOrSharedPeripheralInterruptStatusRegisters(irqsDecoder.PrivatePeripheralFirst, irqsDecoder.PrivatePeripheralLast, "PPI Status")
+                );
+
+                Utils.AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptGroupModifier_1_SPIStatus_0,
+                    BuildPrivateOrSharedPeripheralInterruptStatusRegisters(irqsDecoder.SharedPeripheralFirst, irqsDecoder.SharedPeripheralLast, "SPI Status")
+                );
+            }
 
             return registersMap;
         }
@@ -749,7 +1096,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
         private Dictionary<long, QuadWordRegister> BuildDistributorQuadWordRegistersMap()
         {
             var registersMap = new Dictionary<long, QuadWordRegister>();
-            AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptRouting_0,
+            Utils.AddRegistersAtOffset(registersMap, (long)DistributorRegisters.InterruptRouting_0,
                 BuildInterruptRoutingRegisters(irqsDecoder.SharedPeripheralFirst, irqsDecoder.SharedPeripheralLast)
             );
             return registersMap;
@@ -759,6 +1106,10 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
         {
             var controlRegister = new DoubleWordRegister(this)
                 .WithFlag(31, FieldMode.Read, name: "RegisterWritePending", valueProviderCallback: _ => false);
+            var registersMap = new Dictionary<long, DoubleWordRegister>
+            {
+                {(long)DistributorRegisters.Control, controlRegister}
+            };
 
             if(accessForDisabledSecurity)
             {
@@ -812,6 +1163,54 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                         writeCallback: (_, val) => groups[GroupType.Group0].Enabled = val,
                         valueProviderCallback: _ => groups[GroupType.Group0].Enabled
                     );
+                registersMap.Add((long)DistributorRegisters.NonSecureAccessControl_0, new DoubleWordRegister(this)
+                    .WithEnumFields<DoubleWordRegister, NonSecureAccess>(0, 2, 16, name: "NS_access",
+                        writeCallback: (i, _, val) =>
+                        {
+                            var cpu = GetAskingCPUEntry();
+                            if(IsAffinityRoutingEnabled(cpu))
+                            {
+                                cpu.NonSecureSGIAccess[i] = val;
+                            }
+                        },
+                        valueProviderCallback: (i, _) =>
+                        {
+                            var cpu = GetAskingCPUEntry();
+                            return IsAffinityRoutingEnabled(cpu) ? (NonSecureAccess)0 : cpu.NonSecureSGIAccess[i];
+                        }
+                    )
+                    // Those could be emitted in valueProvider/writeCallback instead,
+                    // but we don't want to emit the same warning 16 times per access.
+                    .WithWriteCallback((_, __) =>
+                    {
+                        var cpu = GetAskingCPUEntry();
+                        if(IsAffinityRoutingEnabled(cpu))
+                        {
+                            this.Log(LogLevel.Warning, "Tried to write to GICD_NSACR0 when affinity routing is enabled. Access ignored, use GICR_NSACR instead.");
+                        }
+                    })
+                    .WithReadCallback((_, __) =>
+                    {
+                        var cpu = GetAskingCPUEntry();
+                        if(IsAffinityRoutingEnabled(cpu))
+                        {
+                            this.Log(LogLevel.Warning, "Tried to read from GICD_NSACR0 when affinity routing is enabled. Access ignored, use GICR_NSACR instead.");
+                        }
+                    })
+                );
+                // These registers do not support PPIs, therefore GICD_NSACR1 is RAZ/WI
+                registersMap.Add((long)DistributorRegisters.NonSecureAccessControl_0 + 4, new DoubleWordRegister(this)
+                    .WithValueFields(0, 2, 16, FieldMode.Read, name: "NS_access", valueProviderCallback: (_, __) => 0)
+                );
+                for(var j = 2; j < 64; ++j)
+                {
+                    var i = j;
+                    registersMap.Add((long)DistributorRegisters.NonSecureAccessControl_0 + 4 * i, new DoubleWordRegister(this)
+                        .WithValueFields(0, 2, 16, name: "NS_access", valueProviderCallback: (_, __) => 0)
+                        .WithReadCallback((_, __) => this.Log(LogLevel.Warning, "GICD_NSACR{0} is not implemented yet", i))
+                        .WithWriteCallback((_, __) => this.Log(LogLevel.Warning, "GICD_NSACR{0} is not implemented yet", i))
+                    );
+                }
             }
             else
             {
@@ -831,133 +1230,6 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                         valueProviderCallback: _ => groups[GroupType.Group1NonSecure].Enabled
                     );
             }
-
-            var registersMap = new Dictionary<long, DoubleWordRegister>
-            {
-                {(long)DistributorRegisters.Control, controlRegister}
-            };
-            return registersMap;
-        }
-
-        private Dictionary<long, DoubleWordRegister> BuildRedistributorDoubleWordRegistersMap()
-        {
-            var registersMap = new Dictionary<long, DoubleWordRegister>
-            {
-                {(long)RedistributorRegisters.Control, new DoubleWordRegister(this)
-                    .WithFlag(31, FieldMode.Read, name: "UpstreamWritePending",
-                        valueProviderCallback: _ => false
-                    )
-                    .WithReservedBits(27, 4)
-                    .WithTaggedFlag("DisableProcessorSelectionGroup1Secure", 26)
-                    .WithTaggedFlag("DisableProcessorSelectionGroup1NonSecure", 25)
-                    .WithTaggedFlag("DisableProcessorSelectionGroup0", 24)
-                    .WithReservedBits(4, 20)
-                    .WithFlag(3, FieldMode.Read, name: "RegisterWritePending",
-                        valueProviderCallback: _ => false
-                    )
-                    .WithFlag(2, FieldMode.Read, name: "LocalitySpecificInterruptInvalidateSupport",
-                        valueProviderCallback: _ => false
-                    )
-                    .WithFlag(1, FieldMode.Read, name: "LocalitySpecificInterruptClearEnableSupport",
-                        valueProviderCallback: _ => false
-                    )
-                    .WithTaggedFlag("LocalitySpecificInterruptEnable", 0)
-                },
-                {(long)RedistributorRegisters.Wake, new DoubleWordRegister(this, 0x1)
-                    // "There is only one GICR_WAKER.Sleep and one GICR_WAKER.Quiescent bit that can be read and written through the GICR_WAKER register of any Redistributor."
-                    .WithTaggedFlag("Quiescent", 31)
-                    .WithReservedBits(3, 28)
-                    .WithFlag(2, FieldMode.Read, name: "ChildrenAsleep",
-                        valueProviderCallback: _ => GetAskingCPUEntry().IsSleeping
-                    )
-                    .WithFlag(1, name: "ProcessorSleep",
-                        writeCallback: (_, val) => GetAskingCPUEntry().IsSleeping = val,
-                        valueProviderCallback: _ => GetAskingCPUEntry().IsSleeping
-                    )
-                    .WithTaggedFlag("Sleep", 0)
-                    // According to the reference manual this register should be RAZ/WI for an unsecure access, but we just show a warning in such a situation.
-                    .WithWriteCallback((_, __) => { if(!DisabledSecurity && !GetAskingCPUEntry().IsStateSecure) this.Log(LogLevel.Warning, "Writing to the GICR_WAKER register from wrong security state."); })
-                    .WithReadCallback((_, __) => { if(!DisabledSecurity && !GetAskingCPUEntry().IsStateSecure) this.Log(LogLevel.Warning, "Reading from the GICR_WAKER register from wrong security state."); })
-                },
-                {GetPeripheralIdentificationOffset(), new DoubleWordRegister(this)
-                    .WithReservedBits(8, 24)
-                    .WithEnumField<DoubleWordRegister, ARM_GenericInterruptControllerVersion>(4, 4, FieldMode.Read, name: "ArchitectureVersion",
-                        valueProviderCallback: _ => ArchitectureVersion
-                    )
-                    .WithTag("ImplementationDefinedIdentificator", 0, 4)
-                }
-            };
-
-            AddRegistersAtOffset(registersMap, (long)RedistributorRegisters.InterruptSetEnable_0,
-                BuildInterruptSetEnableRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.PrivatePeripheralLast, "InterruptSetEnable")
-            );
-
-            AddRegistersAtOffset(registersMap, (long)RedistributorRegisters.InterruptClearEnable_0,
-                BuildInterruptClearEnableRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.PrivatePeripheralLast, "InterruptClearEnable")
-            );
-
-            AddRegistersAtOffset(registersMap, (long)RedistributorRegisters.InterruptClearPending_0,
-                BuildInterruptClearPendingRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.PrivatePeripheralLast, "InterruptClearPending")
-            );
-
-            AddRegistersAtOffset(registersMap, (long)RedistributorRegisters.InterruptPriority_0,
-                BuildInterruptPriorityRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.PrivatePeripheralLast, "InterruptPriority")
-            );
-
-            AddRegistersAtOffset(registersMap, (long)RedistributorRegisters.PrivatePeripheralInterruptConfiguration,
-                BuildInterruptConfigurationRegisters(irqsDecoder.PrivatePeripheralFirst, irqsDecoder.PrivatePeripheralLast, "PrivatePeripheralInterruptConfiguration")
-            );
-
-            AddRegistersAtOffset(registersMap, (long)RedistributorRegisters.InterruptGroup_0,
-                BuildInterruptGroupRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.PrivatePeripheralLast, "InterruptGroup")
-            );
-
-            AddRegistersAtOffset(registersMap, (long)RedistributorRegisters.InterruptGroupModifier_0,
-                BuildInterruptGroupModifierRegisters(irqsDecoder.SoftwareGeneratedFirst, irqsDecoder.PrivatePeripheralLast, "InterruptGroupModifier")
-            );
-
-            return registersMap;
-        }
-
-        private Dictionary<long, QuadWordRegister> BuildRedistributorQuadWordRegistersMap()
-        {
-            var registersMap = new Dictionary<long, QuadWordRegister>
-            {
-                {(long)RedistributorRegisters.ControllerType, new QuadWordRegister(this)
-                    .WithValueField(32, 32, FieldMode.Read, name: "CPUAffinity",
-                        valueProviderCallback: _ => GetAskingCPUEntry().Affinity.AllLevels
-                    )
-                    .WithValueField(27, 5, FieldMode.Read, name: "MaximumPrivatePeripheralInterruptIdentifier",
-                        valueProviderCallback: _ => 0b00 // The maximum PPI identifier is 31, because the GIC doesn't support an extended range of PPI
-                    )
-                    .WithFlag(26, FieldMode.Read, name: "DirectSoftwareGeneratedInterruptInjectionSupport",
-                        valueProviderCallback: _ => false
-                    )
-                    .WithTag("LocalitySpecificInterruptConfigurationSharing", 24, 2)
-                    .WithValueField(8, 16, FieldMode.Read, name: "ProcessorNumber",
-                        valueProviderCallback: _ => GetAskingCPUEntry().ProcessorNumber
-                    )
-                    .WithTaggedFlag("vPEResidentIndicator", 7)
-                    .WithFlag(6, FieldMode.Read, name: "MPAMSupport",
-                        valueProviderCallback: _ => false
-                    )
-                    .WithFlag(5, FieldMode.Read, name: "DPGSupport",
-                        valueProviderCallback: _ => false
-                    )
-                    .WithFlag(4, FieldMode.Read, name: "HighestRedistributorInSeries",
-                        valueProviderCallback: _ => true) // There is no multi core support yet, so the Redistributor instance always is the latest one
-                    .WithFlag(3, FieldMode.Read, name: "LocalitySpecificInterruptDirectInjectionSupport",
-                        valueProviderCallback: _ => false
-                    )
-                    .WithTaggedFlag("DirtyBitControl", 2)
-                    .WithFlag(1, FieldMode.Read, name: "VirtualLocalitySpecificInterruptSupport",
-                        valueProviderCallback: _ => false
-                    )
-                    .WithFlag(0, FieldMode.Read, name: "PhysicalLocalitySpecificInterruptSupport",
-                        valueProviderCallback: _ => false
-                    )
-                }
-            };
 
             return registersMap;
         }
@@ -996,8 +1268,8 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 {(long)CPUInterfaceSystemRegisters.GroupEnable1, new QuadWordRegister(this)
                     .WithReservedBits(1, 63)
                     .WithFlag(0, name: "EnableGroup1",
-                        valueProviderCallback: _ => GetAskingCPUEntry().GetGroupForRegister(GroupTypeRegister.Group1).Enabled,
-                        writeCallback: (_, val) => GetAskingCPUEntry().GetGroupForRegister(GroupTypeRegister.Group1).Enabled = val
+                        valueProviderCallback: _ => GetAskingCPUEntry().GetGroupForRegisterSecurityAgnostic(GroupTypeSecurityAgnostic.Group1).Enabled,
+                        writeCallback: (_, val) => GetAskingCPUEntry().GetGroupForRegisterSecurityAgnostic(GroupTypeSecurityAgnostic.Group1).Enabled = val
                     )
                 },
                 {(long)CPUInterfaceSystemRegisters.GroupEnable1EL3, new QuadWordRegister(this)
@@ -1016,7 +1288,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                     .WithTaggedFlag("PriorityFromNonSecureNonMaskableInterrupt", 62) // Requires FEAT_GICv3_NMI extension
                     .WithReservedBits(8, 54)
                     .WithEnumField<QuadWordRegister, InterruptPriority>(0, 8, FieldMode.Read, name: "RunningPriority",
-                        valueProviderCallback: _ => GetAskingCPUEntry().RunningPriority
+                        valueProviderCallback: _ => GetAskingCPUEntry().RunningInterrupts.Priority
                     )
                 },
                 {(long)CPUInterfaceSystemRegisters.PriorityMask, new QuadWordRegister(this)
@@ -1027,21 +1299,21 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                     )
                 },
                 {(long)CPUInterfaceSystemRegisters.InterruptAcknowledgeGroup0,
-                    BuildInterruptAcknowledgeRegister(new QuadWordRegister(this), 64, "InterruptAcknowledgeGroup0", () => GroupTypeRegister.Group0, false)
+                    BuildInterruptAcknowledgeRegister(new QuadWordRegister(this), 64, "InterruptAcknowledgeGroup0", () => GroupTypeSecurityAgnostic.Group0, false)
                 },
                 {(long)CPUInterfaceSystemRegisters.InterruptAcknowledgeGroup1,
-                    BuildInterruptAcknowledgeRegister(new QuadWordRegister(this), 64, "InterruptAcknowledgeGroup1", () => GroupTypeRegister.Group1, false)
+                    BuildInterruptAcknowledgeRegister(new QuadWordRegister(this), 64, "InterruptAcknowledgeGroup1", () => GroupTypeSecurityAgnostic.Group1, false)
                 },
                 {(long)CPUInterfaceSystemRegisters.InterruptDeactivate,
                     BuildInterruptDeactivateOrInterruptEndRegister(new QuadWordRegister(this), 64, "InterruptDeactivate", null,
                         useCPUIdentifier: false, isDeactivateRegister: true)
                 },
                 {(long)CPUInterfaceSystemRegisters.InterruptEndGroup0,
-                    BuildInterruptDeactivateOrInterruptEndRegister(new QuadWordRegister(this), 64, "InterruptEndGroup0", () => GroupTypeRegister.Group0,
+                    BuildInterruptDeactivateOrInterruptEndRegister(new QuadWordRegister(this), 64, "InterruptEndGroup0", () => GroupTypeSecurityAgnostic.Group0,
                         useCPUIdentifier: false, isDeactivateRegister: false)
                 },
                 {(long)CPUInterfaceSystemRegisters.InterruptEndGroup1,
-                    BuildInterruptDeactivateOrInterruptEndRegister(new QuadWordRegister(this), 64, "InterruptEndGroup1", () => GroupTypeRegister.Group1,
+                    BuildInterruptDeactivateOrInterruptEndRegister(new QuadWordRegister(this), 64, "InterruptEndGroup1", () => GroupTypeSecurityAgnostic.Group1,
                         useCPUIdentifier: false, isDeactivateRegister: false)
                 },
                 {(long)CPUInterfaceSystemRegisters.ControlEL1, new QuadWordRegister(this)
@@ -1090,14 +1362,161 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                     .WithTaggedFlag("CommonBinaryPointRegisterEL1NonSecure", 1)
                     .WithTaggedFlag("CommonBinaryPointRegisterEL1Secure", 0)
                 },
+                {(long)CPUInterfaceSystemRegisters.HypControl, new QuadWordRegister(this)
+                    .WithReservedBits(32, 32)
+                    .WithValueField(27, 5, FieldMode.Read, name: "EOIcount",
+                        valueProviderCallback: _ => GetAskingCPUEntry().EOICount
+                    )
+                    .WithReservedBits(16, 11)
+                    .WithTaggedFlag("DVIM", 15) // Reserved when ICH_VTR_EL2.DVIM = 0
+                    .WithTaggedFlag("TDIR", 14) // Reserved when FEAT_GICv3_TDIR is not implemented
+                    .WithTaggedFlag("TSEI", 13)
+                    .WithTaggedFlag("TALL1", 12)
+                    .WithTaggedFlag("TALL0", 11)
+                    .WithTaggedFlag("TC", 10)
+                    .WithReservedBits(9, 1)
+                    .WithTaggedFlag("vSGIEOICount", 8) // Reserved when FEAT_GICv4p1 is not implemented
+                    .WithTaggedFlag("VGrp0DIE", 7)
+                    .WithTaggedFlag("VGrp1EIE", 6)
+                    .WithTaggedFlag("VGrp0DIE", 5)
+                    .WithTaggedFlag("VGrp0EIE", 4)
+                    .WithTaggedFlag("NPIE", 3)
+                    .WithTaggedFlag("LRENPIE", 2)
+                    .WithTaggedFlag("UIE", 1)
+                    .WithFlag(0, name: "En",
+                        valueProviderCallback: _ => GetAskingCPUEntry().VirtualCPUInterfaceEnabled,
+                        writeCallback: (_, val) => GetAskingCPUEntry().VirtualCPUInterfaceEnabled = val
+                    )
+                },
+                {(long)CPUInterfaceSystemRegisters.VGICType, new QuadWordRegister(this)
+                    .WithReservedBits(32, 32)
+                    .WithValueField(29, 3, FieldMode.Read, name: "PRIbits",
+                        valueProviderCallback: _ => VirtualPriorityBits - 1
+                    )
+                    .WithTag("PREbits", 26, 3)
+                    .WithTag("IDbits", 23, 3)
+                    .WithTaggedFlag("SEIS", 22)
+                    .WithTaggedFlag("A3V", 21)
+                    .WithTaggedFlag("nV4", 20)
+                    .WithTaggedFlag("TDS", 19)
+                    .WithTaggedFlag("DVIM", 18)
+                    .WithReservedBits(5, 13)
+                    .WithValueField(0, 5, FieldMode.Read, name: "ListRegs",
+                        valueProviderCallback: _ => VirtualInterruptCount - 1
+                    )
+                },
+                {(long)CPUInterfaceSystemRegisters.VMControl, new QuadWordRegister(this)
+                    .WithReservedBits(32, 32)
+                    .WithEnumField<QuadWordRegister, InterruptPriority>(24, 8, name: "VPMR",
+                        valueProviderCallback: _ => GetAskingCPUEntry().VirtualPriorityMask,
+                        writeCallback: (_, val) => GetAskingCPUEntry().VirtualPriorityMask = val
+                    )
+                    .WithTag("VBPR0", 21, 3)
+                    .WithTag("VBPR1", 18, 3)
+                    .WithEnumField<QuadWordRegister, EndOfInterruptModes>(9, 1, name: "VEOIM",
+                        valueProviderCallback: _ => GetAskingCPUEntry().EndOfInterruptModeVirtual,
+                        writeCallback: (_, val) => GetAskingCPUEntry().EndOfInterruptModeVirtual = val
+                    )
+                    .WithReservedBits(5, 4)
+                    .WithTaggedFlag("VCBPR", 4)
+                    .WithFlag(3, name: "VFIQEn",
+                        valueProviderCallback: _ => GetAskingCPUEntry().VirtualFIQEnabled,
+                        writeCallback: (_, val) => GetAskingCPUEntry().VirtualFIQEnabled = val
+                    )
+                    .WithTaggedFlag("VAckCtl", 2)
+                    .WithFlag(1, name: "VENG1",
+                        valueProviderCallback: _ => GetAskingCPUEntry().Groups.Virtual[GroupType.Group1].Enabled,
+                        writeCallback: (_, val) => GetAskingCPUEntry().Groups.Virtual[GroupType.Group1].Enabled = val
+                    )
+                    .WithFlag(0, name: "VENG0",
+                        valueProviderCallback: _ => GetAskingCPUEntry().Groups.Virtual[GroupType.Group0].Enabled,
+                        writeCallback: (_, val) => GetAskingCPUEntry().Groups.Virtual[GroupType.Group0].Enabled = val
+                    )
+                },
+                {(long)CPUInterfaceSystemRegisters.SoftwareGeneratedInterruptGroup1Generate, BuildSGIGenerateRegister(() => GetGroup1ForSecurityState(GetAskingCPUEntry().IsStateSecure))},
+                {(long)CPUInterfaceSystemRegisters.SoftwareGeneratedInterruptGroup1GenerateAlias, BuildSGIGenerateRegister(() => GetGroup1ForSecurityState(!GetAskingCPUEntry().IsStateSecure))},
+                {(long)CPUInterfaceSystemRegisters.SoftwareGeneratedInterruptGroup0Generate, BuildSGIGenerateRegister(() => GroupType.Group0)},
             };
+
+            for(int j = 0; j < VirtualInterruptCount; ++j)
+            {
+                var i = j;
+
+                Func<VirtualInterrupt> virtualInterrupt = () => GetAskingCPUEntry().VirtualInterrupts[i];
+                Action syncInterruptState = () =>
+                {
+                    var currentInterrupt = virtualInterrupt();
+                    var activeInterrupt = GetAskingCPUEntry().RunningInterrupts.GetActiveVirtual(currentInterrupt.Identifier);
+                    if(activeInterrupt != null)
+                    {
+                        activeInterrupt.Sync(currentInterrupt);
+                    }
+                };
+
+                registersMap.Add((long)CPUInterfaceSystemRegisters.ListRegister_0 + i, new QuadWordRegister(this)
+                    .WithValueField(62, 2, name: "State",
+                        valueProviderCallback: _ => virtualInterrupt().State.Bits,
+                        writeCallback: (_, val) => virtualInterrupt().State.Bits = val
+                    )
+                    .WithFlag(61, name: "HW",
+                        valueProviderCallback: _ => virtualInterrupt().Hardware,
+                        writeCallback: (_, val) => virtualInterrupt().Hardware = val
+                    )
+                    .WithFlag(60, name: "Group",
+                        valueProviderCallback: _ => virtualInterrupt().Config.GroupBit,
+                        writeCallback: (_, val) => virtualInterrupt().Config.GroupBit = val
+                    )
+                    .WithReservedBits(56, 4)
+                    .WithEnumField<QuadWordRegister, InterruptPriority>(48, 8, name: "Priority",
+                        valueProviderCallback: _ => virtualInterrupt().Config.Priority,
+                        writeCallback: (_, val) => virtualInterrupt().Config.Priority = val
+                    )
+                    .WithReservedBits(45, 3)
+                    .WithValueField(32, 13, name: "pINTID",
+                        valueProviderCallback: _ => (uint)virtualInterrupt().HardwareIdentifier,
+                        writeCallback: (_, val) => virtualInterrupt().SetHardwareIdentifier((uint)val)
+                    )
+                    .WithValueField(0, 32, name: "vINTID",
+                        valueProviderCallback: _ => (uint)virtualInterrupt().Identifier,
+                        writeCallback: (_, val) => virtualInterrupt().SetIdentifier((uint)val)
+                    )
+                    .WithWriteCallback((_, __) => syncInterruptState())
+                );
+
+                registersMap.Add((long)CPUInterfaceSystemRegisters.ListRegisterUpper_0 + i, new QuadWordRegister(this)
+                    .WithReservedBits(32, 32)
+                    .WithValueField(30, 2, name: "State",
+                        valueProviderCallback: _ => virtualInterrupt().State.Bits,
+                        writeCallback: (_, val) => virtualInterrupt().State.Bits = val
+                    )
+                    .WithFlag(29, name: "HW",
+                        valueProviderCallback: _ => virtualInterrupt().Hardware,
+                        writeCallback: (_, val) => virtualInterrupt().Hardware = val
+                    )
+                    .WithFlag(28, name: "Group",
+                        valueProviderCallback: _ => virtualInterrupt().Config.GroupBit,
+                        writeCallback: (_, val) => virtualInterrupt().Config.GroupBit = val
+                    )
+                    .WithReservedBits(24, 4)
+                    .WithEnumField<QuadWordRegister, InterruptPriority>(16, 8, name: "Priority",
+                        valueProviderCallback: _ => virtualInterrupt().Config.Priority,
+                        writeCallback: (_, val) => virtualInterrupt().Config.Priority = val
+                    )
+                    .WithReservedBits(13, 3)
+                    .WithValueField(0, 13, name: "pINTID",
+                        valueProviderCallback: _ => (uint)virtualInterrupt().HardwareIdentifier,
+                        writeCallback: (_, val) => virtualInterrupt().SetHardwareIdentifier((uint)val)
+                    )
+                    .WithWriteCallback((_, __) => syncInterruptState())
+                );
+            }
 
             return registersMap;
         }
 
         private Dictionary<long, DoubleWordRegister> BuildCPUInterfaceRegistersMap()
         {
-            Func<GroupTypeRegister> getRegisterGroupType = () => (DisabledSecurity || GetAskingCPUEntry().IsStateSecure) ? GroupTypeRegister.Group0 : GroupTypeRegister.Group1;
+            Func<GroupTypeSecurityAgnostic> getRegisterGroupTypeSecurityAgnostic = () => (DisabledSecurity || GetAskingCPUEntry().IsStateSecure) ? GroupTypeSecurityAgnostic.Group0 : GroupTypeSecurityAgnostic.Group1;
             var registersMap = new Dictionary<long, DoubleWordRegister>
             {
                 {(long)CPUInterfaceRegisters.InterfaceIdentification, new DoubleWordRegister(this)
@@ -1109,7 +1528,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 {(long)CPUInterfaceRegisters.RunningPriority, new DoubleWordRegister(this)
                     .WithReservedBits(8, 24)
                     .WithEnumField<DoubleWordRegister, InterruptPriority>(0, 8, FieldMode.Read, name: "RunningPriority",
-                        valueProviderCallback: _ => GetAskingCPUEntry().RunningPriority
+                        valueProviderCallback: _ => GetAskingCPUEntry().RunningInterrupts.Priority
                     )
                 },
                 {(long)CPUInterfaceRegisters.PriorityMask, new DoubleWordRegister(this)
@@ -1120,10 +1539,10 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                     )
                 },
                 {(long)CPUInterfaceRegisters.InterruptAcknowledge,
-                    BuildInterruptAcknowledgeRegister(new DoubleWordRegister(this), 32, "InterruptAcknowledge", getRegisterGroupType, true)
+                    BuildInterruptAcknowledgeRegister(new DoubleWordRegister(this), 32, "InterruptAcknowledge", getRegisterGroupTypeSecurityAgnostic, true)
                 },
                 {(long)CPUInterfaceRegisters.InterruptEnd,
-                    BuildInterruptDeactivateOrInterruptEndRegister(new DoubleWordRegister(this), 32, "InterruptEnd", getRegisterGroupType,
+                    BuildInterruptDeactivateOrInterruptEndRegister(new DoubleWordRegister(this), 32, "InterruptEnd", getRegisterGroupTypeSecurityAgnostic,
                         useCPUIdentifier: true, isDeactivateRegister: false)
                 },
                 {(long)CPUInterfaceRegisters.InterruptDeactivate,
@@ -1147,7 +1566,17 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                     .WithFlag(5, FieldMode.Read, name: "FIQBypassGroup0", valueProviderCallback: _ => false)
                     .WithTaggedFlag("PreemptionControl", 4)
                     .WithFlag(3, name: "EnableFIQ",
-                        writeCallback: (_, val) => enableFIQ = val,
+                        writeCallback: (_, val) =>
+                        {
+                            if(!ArchitectureVersionAtLeast3)
+                            {
+                                enableFIQ = val;
+                            }
+                            else
+                            {
+                                this.Log(LogLevel.Warning, "Modifying EnableFIQ flag is not supported in this architecture version");
+                            }
+                        },
                         valueProviderCallback: _ => enableFIQ
                     )
                     .WithFlag(2, name: "AcknowledgementControl",
@@ -1210,18 +1639,51 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 
                 // Aliases for acknowledging/ending non-secure interrupts in secure state.
                 {(long)CPUInterfaceRegisters.InterruptAcknowledgeAlias,
-                    BuildInterruptAcknowledgeRegister(new DoubleWordRegister(this), 32, "InterruptAcknowledgeAlias", () => GroupTypeRegister.Group1, true)
+                    BuildInterruptAcknowledgeRegister(new DoubleWordRegister(this), 32, "InterruptAcknowledgeAlias", () => GroupTypeSecurityAgnostic.Group1, true)
                 },
                 {(long)CPUInterfaceRegisters.InterruptEndAlias,
-                    BuildInterruptDeactivateOrInterruptEndRegister(new DoubleWordRegister(this), 32, "InterruptEndAlias", () => GroupTypeRegister.Group1,
+                    BuildInterruptDeactivateOrInterruptEndRegister(new DoubleWordRegister(this), 32, "InterruptEndAlias", () => GroupTypeSecurityAgnostic.Group1,
                         useCPUIdentifier: true, isDeactivateRegister: false)
                 },
             };
             return registersMap;
         }
 
+        private QuadWordRegister BuildSGIGenerateRegister(Func<GroupType> getGroupType)
+        {
+            return new QuadWordRegister(this)
+                .WithReservedBits(56, 8)
+                .WithValueField(48, 8, out var affinity3, FieldMode.Write, name: "Affinity3")
+                .WithValueField(44, 4, out var rangeSelector, FieldMode.Write, name: "Range Selector")
+                .WithReservedBits(41, 3)
+                .WithFlag(40, out var interruptRoutingMode, FieldMode.Write, name: "Interrupt Routing Mode")
+                .WithValueField(32, 8, out var affinity2, FieldMode.Write, name: "Affinity2")
+                .WithReservedBits(28, 4)
+                .WithValueField(24, 4, out var interruptID, FieldMode.Write, name: "Interrupt ID")
+                .WithValueField(16, 8, out var affinity1, FieldMode.Write, name: "Affinity1")
+                .WithReservedBits(5, 11)
+                .WithValueField(0, 5, out var targetList)
+                .WithWriteCallback((_, newValue) =>
+                {
+                    var targetType = interruptRoutingMode.Value ? SoftwareGeneratedInterruptRequest.TargetType.AllCPUs : SoftwareGeneratedInterruptRequest.TargetType.TargetList;
+
+                    var list = new Affinity[]{};
+                    if(targetType == SoftwareGeneratedInterruptRequest.TargetType.TargetList)
+                    {
+                        var range = 16 * (byte)rangeSelector.Value;
+                        var aff1 = (byte)affinity1.Value;
+                        var aff2 = (byte)affinity2.Value;
+                        var aff3 = (byte)affinity3.Value;
+                        list = BitHelper.GetSetBits(targetList.Value).Select(n => new Affinity((byte)(range + n), aff1, aff2, aff3)).ToArray();
+                    }
+
+                    var interrupt = new SoftwareGeneratedInterruptRequest(targetType, list, getGroupType(), new InterruptId((uint)interruptID.Value));
+                    OnSoftwareGeneratedInterrupt(GetAskingCPUEntry(), interrupt);
+                });
+        }
+
         private T BuildInterruptAcknowledgeRegister<T>(T register, int registerWidth, string name,
-            Func<GroupTypeRegister> groupTypeRegisterProvider, bool useCPUIdentifier) where T : PeripheralRegister
+            Func<GroupTypeSecurityAgnostic> groupTypeRegisterProvider, bool useCPUIdentifier) where T : PeripheralRegister
         {
             return register
                 .WithReservedBits(24, registerWidth - 24)
@@ -1236,7 +1698,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
         }
 
         private T BuildInterruptDeactivateOrInterruptEndRegister<T>(T register, int registerWidth, string name,
-            Func<GroupTypeRegister> groupTypeRegisterProvider, bool useCPUIdentifier, bool isDeactivateRegister) where T : PeripheralRegister
+            Func<GroupTypeSecurityAgnostic> groupTypeRegisterProvider, bool useCPUIdentifier, bool isDeactivateRegister) where T : PeripheralRegister
         {
             return register
                 .WithReservedBits(24, registerWidth - 24)
@@ -1296,142 +1758,9 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             );
         }
 
-        private IEnumerable<DoubleWordRegister> BuildInterruptSetEnableRegisters(InterruptId startId, InterruptId endId, string name)
-        {
-            return BuildInterruptFlagRegisters(startId, endId, name,
-                writeCallback: (irq, val) => irq.Config.Enabled |= val,
-                valueProviderCallback: irq => irq.Config.Enabled
-            );
-        }
-
-        private IEnumerable<DoubleWordRegister> BuildInterruptClearEnableRegisters(InterruptId startId, InterruptId endId, string name)
-        {
-            return BuildInterruptFlagRegisters(startId, endId, name,
-                writeCallback: (irq, val) => irq.Config.Enabled &= !val,
-                valueProviderCallback: irq => irq.Config.Enabled
-            );
-        }
-
-        private IEnumerable<DoubleWordRegister> BuildInterruptPriorityRegisters(InterruptId startId, InterruptId endId, string name)
-        {
-            return BuildInterruptEnumRegisters<InterruptPriority>(startId, endId, name, 4,
-                writeCallback: (irq, val) => irq.Config.Priority = val,
-                valueProviderCallback: irq => irq.Config.Priority
-            );
-        }
-
-        private IEnumerable<DoubleWordRegister> BuildPrivateInterruptTargetsRegisters(InterruptId startId, InterruptId endId, string name)
-        {
-            return BuildInterruptValueRegisters(startId, endId, name, 4,
-                valueProviderCallback: _ => GetAskingCPUEntry().TargetFieldFlag
-            );
-        }
-
-        private IEnumerable<DoubleWordRegister> BuildSharedInterruptTargetsRegisters(InterruptId startId, InterruptId endId, string name)
-        {
-            return BuildInterruptValueRegisters(startId, endId, name, 4,
-                writeCallback: (irq, val) =>
-                    {
-                        if(IsAffinityRoutingEnabled(GetAskingCPUEntry()))
-                        {
-                            this.Log(LogLevel.Warning, "Trying to write ITARGETSR register when Affinity Routing is enabled, write ignored.");
-                            return;
-                        }
-                        var validTargets = legacyCpusAttachedMask & val;
-                        ((SharedInterrupt)irq).TargetCPUs = (byte)validTargets;
-                        if(validTargets != val)
-                        {
-                            this.Log(LogLevel.Warning, "Interrupt {0} configured to target an invalid CPU, id: {1}, writes ignored.", irq.Identifier, String.Join(", ", BitHelper.GetSetBits(validTargets ^ val)));
-                        }
-                    },
-                valueProviderCallback: irq =>
-                    {
-                        if(IsAffinityRoutingEnabled(GetAskingCPUEntry()))
-                        {
-                            this.Log(LogLevel.Warning, "Trying to read ITARGETSR register when Affinity Routing is enabled, returning 0.");
-                            return 0;
-                        }
-                        return ((SharedInterrupt)irq).TargetCPUs;
-                    }
-            );
-        }
-
-        private IEnumerable<DoubleWordRegister> BuildInterruptConfigurationRegisters(InterruptId startId, InterruptId endId, string name, bool isReadonly = false)
-        {
-            Action<Interrupt, InterruptTriggerType> writeCallback = null;
-            if(!isReadonly)
-            {
-                writeCallback = (irq, val) =>
-                {
-                    irq.State.TriggerType = val;
-                    if(val != InterruptTriggerType.LevelSensitive && val != InterruptTriggerType.EdgeTriggered)
-                    {
-                        this.Log(LogLevel.Error, "Setting an unknown interrupt trigger type, value {0}", val);
-                    }
-                };
-            }
-            return BuildInterruptEnumRegisters<InterruptTriggerType>(startId, endId, name, 16,
-                writeCallback: writeCallback,
-                valueProviderCallback: irq => irq.State.TriggerType
-            );
-        }
-
-        private IEnumerable<DoubleWordRegister> BuildInterruptSetActiveRegisters(InterruptId startId, InterruptId endId, string name)
-        {
-            return BuildInterruptFlagRegisters(startId, endId, name,
-                writeCallback: (irq, val) => irq.State.Active |= val,
-                valueProviderCallback: irq => irq.State.Active
-            );
-        }
-
-        private IEnumerable<DoubleWordRegister> BuildInterruptClearActiveRegisters(InterruptId startId, InterruptId endId, string name)
-        {
-            return BuildInterruptFlagRegisters(startId, endId, name,
-                writeCallback: (irq, val) => irq.State.Active &= !val,
-                valueProviderCallback: irq => irq.State.Active
-            );
-        }
-
-        private IEnumerable<DoubleWordRegister> BuildInterruptClearPendingRegisters(InterruptId startId, InterruptId endId, string name)
-        {
-            return BuildInterruptFlagRegisters(startId, endId, name,
-                writeCallback: (irq, val) => irq.State.Pending &= !val,
-                valueProviderCallback: irq => irq.State.Pending
-            );
-        }
-
-        private IEnumerable<DoubleWordRegister> BuildInterruptGroupRegisters(InterruptId startId, InterruptId endId, string name)
-        {
-            return BuildInterruptFlagRegisters(startId, endId, name,
-                writeCallback: (irq, val) => irq.Config.GroupBit = val,
-                valueProviderCallback: irq => irq.Config.GroupBit,
-                allowAccessWhenNonSecureGroup: false
-            );
-        }
-
-        private IEnumerable<DoubleWordRegister> BuildInterruptGroupModifierRegisters(InterruptId startId, InterruptId endId, string name)
-        {
-            return BuildInterruptFlagRegisters(startId, endId, name,
-                writeCallback: (irq, val) =>
-                    {
-                        if(!DisabledSecurity)
-                        {
-                            irq.Config.GroupModifierBit = val;
-                        }
-                        else
-                        {
-                            // The Zephyr uses this field as usual, so the log message isn't a warning
-                            this.Log(LogLevel.Debug, "The group modifier register is reserved for the disabled security, write ignored.");
-                        }
-                    },
-                valueProviderCallback: irq => irq.Config.GroupModifierBit,
-                allowAccessWhenNonSecureGroup: false
-            );
-        }
-
         private IEnumerable<DoubleWordRegister> BuildInterruptFlagRegisters(InterruptId startId, InterruptId endId, string name,
             Action<Interrupt, bool> writeCallback = null, Func<Interrupt, bool> valueProviderCallback = null, bool allowAccessWhenNonSecureGroup = true,
-            CPUEntry sgiRequestingCPU = null)
+            CPUEntry sgiRequestingCPU = null, Func<CPUEntry> cpuEntryProvider = null)
         {
             const int BitsPerRegister = 32;
             return BuildInterruptRegisters(startId, endId, BitsPerRegister,
@@ -1455,13 +1784,13 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                     },
 
                 (register, fieldIndex) => register.WithReservedBits(fieldIndex, 1),
-                sgiRequestingCPU
+                sgiRequestingCPU, cpuEntryProvider
             );
         }
 
         private IEnumerable<DoubleWordRegister> BuildInterruptValueRegisters(InterruptId startId, InterruptId endId, string name, int fieldsPerRegister,
             Action<Interrupt, ulong> writeCallback = null, Func<Interrupt, ulong> valueProviderCallback = null, bool allowAccessWhenNonSecureGroup = true,
-            CPUEntry sgiRequestingCPU = null)
+            CPUEntry sgiRequestingCPU = null, Func<CPUEntry> cpuEntryProvider = null)
         {
             const int registerWidth = 32;
             var fieldWidth = registerWidth / fieldsPerRegister;
@@ -1485,13 +1814,13 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                             writeCallback: writeCallbackWrapped, valueProviderCallback: valueProviderCallbackWrapped);
                     },
                 (register, fieldIndex) => register.WithReservedBits(fieldIndex * fieldWidth, fieldWidth),
-                sgiRequestingCPU
+                sgiRequestingCPU, cpuEntryProvider
             );
         }
 
         private IEnumerable<DoubleWordRegister> BuildInterruptEnumRegisters<TEnum>(InterruptId startId, InterruptId endId, string name, int fieldsPerRegister,
             Action<Interrupt, TEnum> writeCallback = null, Func<Interrupt, TEnum> valueProviderCallback = null, bool allowAccessWhenNonSecureGroup = true,
-            CPUEntry sgiRequestingCPU = null) where TEnum : struct, IConvertible
+            CPUEntry sgiRequestingCPU = null, Func<CPUEntry> cpuEntryProvider = null) where TEnum : struct, IConvertible
         {
             const int registerWidth = 32;
             var fieldWidth = registerWidth / fieldsPerRegister;
@@ -1515,7 +1844,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                             writeCallback: writeCallbackWrapped, valueProviderCallback: valueProviderCallbackWrapped);
                     },
                 (register, fieldIndex) => register.WithReservedBits(fieldIndex * fieldWidth, fieldWidth),
-                sgiRequestingCPU
+                sgiRequestingCPU, cpuEntryProvider
             );
         }
 
@@ -1538,9 +1867,14 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
         private IEnumerable<DoubleWordRegister> BuildInterruptRegisters(InterruptId startId, InterruptId endId, int fieldsPerRegister,
             Action<DoubleWordRegister, Func<Interrupt>, InterruptId, int> fieldAction,
             Action<DoubleWordRegister, int> fieldPlaceholderAction,
-            CPUEntry sgiRequestingCPU
+            // NOTE: sgiRequestingCPU is currently always null as we don't support registers like GICD_CPENDSGIRn which need this information
+            CPUEntry sgiRequestingCPU, Func<CPUEntry> cpuEntryProvider
         )
         {
+            if(cpuEntryProvider == null)
+            {
+                cpuEntryProvider = GetAskingCPUEntry;
+            }
             var interruptsCount = (int)endId - (int)startId + 1;
             var registersCount = (interruptsCount + fieldsPerRegister - 1) / fieldsPerRegister;
             var fieldIndex = 0;
@@ -1563,16 +1897,19 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                     {
                         if(sgiRequestingCPU == null)
                         {
-                            fieldAction(register, () => GetAskingCPUEntry().SoftwareGeneratedInterruptsUnknownRequester[irqId], irqId, inRegisterIndex);
+                            // NOTE: We're returning here from SoftwareGeneratedInterruptsUnknownRequester despite some of the registers operating on
+                            //       the LegacyRequester interrupts. This is fine, as all of those registers actually operate on InterruptConfig
+                            //       and that's shared between interrupts in UnknownRequester and LegacyRequester.
+                            fieldAction(register, () => cpuEntryProvider().SoftwareGeneratedInterruptsUnknownRequester[irqId], irqId, inRegisterIndex);
                         }
                         else
                         {
-                            fieldAction(register, () => GetAskingCPUEntry().SoftwareGeneratedInterruptsLegacyRequester[sgiRequestingCPU][irqId], irqId, inRegisterIndex);
+                            fieldAction(register, () => cpuEntryProvider().SoftwareGeneratedInterruptsLegacyRequester[sgiRequestingCPU][irqId], irqId, inRegisterIndex);
                         }
                     }
                     else if(irqsDecoder.IsPrivatePeripheral(irqId))
                     {
-                        fieldAction(register, () => GetAskingCPUEntry().PrivatePeripheralInterrupts[irqId], irqId, inRegisterIndex);
+                        fieldAction(register, () => cpuEntryProvider().PrivatePeripheralInterrupts[irqId], irqId, inRegisterIndex);
                     }
                     else
                     {
@@ -1590,19 +1927,13 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             }
         }
 
-        private long GetPeripheralIdentificationOffset()
-        {
-            return (ArchitectureVersion <= ARM_GenericInterruptControllerVersion.GICv2) ?
-                (long)RedistributorRegisters.PeripheralIdentification2_v1v2 : (long)RedistributorRegisters.PeripheralIdentification2_v3v4;
-        }
-
         private CPUEntry GetAskingCPUEntry()
         {
             var cpu = busController.GetCurrentCPU();
             var armCPU = cpu as IARMSingleSecurityStateCPU;
             if(armCPU == null || !cpuEntries.ContainsKey(armCPU))
             {
-                throw new InvalidOperationException($"Non-Arm CPU or one that isn't attached to the GIC try to access the GIC, the id of the CPU: {cpu.Id}.");
+                throw new InvalidOperationException($"Non-Arm CPU or one that isn't attached to the GIC tried to access the GIC: {cpu.GetName()}");
             }
             return cpuEntries[armCPU];
         }
@@ -1615,112 +1946,6 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 throw new InvalidOperationException($"The asking CPU '{cpuEntry.Name}' doesn't have two security states!");
             }
             return cpuEntryWithTwoSecurityStates;
-        }
-
-        private bool TryGetCPUEntry(uint processorNumber, out CPUEntry cpuEntry)
-        {
-            var exists = cpusByProcessorNumberCache.TryGetValue(processorNumber, out var cpu);
-            cpuEntry = exists ? cpuEntries[cpu] : null;
-            return exists;
-        }
-
-        private CPUEntry GetCPUEntry(uint processorNumber)
-        {
-            if(!TryGetCPUEntry(processorNumber, out var cpuEntry))
-            {
-                throw new RecoverableException($"There is no CPU with the Processor Number {processorNumber}.");
-            }
-            return cpuEntry;
-        }
-
-        private void AddRegistersAtOffset<T>(Dictionary<long, T> registersMap, long offset, IEnumerable<T> registers)
-        where T : PeripheralRegister
-        {
-            foreach(var register in registers)
-            {
-                if(registersMap.ContainsKey(offset))
-                {
-                    throw new ConstructionException($"The register map already contains register at 0x{offset:x} offset.");
-                }
-                registersMap[offset] = register;
-                offset += BitHelper.CalculateBytesCount(register.RegisterWidth);
-            }
-        }
-
-        private bool TryWriteByteToDoubleWordCollection(DoubleWordRegisterCollection registers, long offset, uint value)
-        {
-            AlignRegisterOffset(offset, DoubleWordRegister.DoubleWordWidth, out var alignedOffset, out var byteOffset);
-            var registerExists = registers.TryRead(alignedOffset, out var currentValue);
-            if(registerExists)
-            {
-                BitHelper.UpdateWithShifted(ref currentValue, value, byteOffset * BitHelper.BitsPerByte, BitHelper.BitsPerByte);
-                registerExists &= registers.TryWrite(alignedOffset, currentValue);
-            }
-            return registerExists;
-        }
-
-        private bool TryReadByteFromDoubleWordCollection(DoubleWordRegisterCollection registers, long offset, out byte value)
-        {
-            AlignRegisterOffset(offset, DoubleWordRegister.DoubleWordWidth, out var alignedOffset, out var byteOffset);
-            var registerExists = registers.TryRead(alignedOffset, out var registerValue);
-            value = (byte)(registerValue >> (byteOffset * BitHelper.BitsPerByte));
-            return registerExists;
-        }
-
-        private bool TryWriteDoubleWordToQuadWordCollection(QuadWordRegisterCollection registers, long offset, uint value)
-        {
-            AlignRegisterOffset(offset, QuadWordRegister.QuadWordWidth, out var alignedOffset, out var byteOffset);
-            if(byteOffset % BitHelper.CalculateBytesCount(DoubleWordRegister.DoubleWordWidth) != 0)
-            {
-                // Unaligned access is forbidden.
-                return false;
-            }
-            var registerExists = registers.TryRead(alignedOffset, out var currentValue);
-            if(registerExists)
-            {
-                BitHelper.UpdateWithShifted(ref currentValue, value, byteOffset * BitHelper.BitsPerByte, BitHelper.BitsPerByte);
-                registerExists &= registers.TryWrite(alignedOffset, currentValue);
-            }
-            return registerExists;
-        }
-
-        private bool TryReadDoubleWordFromQuadWordCollection(QuadWordRegisterCollection registers, long offset, out uint value)
-        {
-            AlignRegisterOffset(offset, QuadWordRegister.QuadWordWidth, out var alignedOffset, out var byteOffset);
-            if(byteOffset % BitHelper.CalculateBytesCount(DoubleWordRegister.DoubleWordWidth) != 0)
-            {
-                // Unaligned access is forbidden.
-                value = 0;
-                return false;
-            }
-            var registerExists = registers.TryRead(alignedOffset, out var registerValue);
-            value = (byte)(registerValue >> (byteOffset * BitHelper.BitsPerByte));
-            return registerExists;
-        }
-
-        private void AlignRegisterOffset(long offset, int bitsPerRegister, out long alignedOffset, out int byteOffset)
-        {
-            var bytesPerRegister = BitHelper.CalculateBytesCount(bitsPerRegister);
-            byteOffset = (int)(offset % bytesPerRegister);
-            alignedOffset = offset - byteOffset;
-        }
-
-        private void LogWriteAccess(bool registerExists, object value, string collectionName, long offset, object prettyOffset)
-        {
-            if(!registerExists)
-            {
-                this.Log(LogLevel.Warning, "Unhandled write to 0x{0:X} register of {1}, value 0x{2:X}.", offset, collectionName, value);
-            }
-            this.Log(LogLevel.Noisy, "{0} writes to 0x{1:X} ({2}) register of {3}, value 0x{4:X}.", GetAskingCPUEntry().Name, offset, prettyOffset, collectionName, value);
-        }
-
-        private void LogReadAccess(bool registerExists, object value, string collectionName, long offset, object prettyOffset)
-        {
-            if(!registerExists)
-            {
-                this.Log(LogLevel.Warning, "Unhandled read from 0x{0:X} register of {1}.", offset, collectionName);
-            }
-            this.Log(LogLevel.Noisy, "{0} reads from 0x{1:X} ({2}) register of {3}, returned 0x{4:X}.", GetAskingCPUEntry().Name, offset, prettyOffset, collectionName, value);
         }
 
         private bool TryWriteRegisterSecurityView(long offset, uint value, DoubleWordRegisterCollection notBankedRegisters,
@@ -1822,20 +2047,20 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
         private readonly DoubleWordRegisterCollection distributorRegistersSecureView;
         private readonly DoubleWordRegisterCollection distributorRegistersNonSecureView;
         private readonly DoubleWordRegisterCollection distributorRegistersDisabledSecurityView;
-        private readonly DoubleWordRegisterCollection redistributorDoubleWordRegisters;
-        private readonly QuadWordRegisterCollection redistributorQuadWordRegisters;
         private readonly DoubleWordRegisterCollection cpuInterfaceRegisters;
         private readonly DoubleWordRegisterCollection cpuInterfaceRegistersSecureView;
         private readonly DoubleWordRegisterCollection cpuInterfaceRegistersNonSecureView;
         private readonly DoubleWordRegisterCollection cpuInterfaceRegistersDisabledSecurityView;
         private readonly QuadWordRegisterCollection cpuInterfaceSystemRegisters;
 
+        private readonly uint affinityToIdMask;
         private readonly bool supportsTwoSecurityStates;
         private readonly InterruptsDecoder irqsDecoder;
 
         private const ARM_GenericInterruptControllerVersion DefaultArchitectureVersion = ARM_GenericInterruptControllerVersion.GICv3;
         private const uint DefaultCPUInterfaceProductIdentifier = 0x0;
         private const uint DefaultDistributorProductIdentifier = 0x0;
+        private const uint DefaultRedistributorProductIdentifier = 0x0;
         private const byte DefaultVariantNumber = 0x0;
         private const byte DefaultRevisionNumber = 0x0;
         private const uint DefaultImplementerIdentification = 0x43B; // This value indicates the JEP106 code of the Arm as an implementer
@@ -1843,7 +2068,10 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
         private const uint CPUsCountLegacySupport = 8;
         private const long RedistributorPrivateInterruptsFrameOffset = 0x10000;
 
-        private class CPUEntry : IGPIOReceiver
+        private const uint VirtualInterruptCount = 16;
+        private const uint VirtualPriorityBits = 5;
+
+        public class CPUEntry : IGPIOReceiver
         {
             public CPUEntry(ARM_GenericInterruptController gic, IARMSingleSecurityStateCPU cpu, IEnumerable<GroupType> groupTypes, IReadOnlyDictionary<InterruptSignalType, IGPIO> interruptConnections)
             {
@@ -1852,17 +2080,25 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 Name = $"cpu{Affinity}";
                 interruptSignals = interruptConnections;
 
-                var sgiIds = InterruptId.GetRange(gic.irqsDecoder.SoftwareGeneratedFirst, gic.irqsDecoder.SoftwareGeneratedLast);
+                var sgiIds = InterruptId.GetRange(gic.IrqsDecoder.SoftwareGeneratedFirst, gic.IrqsDecoder.SoftwareGeneratedLast);
                 SoftwareGeneratedInterruptsConfig = new ReadOnlyDictionary<InterruptId, InterruptConfig>(sgiIds.ToDictionary(id => id, _ => new InterruptConfig()));
                 SoftwareGeneratedInterruptsUnknownRequester = GenerateSGIs(SoftwareGeneratedInterruptsConfig, null);
                 SoftwareGeneratedInterruptsLegacyRequester = new Dictionary<CPUEntry, ReadOnlyDictionary<InterruptId, SoftwareGeneratedInterrupt>>();
 
-                var ppiIds = InterruptId.GetRange(gic.irqsDecoder.PrivatePeripheralFirst, gic.irqsDecoder.PrivatePeripheralLast)
-                    .Concat(InterruptId.GetRange(gic.irqsDecoder.ExtendedPrivatePeripheralFirst, gic.irqsDecoder.ExtendedPrivatePeripheralLast));
+                redistributorDoubleWordRegisters = new DoubleWordRegisterCollection(this, BuildRedistributorDoubleWordRegisterMap());
+                redistributorQuadWordRegisters = new QuadWordRegisterCollection(this, BuildRedistributorQuadWordRegisterMap());
+
+                var ppiIds = InterruptId.GetRange(gic.IrqsDecoder.PrivatePeripheralFirst, gic.IrqsDecoder.PrivatePeripheralLast)
+                    .Concat(InterruptId.GetRange(gic.IrqsDecoder.ExtendedPrivatePeripheralFirst, gic.IrqsDecoder.ExtendedPrivatePeripheralLast));
                 PrivatePeripheralInterrupts = new ReadOnlyDictionary<InterruptId, Interrupt>(ppiIds.ToDictionary(id => id, id => new Interrupt(id)));
 
-                Groups = new ReadOnlyDictionary<GroupType, InterruptGroup>(groupTypes.ToDictionary(type => type, _ => new InterruptGroup()));
-                RunningInterrupts = new Stack<Interrupt>();
+                Groups = new GroupCollection(this, groupTypes);
+                RunningInterrupts = new RunningInterrupts(this);
+                VirtualInterrupts = new VirtualInterrupt[VirtualInterruptCount];
+                for(var i = 0; i < VirtualInterruptCount; ++i)
+                {
+                    VirtualInterrupts[i] = new VirtualInterrupt();
+                }
             }
 
             public virtual void Reset()
@@ -1871,16 +2107,28 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 {
                     irq.Reset();
                 }
-                foreach(var group in Groups.Values)
+                foreach(var interrupt in VirtualInterrupts)
                 {
-                    group.Reset();
+                    interrupt.Reset();
                 }
+                for(var i = 0; i < NonSecureSGIAccess.Length; ++i)
+                {
+                    NonSecureSGIAccess[i] = NonSecureAccess.NotPermitted;
+                }
+                Groups.Reset();
+                redistributorQuadWordRegisters.Reset();
+                redistributorDoubleWordRegisters.Reset();
+                VirtualCPUInterfaceEnabled = false;
                 BestPending = null;
+                BestPendingVirtual = null;
                 EndOfInterruptModeEL1NonSecure = EndOfInterruptModes.PriorityDropAndDeactivation;
                 EndOfInterruptModeEL1Secure = EndOfInterruptModes.PriorityDropAndDeactivation;
+                EndOfInterruptModeVirtual = EndOfInterruptModes.PriorityDropAndDeactivation;
+                VirtualFIQEnabled = false;
                 IsSleeping = true;
                 RunningInterrupts.Clear();
-                PriorityMask = InterruptPriority.Idle;
+                PhysicalPriorityMask = InterruptPriority.Idle;
+                VirtualPriorityMask = InterruptPriority.Idle;
                 UpdateSignals();
             }
 
@@ -1890,35 +2138,43 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 PrivateInterruptChanged?.Invoke(this, number, value);
             }
 
-            public virtual InterruptId AcknowledgeBestPending(GroupTypeRegister groupTypeRegister, out CPUEntry sgiRequestingCPU)
+            public virtual InterruptId AcknowledgeBestPending(GroupTypeSecurityAgnostic groupTypeRegister, out CPUEntry sgiRequestingCPU)
             {
+                var groupType = GetGroupTypeForRegisterSecurityAgnostic(groupTypeRegister);
+                var isVirtualized = IsVirtualized(groupType);
                 sgiRequestingCPU = null;
-                var pendingIrq = BestPending;
+                var pendingIrq = isVirtualized ? BestPendingVirtual : BestPending;
                 if(pendingIrq == null)
                 {
-                    return gic.irqsDecoder.NoPending;
+                    return gic.IrqsDecoder.NoPending;
                 }
-                var groupType = GetGroupTypeForRegister(groupTypeRegister);
                 if(pendingIrq.Config.GroupType != groupType)
                 {
                     // In GICv2, Secure (Group 0) access can acknowledge Group 1 interrupt if GICC_CTLR.AckCtl is set. Otherwise, the returned Interrupt ID is 1022 (NoPending=1023).
-                    if(gic.ArchitectureVersion == ARM_GenericInterruptControllerVersion.GICv2 && groupTypeRegister == GroupTypeRegister.Group0)
+                    if(!isVirtualized && gic.ArchitectureVersion == ARM_GenericInterruptControllerVersion.GICv2 && groupTypeRegister == GroupTypeSecurityAgnostic.Group0)
                     {
                         if(!gic.ackControl)
                         {
                             gic.Log(LogLevel.Warning, "Trying to acknowledge pending Group 1 interrupt (#{0}) with secure GIC access while GICC_CTLR.AckCtl isn't set", (uint)pendingIrq.Identifier);
-                            return gic.irqsDecoder.NonMaskableInterruptOrGICv2GroupMismatch;
+                            return gic.IrqsDecoder.NonMaskableInterruptOrGICv2GroupMismatch;
                         }
                     }
                     else
                     {
                         gic.Log(LogLevel.Warning, "Trying to acknowledge pending interrupt using register of an incorrect interrupt group ({0}), expected {1}.", groupType, pendingIrq.Config.GroupType);
-                        return gic.irqsDecoder.NoPending;
+                        return gic.IrqsDecoder.NoPending;
                     }
                 }
                 pendingIrq.State.Acknowledge();
-                RunningInterrupts.Push(pendingIrq);
-                BestPending = null;
+                RunningInterrupts.Push(groupType, pendingIrq);
+                if(isVirtualized)
+                {
+                    BestPendingVirtual = null;
+                }
+                else
+                {
+                    BestPending = null;
+                }
 
                 var pendingIrqAsSGI = pendingIrq as SoftwareGeneratedInterrupt;
                 if(pendingIrqAsSGI != null)
@@ -1930,23 +2186,24 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             }
 
             // Performs priority drop and, if independentEOIControls is false, IRQ deactivation.
-            public void InterruptEnd(InterruptId id, GroupTypeRegister groupTypeRegister, CPUEntry sgiRequestingCPU)
+            public void InterruptEnd(InterruptId id, GroupTypeSecurityAgnostic groupTypeRegister, CPUEntry sgiRequestingCPU)
             {
+                var groupType = GetGroupTypeForRegisterSecurityAgnostic(groupTypeRegister);
+                var isVirtualized = IsVirtualized(groupType);
                 var shouldBeDeactivated = CurrentEndOfInterruptMode == EndOfInterruptModes.PriorityDropAndDeactivation;
                 gic.Log(LogLevel.Debug, "Ending interrupt with id {0}{1}.", (uint)id, shouldBeDeactivated ? "" : " but it won't be deactivated");
 
-                if(RunningInterrupts.Count == 0)
+                if(RunningInterrupts.Count(groupType) == 0)
                 {
                     gic.Log(LogLevel.Warning, "Trying to end the running interrupt when no interrupt is running.");
                     return;
                 }
 
-                var runningIrq = RunningInterrupts.Peek();
-                var groupType = GetGroupTypeForRegister(groupTypeRegister);
+                var runningIrq = RunningInterrupts.Peek(groupType);
                 if(runningIrq.Config.GroupType != groupType)
                 {
                     // In GICv2, Secure (Group 0) access can affect Group 1 interrupts if GICC_CTLR.AckCtl is set.
-                    if(gic.ArchitectureVersion == ARM_GenericInterruptControllerVersion.GICv2 && groupTypeRegister == GroupTypeRegister.Group0)
+                    if(!isVirtualized && gic.ArchitectureVersion == ARM_GenericInterruptControllerVersion.GICv2 && groupTypeRegister == GroupTypeSecurityAgnostic.Group0)
                     {
                         if(!gic.ackControl)
                         {
@@ -1975,11 +2232,11 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 // The interrupt are just removed from stack of currently running interrupts
                 // It's still accessible using one of the read only collections of interrupts (shared or private ones)
                 // If the stack becomes empty, RunningPriority will return InterruptPriority.Idle; otherwise the priority of an interrupt on top of stack.
-                RunningInterrupts.Pop();
+                RunningInterrupts.Pop(groupType);
 
                 if(shouldBeDeactivated)
                 {
-                    runningIrq.State.Active = false;
+                    DeactivateInterrupt(runningIrq, isVirtualized);
                 }
             }
 
@@ -1989,13 +2246,17 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                     LogLevel.Warning, "Trying to deactivate interrupt with id {0} {1}, write ignored.", (uint)id, failureReason
                 );
 
+                var isVirtualized = IsVirtualized();
+
                 if(CurrentEndOfInterruptMode == EndOfInterruptModes.PriorityDropAndDeactivation)
                 {
                     logFailure($"with EOImode=0 in the current CPU state: {CurrentCPUSecurityStateString}");
                     return;
                 }
 
-                var interrupt = gic.GetAllInterrupts(this).SingleOrDefault(x => ((uint)x.Identifier) == ((uint)id));
+                var interrupt = isVirtualized
+                    ? RunningInterrupts.GetActiveVirtual(id)
+                    : gic.GetAllInterrupts(this).SingleOrDefault(x => ((uint)x.Identifier) == ((uint)id) && x.State.Active);
                 if(interrupt == null)
                 {
                     logFailure("which is an invalid INTID");
@@ -2022,13 +2283,12 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                     logFailure("but it isn't active");
                     return;
                 }
-                gic.Log(LogLevel.Debug, "Deactivating interrupt with id {0}", (uint)id);
-                interrupt.State.Active = false;
+                DeactivateInterrupt(interrupt, isVirtualized);
             }
 
             public void UpdateSignals()
             {
-                if(BestPending == null)
+                if(BestPending == null && BestPendingVirtual == null)
                 {
                     foreach(var signal in interruptSignals.Values)
                     {
@@ -2044,18 +2304,18 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 }
             }
 
-            public InterruptGroup GetGroupForRegister(GroupTypeRegister type)
+            public InterruptGroup GetGroupForRegisterSecurityAgnostic(GroupTypeSecurityAgnostic type)
             {
-                return Groups[GetGroupTypeForRegister(type)];
+                return Groups[GetGroupTypeForRegisterSecurityAgnostic(type)];
             }
 
-            public GroupType GetGroupTypeForRegister(GroupTypeRegister type)
+            public GroupType GetGroupTypeForRegisterSecurityAgnostic(GroupTypeSecurityAgnostic type)
             {
-                if(type == GroupTypeRegister.Group0)
+                if(type == GroupTypeSecurityAgnostic.Group0)
                 {
                     return GroupType.Group0;
                 }
-                else if(type == GroupTypeRegister.Group1)
+                else if(type == GroupTypeSecurityAgnostic.Group1)
                 {
                     var securityState = cpu.SecurityState;
                     if(gic.DisabledSecurity || securityState == SecurityState.NonSecure)
@@ -2079,6 +2339,35 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 SoftwareGeneratedInterruptsLegacyRequester[cpu] = GenerateSGIs(SoftwareGeneratedInterruptsConfig, cpu);
             }
 
+            public bool IsVirtualized()
+            {
+                if(cpu.SecurityState != SecurityState.NonSecure || cpu.ExceptionLevel > ExceptionLevel.EL1_SystemMode)
+                {
+                    return false;
+                }
+                return cpu.FIQMaskOverride || cpu.IRQMaskOverride;
+            }
+
+            public bool IsVirtualized(GroupType type)
+            {
+                if(cpu.SecurityState != SecurityState.NonSecure || cpu.ExceptionLevel > ExceptionLevel.EL1_SystemMode)
+                {
+                    return false;
+                }
+                if(type == GroupType.Group0)
+                {
+                    return cpu.FIQMaskOverride;
+                }
+                if(type == GroupType.Group1)
+                {
+                    return cpu.IRQMaskOverride;
+                }
+                throw new ArgumentOutOfRangeException($"There is no valid InterruptGroupType for value: {type}.");
+            }
+
+            public QuadWordRegisterCollection RedistributorQuadWordRegisters => redistributorQuadWordRegisters;
+            public DoubleWordRegisterCollection RedistributorDoubleWordRegisters => redistributorDoubleWordRegisters;
+
             public event Action<CPUEntry, int, bool> PrivateInterruptChanged;
 
             public IReadOnlyDictionary<InterruptId, Interrupt> PrivatePeripheralInterrupts { get; }
@@ -2092,7 +2381,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             public IEnumerable<InterruptConfig> AllPrivateAndSoftwareGeneratedInterruptsConfigs => PrivatePeripheralInterrupts.Values.Select(irq => irq.Config)
                 .Concat(SoftwareGeneratedInterruptsConfig.Values);
 
-            public IReadOnlyDictionary<GroupType, InterruptGroup> Groups { get; }
+            public GroupCollection Groups { get; }
 
             public bool IsSleeping
             {
@@ -2115,10 +2404,16 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 
             public EndOfInterruptModes EndOfInterruptModeEL1
             {
-                get => gic.DisabledSecurity || IsStateSecure ? EndOfInterruptModeEL1Secure : EndOfInterruptModeEL1NonSecure;
+                get => IsVirtualized()
+                    ? EndOfInterruptModeVirtual
+                    : gic.DisabledSecurity || IsStateSecure ? EndOfInterruptModeEL1Secure : EndOfInterruptModeEL1NonSecure;
                 set
                 {
-                    if(gic.DisabledSecurity || IsStateSecure)
+                    if(IsVirtualized())
+                    {
+                        EndOfInterruptModeVirtual = value;
+                    }
+                    else if(gic.DisabledSecurity || IsStateSecure)
                     {
                         EndOfInterruptModeEL1Secure = value;
                     }
@@ -2131,18 +2426,51 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 
             public EndOfInterruptModes EndOfInterruptModeEL1NonSecure { get; set; }
             public EndOfInterruptModes EndOfInterruptModeEL1Secure { get; set; }
+            public EndOfInterruptModes EndOfInterruptModeVirtual { get; set; }
             public bool IsStateSecure => cpu.SecurityState == SecurityState.Secure;
             public string Name { get; }
-            public uint ProcessorNumber => cpu.Id;
+            public uint ProcessorNumber => cpu.Affinity.AllLevels & gic.affinityToIdMask;
             public uint TargetFieldFlag => ProcessorNumber <= CPUsCountLegacySupport ? 1U << (int)ProcessorNumber : 0;
+            public bool VirtualCPUInterfaceEnabled { get; set; }
+            public bool VirtualFIQEnabled { get; set; }
 
             public Interrupt BestPending { get; set; }
-            public InterruptPriority PriorityMask { get; set; }
-            public Stack<Interrupt> RunningInterrupts { get; }
-            public InterruptPriority RunningPriority => RunningInterrupts.Count > 0 ? RunningInterrupts.Peek().Config.Priority : InterruptPriority.Idle;
+            public Interrupt BestPendingVirtual { get; set; }
+            public VirtualInterrupt[] VirtualInterrupts { get; }
+            public InterruptPriority PriorityMask
+            {
+                get => IsVirtualized() ? VirtualPriorityMask : PhysicalPriorityMask;
+                set
+                {
+                    if(IsVirtualized())
+                    {
+                        VirtualPriorityMask = value;
+                    }
+                    else
+                    {
+                        PhysicalPriorityMask = value;
+                    }
+                }
+            }
+            public InterruptPriority VirtualPriorityMask { get; set; }
+            public InterruptPriority PhysicalPriorityMask { get; set; }
+            public RunningInterrupts RunningInterrupts { get; }
+            public uint EOICount { get; private set; }
+            public NonSecureAccess[] NonSecureSGIAccess { get; } = new NonSecureAccess[InterruptsDecoder.SoftwareGeneratedCount];
+
+            public const int EOICountWidth = 5;
+            public const int EOICountMask = (1 << EOICountWidth) - 1;
 
             protected virtual InterruptSignalType GetBestPendingInterruptSignalType()
             {
+                if(BestPending == null)
+                {
+                    if(VirtualFIQEnabled && BestPendingVirtual.Config.GroupType == GroupType.Group0)
+                    {
+                        return InterruptSignalType.vFIQ;
+                    }
+                    return InterruptSignalType.vIRQ;
+                }
                 if(gic.enableFIQ && BestPending.Config.GroupType == GroupType.Group0)
                 {
                     return InterruptSignalType.FIQ;
@@ -2157,14 +2485,59 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 return new ReadOnlyDictionary<InterruptId, SoftwareGeneratedInterrupt>(configs.ToDictionary(config => config.Key, config => new SoftwareGeneratedInterrupt(config.Key, config.Value, requester)));
             }
 
+            private void DeactivateInterrupt(Interrupt interrupt, bool isVirtualized)
+            {
+                gic.Log(LogLevel.Debug, "Deactivating interrupt with id {0}", (uint)interrupt.Identifier);
+                interrupt.State.Active = false;
+
+                if(isVirtualized)
+                {
+                    var virtualInterrupt = (VirtualInterrupt)interrupt;
+                    var lrEntry = VirtualInterrupts.SingleOrDefault(x => x.Identifier.Equals(interrupt.Identifier));
+                    if(lrEntry == null)
+                    {
+                        EOICount = (EOICount + 1) & EOICountMask;
+                    }
+                    else
+                    {
+                        lrEntry.Sync(virtualInterrupt);
+                    }
+                    RunningInterrupts.RemoveActiveVirtual(virtualInterrupt.Identifier);
+                    if(virtualInterrupt.Hardware)
+                    {
+                        var physicalIrq = gic.GetAllInterrupts(this).SingleOrDefault(x => x.Identifier.Equals(virtualInterrupt.HardwareIdentifier));
+                        if(physicalIrq != null)
+                        {
+                            physicalIrq.State.Active = false;
+                        }
+                    }
+                }
+            }
+
             private bool IsSoftwareGeneratedInterruptAccessValid(Interrupt interrupt, CPUEntry accessingCPU, string registerTypeName)
             {
                 if(interrupt is SoftwareGeneratedInterrupt sgi)
                 {
-                    if(sgi.Requester != null && sgi.Requester != accessingCPU)
+                    if(sgi.Requester != null && sgi.Requester != accessingCPU && !gic.IsAffinityRoutingEnabled(sgi.Requester))
                     {
-                        gic.Log(LogLevel.Warning, "{0}: Incorrect Processor Number passed for SGI ({1}), request ignored.", registerTypeName, interrupt.Identifier);
-                        return false;
+                        var logMessage = "{0}: Incorrect Processor Number {1} passed for SGI ({2}), expected to be {3}.";
+                        if(gic.ArchitectureVersionAtLeast3)
+                        {
+                            logMessage += " Request will be ignored.";
+                        }
+                        gic.Log(LogLevel.Warning, logMessage, registerTypeName, accessingCPU.Affinity, interrupt.Identifier, sgi.Requester.Affinity);
+
+                        if(gic.ArchitectureVersionAtLeast3)
+                        {
+                            /*
+                             * The documentation is not clear what happens here, if we are in SMP system, and there is a CPUID mismatch
+                             * -> For GICv3 the whole field of INTID (bits 23:0) should be passed, which contains CPUID in bits 12:10 - so it's safe to abort if they mismatch
+                             * -> For GICv2 it's not clear, but "For every read of a valid Interrupt ID from the GICC_IAR, the connected processor must perform a matching write to the GICC_EOIR.
+                             *    The value written to the GICC_EOIR must be the interrupt ID read from the GICC_IAR."
+                             *    So we stay permissive, and still allow the request to go through
+                             */
+                            return false;
+                        }
                     }
                 }
                 else if(accessingCPU != null && accessingCPU.ProcessorNumber != 0)
@@ -2174,12 +2547,312 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 return true;
             }
 
+            private Dictionary<long, QuadWordRegister> BuildRedistributorQuadWordRegisterMap()
+            {
+                var registerMap = new Dictionary<long, QuadWordRegister>
+                {
+                    {(long)RedistributorRegisters.ControllerType, new QuadWordRegister(this)
+                        .WithValueField(32, 32, FieldMode.Read, name: "CPUAffinity",
+                            valueProviderCallback: _ => this.Affinity.AllLevels
+                        )
+                        .WithValueField(27, 5, FieldMode.Read, name: "MaximumPrivatePeripheralInterruptIdentifier",
+                            valueProviderCallback: _ => 0b00 // The maximum PPI identifier is 31, because the GIC doesn't support an extended range of PPI
+                        )
+                        .WithFlag(26, FieldMode.Read, name: "DirectSoftwareGeneratedInterruptInjectionSupport",
+                            valueProviderCallback: _ => false
+                        )
+                        .WithTag("LocalitySpecificInterruptConfigurationSharing", 24, 2)
+                        .WithValueField(8, 16, FieldMode.Read, name: "ProcessorNumber",
+                            valueProviderCallback: _ => this.ProcessorNumber
+                        )
+                        .WithTaggedFlag("vPEResidentIndicator", 7)
+                        .WithFlag(6, FieldMode.Read, name: "MPAMSupport",
+                            valueProviderCallback: _ => false
+                        )
+                        .WithFlag(5, FieldMode.Read, name: "DPGSupport",
+                            valueProviderCallback: _ => false
+                        )
+                        .WithFlag(4, FieldMode.Read, name: "HighestRedistributorInSeries", valueProviderCallback: _ =>
+                        {
+                            var redistributorsNotLowerThanCurrent = gic.GetRedistributorRegistrations().OrderBy(redist => redist.Range.StartAddress).SkipWhile(x => x.Cpu != cpu);
+                            // there must exist a corresponding redistributor for this CPUEntry, as otherwise we wouldn't be able to access this register
+                            var currentRedistributor = redistributorsNotLowerThanCurrent.First();
+                            var nextRedistributor = redistributorsNotLowerThanCurrent.Skip(1).FirstOrDefault();
+                            // return true for the highest redistrubutor in the contiguous region
+                            return nextRedistributor == null || (nextRedistributor.Range.StartAddress - currentRedistributor.Range.EndAddress) > 1;
+                        })
+                        .WithFlag(3, FieldMode.Read, name: "LocalitySpecificInterruptDirectInjectionSupport",
+                            valueProviderCallback: _ => false
+                        )
+                        .WithTaggedFlag("DirtyBitControl", 2)
+                        .WithFlag(1, FieldMode.Read, name: "VirtualLocalitySpecificInterruptSupport",
+                            valueProviderCallback: _ => false
+                        )
+                        .WithFlag(0, FieldMode.Read, name: "PhysicalLocalitySpecificInterruptSupport",
+                            valueProviderCallback: _ => false
+                        )
+                    }
+                };
+
+                return registerMap;
+            }
+
+            private Dictionary<long, DoubleWordRegister> BuildRedistributorDoubleWordRegisterMap()
+            {
+                var registerMap = new Dictionary<long, DoubleWordRegister>
+                {
+                    {(long)RedistributorRegisters.Control, new DoubleWordRegister(this)
+                        .WithFlag(31, FieldMode.Read, name: "UpstreamWritePending",
+                            valueProviderCallback: _ => false
+                        )
+                        .WithReservedBits(27, 4)
+                        .WithTaggedFlag("DisableProcessorSelectionGroup1Secure", 26)
+                        .WithTaggedFlag("DisableProcessorSelectionGroup1NonSecure", 25)
+                        .WithTaggedFlag("DisableProcessorSelectionGroup0", 24)
+                        .WithReservedBits(4, 20)
+                        .WithFlag(3, FieldMode.Read, name: "RegisterWritePending",
+                            valueProviderCallback: _ => false
+                        )
+                        .WithFlag(2, FieldMode.Read, name: "LocalitySpecificInterruptInvalidateSupport",
+                            valueProviderCallback: _ => false
+                        )
+                        .WithFlag(1, FieldMode.Read, name: "LocalitySpecificInterruptClearEnableSupport",
+                            valueProviderCallback: _ => false
+                        )
+                        .WithTaggedFlag("LocalitySpecificInterruptEnable", 0)
+                    },
+                    {(long)RedistributorRegisters.ImplementerIdentification, new DoubleWordRegister(this)
+                        .WithValueField(24, 8, FieldMode.Read, name: "ProductID", valueProviderCallback: _ => gic.RedistributorProductIdentifier)
+                        .WithReservedBits(20, 4)
+                        .WithValueField(16, 4, FieldMode.Read, name: "Variant", valueProviderCallback: _ => gic.RedistributorVariant)
+                        .WithValueField(12, 4, FieldMode.Read, name: "Revision", valueProviderCallback: _ => gic.RedistributorRevision)
+                        .WithValueField(0, 12, FieldMode.Read, name: "Implementer", valueProviderCallback: _ => gic.RedistributorImplementer)
+                    },
+                    {(long)RedistributorRegisters.Wake, new DoubleWordRegister(this, 0x1)
+                        // "There is only one GICR_WAKER.Sleep and one GICR_WAKER.Quiescent bit that can be read and written through the GICR_WAKER register of any Redistributor."
+                        .WithTaggedFlag("Quiescent", 31)
+                        .WithReservedBits(3, 28)
+                        .WithFlag(2, FieldMode.Read, name: "ChildrenAsleep",
+                            valueProviderCallback: _ => this.IsSleeping
+                        )
+                        .WithFlag(1, name: "ProcessorSleep",
+                            writeCallback: (_, val) => this.IsSleeping = val,
+                            valueProviderCallback: _ => this.IsSleeping
+                        )
+                        .WithTaggedFlag("Sleep", 0)
+                        // According to the reference manual this register should be RAZ/WI for an unsecure access, but we just show a warning in such a situation.
+                        .WithWriteCallback((_, __) => { if(!gic.DisabledSecurity && !this.IsStateSecure) this.Log(LogLevel.Warning, "Writing to the GICR_WAKER register from wrong security state."); })
+                        .WithReadCallback((_, __) => { if(!gic.DisabledSecurity && !this.IsStateSecure) this.Log(LogLevel.Warning, "Reading from the GICR_WAKER register from wrong security state."); })
+                    },
+                    {(long)RedistributorRegisters.NonSecureAccessControl, new DoubleWordRegister(this)
+                        .WithEnumFields<DoubleWordRegister, NonSecureAccess>(0, 2, 16, name: "NS_access",
+                            writeCallback: (i, _, val) =>
+                            {
+                                if(!gic.IsAffinityRoutingEnabled(this))
+                                {
+                                    NonSecureSGIAccess[i] = val;
+                                }
+                            },
+                            valueProviderCallback: (i, _) => !gic.IsAffinityRoutingEnabled(this) ? (NonSecureAccess)0 : NonSecureSGIAccess[i]
+                        )
+                        // Those could be emitted in valueProvider/writeCallback instead,
+                        // but we don't want to emit the same warning 16 times per access.
+                        .WithWriteCallback((_, __) =>
+                        {
+                            if(!gic.IsAffinityRoutingEnabled(this))
+                            {
+                                this.Log(LogLevel.Warning, "Tried to write to GICR_NSACR when affinity routing is disabled. Access ignored, use GICD_NSACR0 instead.");
+                            }
+                        })
+                        .WithReadCallback((_, __) =>
+                        {
+                            if(!gic.IsAffinityRoutingEnabled(this))
+                            {
+                                this.Log(LogLevel.Warning, "Tried to read from GICR_NSACR when affinity routing is disabled. Access ignored, use GICD_NSACR0 instead.");
+                            }
+                        })
+                    },
+                    {gic.PeripheralIdentificationOffset, new DoubleWordRegister(this)
+                        .WithReservedBits(8, 24)
+                        .WithEnumField<DoubleWordRegister, ARM_GenericInterruptControllerVersion>(4, 4, FieldMode.Read, name: "ArchitectureVersion",
+                            valueProviderCallback: _ => gic.ArchitectureVersion
+                        )
+                        .WithTag("ImplementationDefinedIdentificator", 0, 4)
+                    }
+                };
+
+                Utils.AddRegistersAtOffset(registerMap, (long)RedistributorRegisters.InterruptSetEnable_0,
+                    gic.BuildInterruptSetEnableRegisters(gic.IrqsDecoder.SoftwareGeneratedFirst, gic.IrqsDecoder.PrivatePeripheralLast, "InterruptSetEnable",
+                        cpuEntryProvider: () => this)
+                );
+
+                Utils.AddRegistersAtOffset(registerMap, (long)RedistributorRegisters.InterruptClearEnable_0,
+                    gic.BuildInterruptClearEnableRegisters(gic.IrqsDecoder.SoftwareGeneratedFirst, gic.IrqsDecoder.PrivatePeripheralLast, "InterruptClearEnable",
+                        cpuEntryProvider: () => this)
+                );
+
+                Utils.AddRegistersAtOffset(registerMap, (long)RedistributorRegisters.InterruptClearPending_0,
+                    gic.BuildInterruptClearPendingRegisters(gic.IrqsDecoder.SoftwareGeneratedFirst, gic.IrqsDecoder.PrivatePeripheralLast, "InterruptClearPending",
+                        cpuEntryProvider: () => this)
+                );
+
+                Utils.AddRegistersAtOffset(registerMap, (long)RedistributorRegisters.InterruptPriority_0,
+                    gic.BuildInterruptPriorityRegisters(gic.IrqsDecoder.SoftwareGeneratedFirst, gic.IrqsDecoder.PrivatePeripheralLast, "InterruptPriority",
+                        cpuEntryProvider: () => this)
+                );
+
+                Utils.AddRegistersAtOffset(registerMap, (long)RedistributorRegisters.PrivatePeripheralInterruptConfiguration,
+                    gic.BuildInterruptConfigurationRegisters(gic.IrqsDecoder.PrivatePeripheralFirst, gic.IrqsDecoder.PrivatePeripheralLast, "PrivatePeripheralInterruptConfiguration",
+                        cpuEntryProvider: () => this)
+                );
+
+                Utils.AddRegistersAtOffset(registerMap, (long)RedistributorRegisters.InterruptGroup_0,
+                    gic.BuildInterruptGroupRegisters(gic.IrqsDecoder.SoftwareGeneratedFirst, gic.IrqsDecoder.PrivatePeripheralLast, "InterruptGroup",
+                        cpuEntryProvider: () => this)
+                );
+
+                Utils.AddRegistersAtOffset(registerMap, (long)RedistributorRegisters.InterruptGroupModifier_0,
+                    gic.BuildInterruptGroupModifierRegisters(gic.IrqsDecoder.SoftwareGeneratedFirst, gic.IrqsDecoder.PrivatePeripheralLast, "InterruptGroupModifier",
+                        cpuEntryProvider: () => this)
+                );
+
+                return registerMap;
+            }
+
             private bool isSleeping = true;
             private readonly IARMSingleSecurityStateCPU cpu;
             private readonly IReadOnlyDictionary<InterruptSignalType, IGPIO> interruptSignals;
+            private readonly QuadWordRegisterCollection redistributorQuadWordRegisters;
+            private readonly DoubleWordRegisterCollection redistributorDoubleWordRegisters;
+
+            public class GroupCollection
+            {
+                public GroupCollection(CPUEntry cpu, IEnumerable<GroupType> groupTypes)
+                {
+                    this.cpu = cpu;
+                    Physical = new ReadOnlyDictionary<GroupType, InterruptGroup>(groupTypes.ToDictionary(type => type, _ => new InterruptGroup()));
+                    Virtual = new ReadOnlyDictionary<GroupType, InterruptGroup>(groupTypes.ToDictionary(type => type, _ => new InterruptGroup()));
+                }
+
+                public void Reset()
+                {
+                    foreach(var group in Physical.Values)
+                    {
+                        group.Reset();
+                    }
+                    foreach(var group in Virtual.Values)
+                    {
+                        group.Reset();
+                    }
+                }
+
+                public InterruptGroup this[GroupType type] => cpu.IsVirtualized(type) ? Virtual[type] : Physical[type];
+                public IReadOnlyDictionary<GroupType, InterruptGroup> Physical { get; }
+                public IReadOnlyDictionary<GroupType, InterruptGroup> Virtual { get; }
+
+                private readonly CPUEntry cpu;
+            }
         }
 
-        private class CPUEntryWithTwoSecurityStates : CPUEntry
+        public class RunningInterrupts
+        {
+            public RunningInterrupts(CPUEntry cpu)
+            {
+                this.cpu = cpu;
+                Physical = new Stack<Interrupt>();
+                Virtual = new Stack<VirtualInterrupt>();
+                activeVirtual = new Dictionary<InterruptId, VirtualInterrupt>();
+            }
+
+            public void Clear()
+            {
+                Physical.Clear();
+                Virtual.Clear();
+                activeVirtual.Clear();
+            }
+
+            public void Push(GroupType type, Interrupt interrupt)
+            {
+                if(!interrupt.State.Active)
+                {
+                    throw new ArgumentException("Trying to push inactive interrupt to interrupt stack");
+                }
+                if(cpu.IsVirtualized(type))
+                {
+                    if(interrupt is VirtualInterrupt virtualInterrupt)
+                    {
+                        // GICv3 only has a maximum of 16 List Registers.
+                        // To allow the hypervisor to manage more virtual interrutps
+                        // than the implementation has list registers,
+                        // the LRs only act as a "cache" of the virtual interrupts.
+                        // The only requirement is that for a pending virtual interrupt to be raised,
+                        // it has to be in a list register.
+                        // This means that once we're acknowledging the interrupt, we're "cutting it off"
+                        // from the List Register, and the hypervisor is free to
+                        // reuse that LR to schedule another interrupt.
+                        // However, both the active and the list-register interrupts,
+                        // provided they have the same virtual identifier set,
+                        // have to be kept in sync, which is what the VirtualInterrupt.Sync method is used for.
+                        var cloned = virtualInterrupt.Clone();
+                        Virtual.Push(cloned);
+                        activeVirtual.Add(cloned.Identifier, cloned);
+                    }
+                    else
+                    {
+                        throw new ArgumentException("Trying to push physical interrupt to virtual interrupt stack");
+                    }
+                }
+                else
+                {
+                    if(interrupt is VirtualInterrupt)
+                    {
+                        throw new ArgumentException("Trying to push virtual interrupt to physical interrupt stack");
+                    }
+                    else
+                    {
+                        Physical.Push(interrupt);
+                    }
+                }
+            }
+
+            public Interrupt Pop(GroupType type)
+            {
+                return cpu.IsVirtualized(type) ? Virtual.Pop() : Physical.Pop();
+            }
+
+            public Interrupt Peek(GroupType type)
+            {
+                return cpu.IsVirtualized(type) ? Virtual.Peek() : Physical.Peek();
+            }
+
+            public int Count(GroupType type)
+            {
+                return cpu.IsVirtualized(type) ? Virtual.Count : Physical.Count;
+            }
+
+            public VirtualInterrupt GetActiveVirtual(InterruptId id)
+            {
+                VirtualInterrupt result;
+                var present = activeVirtual.TryGetValue(id, out result);
+                return present ? result : null;
+            }
+
+            public void RemoveActiveVirtual(InterruptId id)
+            {
+                activeVirtual.Remove(id);
+            }
+
+            public InterruptPriority Priority => cpu.IsVirtualized() ? VirtualPriority : PhysicalPriority;
+            public Stack<Interrupt> Physical { get; }
+            public InterruptPriority PhysicalPriority => Physical.Count > 0 ? Physical.Peek().Config.Priority : InterruptPriority.Idle;
+            public Stack<VirtualInterrupt> Virtual { get; }
+            public InterruptPriority VirtualPriority => Virtual.Count > 0 ? Virtual.Peek().Config.Priority : InterruptPriority.Idle;
+
+            private readonly Dictionary<InterruptId, VirtualInterrupt> activeVirtual;
+            private readonly CPUEntry cpu;
+        }
+
+        public class CPUEntryWithTwoSecurityStates : CPUEntry
         {
             public CPUEntryWithTwoSecurityStates(ARM_GenericInterruptController gic, IARMTwoSecurityStatesCPU cpu, IEnumerable<GroupType> groupTypes, IReadOnlyDictionary<InterruptSignalType, IGPIO> interruptConnections)
                 : base(gic, cpu, groupTypes, interruptConnections)
@@ -2193,18 +2866,18 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 base.Reset();
             }
 
-            public override InterruptId AcknowledgeBestPending(GroupTypeRegister groupTypeRegister, out CPUEntry sgiRequestingCPU)
+            public override InterruptId AcknowledgeBestPending(GroupTypeSecurityAgnostic groupTypeRegister, out CPUEntry sgiRequestingCPU)
             {
                 sgiRequestingCPU = null;
-                if(BestPending != null && groupTypeRegister == GroupTypeRegister.Group0 && cpu.ExceptionLevel == ExceptionLevel.EL3_MonitorMode)
+                if(BestPending != null && groupTypeRegister == GroupTypeSecurityAgnostic.Group0 && cpu.ExceptionLevel == ExceptionLevel.EL3_MonitorMode)
                 {
                     if(BestPending.Config.GroupType == GroupType.Group1Secure)
                     {
-                        return gic.irqsDecoder.ExpectedToHandleAtSecure;
+                        return gic.IrqsDecoder.ExpectedToHandleAtSecure;
                     }
                     else if(BestPending.Config.GroupType == GroupType.Group1NonSecure)
                     {
-                        return gic.irqsDecoder.ExpectedToHandleAtNonSecure;
+                        return gic.IrqsDecoder.ExpectedToHandleAtNonSecure;
                     }
                 }
                 return base.AcknowledgeBestPending(groupTypeRegister, out sgiRequestingCPU);
@@ -2217,7 +2890,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             protected override InterruptSignalType GetBestPendingInterruptSignalType()
             {
                 // Based on the "4.6.2 Interrupt assignment to IRQ and FIQ signals" subsection of GICv3 and GICv4 Architecture Specification
-                if(cpu.HasSingleSecurityState || gic.DisabledSecurity)
+                if(BestPending == null || cpu.HasSingleSecurityState || gic.DisabledSecurity)
                 {
                     return base.GetBestPendingInterruptSignalType();
                 }
@@ -2237,7 +2910,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             private readonly IARMTwoSecurityStatesCPU cpu;
         }
 
-        private class InterruptState
+        public class InterruptState
         {
             public InterruptState()
             {
@@ -2284,12 +2957,23 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             public bool Active { get; set; }
             public bool IsInactive => !Active && !Pending;
             public bool Pending { get; set; }
+            public ulong Bits
+            {
+                get => (Active ? 0b10ul : 0) | (Pending ? 0b01ul : 0);
+                set
+                {
+                    bool active = (value & 0b10) != 0;
+                    bool pending = (value & 1) != 0;
+                    Active = active;
+                    Pending = pending;
+                }
+            }
             public virtual InterruptTriggerType TriggerType { get; set; }
 
             protected virtual InterruptTriggerType DefaultTriggerType => default(InterruptTriggerType);
         }
 
-        private class InterruptConfig
+        public class InterruptConfig
         {
             public virtual void Reset()
             {
@@ -2324,7 +3008,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             }
         }
 
-        private class Interrupt
+        public class Interrupt
         {
             public Interrupt(InterruptId identifier) : base()
             {
@@ -2337,12 +3021,12 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 State.Reset();
             }
 
-            public InterruptId Identifier { get; }
+            public InterruptId Identifier { get; protected set; }
             public virtual InterruptConfig Config { get; } = new InterruptConfig();
             public virtual InterruptState State { get; } = new InterruptState();
         }
 
-        private class SoftwareGeneratedInterruptState : InterruptState
+        public class SoftwareGeneratedInterruptState : InterruptState
         {
             public override InterruptTriggerType TriggerType
             {
@@ -2359,7 +3043,59 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             protected override InterruptTriggerType DefaultTriggerType => InterruptTriggerType.EdgeTriggered;
         }
 
-        private class SoftwareGeneratedInterrupt : Interrupt
+        public class VirtualInterrupt : Interrupt
+        {
+            public VirtualInterrupt() : base(new InterruptId(0))
+            {
+                Reset();
+            }
+
+            public override void Reset()
+            {
+                base.Reset();
+                State.TriggerType = InterruptTriggerType.EdgeTriggered;
+                Identifier = new InterruptId(0);
+                HardwareIdentifier = new InterruptId(0);
+                Hardware = false;
+            }
+
+            // Performs a deep clone of the Virtual Interrupt.
+            public VirtualInterrupt Clone()
+            {
+                var cloned = new VirtualInterrupt();
+                cloned.Sync(this);
+                return cloned;
+            }
+
+            public void SetIdentifier(uint id)
+            {
+                Identifier = new InterruptId(id);
+            }
+
+            public void SetHardwareIdentifier(uint id)
+            {
+                HardwareIdentifier = new InterruptId(id);
+            }
+
+            public void Sync(VirtualInterrupt other)
+            {
+                this.Identifier = other.Identifier;
+                this.HardwareIdentifier = other.HardwareIdentifier;
+                this.Hardware = other.Hardware;
+                this.State.Bits = other.State.Bits;
+                this.Config.GroupBit = other.Config.GroupBit;
+                this.Config.Priority = other.Config.Priority;
+            }
+
+            public InterruptId HardwareIdentifier { get; protected set; }
+            public bool Hardware { get; set; }
+
+            public bool EOIMaitenance => !Hardware && EOIMaintenanceBit;
+
+            private bool EOIMaintenanceBit => ((uint)HardwareIdentifier & (1 << 9)) != 0;
+        }
+
+        public class SoftwareGeneratedInterrupt : Interrupt
         {
             public SoftwareGeneratedInterrupt(InterruptId irqId, InterruptConfig config, CPUEntry requester) : base(irqId)
             {
@@ -2374,7 +3110,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             public CPUEntry Requester { get; }
         }
 
-        private class SharedInterrupt : Interrupt
+        public class SharedInterrupt : Interrupt
         {
             public SharedInterrupt(InterruptId irqId) : base(irqId) { }
 
@@ -2415,7 +3151,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 
         // This class will be extended at least for the Binary Point register support
         // It may be needed to separate it for CPUInterface and Distributor
-        private class InterruptGroup
+        public class InterruptGroup
         {
             public void Reset()
             {
@@ -2425,7 +3161,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             public bool Enabled { get; set; }
         }
 
-        private struct InterruptId
+        public struct InterruptId
         {
             public static IEnumerable<InterruptId> GetRange(InterruptId start, InterruptId end, uint step = 1)
             {
@@ -2451,7 +3187,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             private readonly uint id;
         }
 
-        private class InterruptsDecoder
+        public class InterruptsDecoder
         {
             public InterruptsDecoder(uint sharedPeripheralCount, uint identifierBits)
             {
@@ -2538,11 +3274,12 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             private readonly uint identifierBits;
 
             public const uint MaximumSharedPeripheralCount = 988;
+            public const uint SoftwareGeneratedCount = 16;
         }
 
-        private struct SoftwareGeneratedInterruptRequest
+        public struct SoftwareGeneratedInterruptRequest
         {
-            public SoftwareGeneratedInterruptRequest(TargetType type, uint list, GroupType group, InterruptId id)
+            public SoftwareGeneratedInterruptRequest(TargetType type, Affinity[] list, GroupType group, InterruptId id)
             {
                 TargetCPUsType = type;
                 TargetsList = list;
@@ -2551,7 +3288,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             }
 
             public TargetType TargetCPUsType { get; }
-            public uint TargetsList { get; }
+            public Affinity[] TargetsList { get; }
             public GroupType TargetGroup { get; }
             public InterruptId InterruptId { get; }
 
@@ -2563,31 +3300,39 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             }
         }
 
-        enum EndOfInterruptModes
+        public enum NonSecureAccess
+        {
+            NotPermitted = 0b00,
+            SecureGroup0Permitted = 0b01,
+            BothGroupsPermitted = 0b10,
+            Reserved = 0b11,
+        }
+
+        public enum EndOfInterruptModes
         {
             PriorityDropAndDeactivation = 0,
             PriorityDropOnly = 1,
         }
 
-        private enum InterruptPriority : byte
+        public enum InterruptPriority : byte
         {
             Highest = 0x00,
             Idle = 0xFF
         }
 
-        private enum InterruptTriggerType : byte
+        public enum InterruptTriggerType : byte
         {
             LevelSensitive = 0b00,
             EdgeTriggered = 0b10
         }
 
-        private enum InterruptRoutingMode : byte
+        public enum InterruptRoutingMode : byte
         {
             SpecifiedTarget = 0b0,
             AnyTarget = 0b1
         }
 
-        private enum InterruptType
+        public enum InterruptType
         {
             SoftwareGenerated,
             PrivatePeripheral,
@@ -2597,7 +3342,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             Reserved
         }
 
-        private enum GroupType
+        public enum GroupType
         {
             Group0,
             Group1NonSecure,
@@ -2605,13 +3350,13 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             Group1 = Group1NonSecure,
         }
 
-        private enum GroupTypeRegister
+        public enum GroupTypeSecurityAgnostic
         {
             Group0,
             Group1
         }
 
-        private enum DistributorRegisters : long
+        public enum DistributorRegisters : long
         {
             Control = 0x0000, // GICD_CTLR
             ControllerType = 0x0004, // GICD_TYPER
@@ -2636,7 +3381,8 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             InterruptProcessorTargets_254 = 0x0AF8, // GICD_ITARGETSR<n>
             InterruptConfiguration_0 = 0x0C00, // GICD_ICFGR<n>
             InterruptConfiguration_1 = 0x0C04, // GICD_ICFGR<n>
-            InterruptGroupModifier_0 = 0x0D00, // GICD_IGRPMODR<n>
+            InterruptGroupModifier_0_PPIStatus = 0x0D00, // GICD_IGRPMODR0 on GICv3, GICD_PPISR on GICv1/2 
+            InterruptGroupModifier_1_SPIStatus_0 = 0x0D04, // GICD_IGRPMODR<n> on GICv3, GICD_SPISR<n> on GICv1/2 
             NonSecureAccessControl_0 = 0x0E00, // GICD_NSACR<n>
             SoftwareGeneratedInterruptControl = 0x0F00, // GICD_SGI
             SoftwareGeneratedIntrruptClearPending_0 = 0x0F10, // GICD_CPENDSGIR<n>
@@ -2662,7 +3408,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             PeripheralIdentification2_v3v4 = 0xFFE8, // GICD_PIDR2 for GICv3 and GICv4
         }
 
-        private enum RedistributorRegisters : long
+        public enum RedistributorRegisters : long
         {
             Control = 0x0000, // GICR_CTLR
             ImplementerIdentification = 0x0004, // GICR_IIDR
@@ -2709,7 +3455,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             PeripheralIdentification2_v3v4 = 0xFFE8, // GICR_PIDR2 for GICv3 and GICv4
         }
 
-        private enum CPUInterfaceRegisters : long
+        public enum CPUInterfaceRegisters : long
         {
             Control = 0x0000, // GICC_CTLR
             PriorityMask = 0x0004, // GICC_PMR
@@ -2729,10 +3475,14 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             InterruptDeactivate = 0x1000, // GICC_DIR
         }
 
-        private enum CPUInterfaceSystemRegisters : long
+        // Those are used for both AArch32 and AArch64 registers. For AArch32,
+        // the encoding is slightly modified (see encode_as_aarch64_register
+        // in tlib for details) and the names are mostly the same except for
+        // the '_ELx' suffix.
+        public enum CPUInterfaceSystemRegisters : long
         {
             // Enum values are created from op0, op1, CRn, CRm and op2 fields of the MRS instruction
-            SystemRegisterEnableEL3 = 0xF665, // ICC_SRE_EL3
+            SystemRegisterEnableEL3 = 0xF665, // ICC_SRE_EL3 / ICC_MSRE
             SystemRegisterEnableEL1 = 0xC665, // ICC_SRE_EL1
             PriorityMask = 0xC230, // ICC_PMR_EL1
             GroupEnable1 = 0xC667, // ICC_IGRPEN1_EL1
@@ -2748,7 +3498,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             PriorityBinaryPointGroup0 = 0xC643, // ICC_BPR0_EL1
             PriorityBinaryPointGroup1 = 0xC663, // ICC_BPR1_EL1
             ControlEL1 = 0xC664, // ICC_CTLR_EL1
-            ControlEL3 = 0xF664, // ICC_CTLR_EL3
+            ControlEL3 = 0xF664, // ICC_CTLR_EL3 / ICC_MCTLR
             InterruptDeactivate = 0xC659, // ICC_DIR_EL1
             InterruptEndGroup0 = 0xC641, // ICC_EOIR0_EL1
             InterruptEndGroup1 = 0xC661, // ICC_EOIR1_EL1
@@ -2757,17 +3507,23 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             InterruptAcknowledgeGroup0 = 0xC640, // ICC_IAR0_EL1
             InterruptAcknowledgeGroup1 = 0xC660, // ICC_IAR1_EL1
             GroupEnable0 = 0xC666, // ICC_IGRPEN0_EL1
-            GroupEnable1EL3 = 0xF667, // ICC_IGRPEN1_EL3
+            GroupEnable1EL3 = 0xF667, // ICC_IGRPEN1_EL3 / ICC_MGRPEN1
             InterruptAcknowladgeNonMaskable = 0xC64D, // ICC_NMIAR1_EL1
             RunningPriority = 0xC65B, // ICC_RPR_EL1
             SoftwareGeneratedInterruptGroup0Generate = 0xC65F, // ICC_SGI0R_EL1
             SoftwareGeneratedInterruptGroup1Generate = 0xC65D, // ICC_SGI1R_EL1
             SystemRegisterEnableEL2 = 0xE64D, // ICC_SRE_EL2
+            HypControl = 0xE658, // ICH_HCR_EL2
+            VGICType = 0xE659, // ICH_VTR_EL2
+            VMControl = 0xE65F, // ICH_VMCR_EL2
+            ListRegister_0 = 0xE660, // ICH_LR<n>_EL2
+            ListRegisterUpper_0 = 0xE670, // ICH_LRC<n> (Aarch32 only)
         }
     }
 
     public enum ARM_GenericInterruptControllerVersion : byte
     {
+        Default = 255,
         GICv1 = 1,
         GICv2 = 2,
         GICv3 = 3,

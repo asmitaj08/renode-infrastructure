@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2019 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -54,7 +54,7 @@ namespace Antmicro.Renode.Extensions.Utilities.USBIP
         {
             this.port = port;
 
-            server = new SocketServerProvider(false);
+            server = new SocketServerProvider(false, serverName: "USBIP");
             server.DataReceived += HandleIncomingData;
             server.ConnectionClosed += Reset;
 
@@ -240,15 +240,15 @@ namespace Antmicro.Renode.Extensions.Utilities.USBIP
                         var additionalData = (additionalDataCount > 0)
                             ? buffer.Skip(buffer.Count - additionalDataCount).Take(additionalDataCount).ToArray()
                             : null;
-
+                        var replyHeader = urbHeader;
                         device.USBCore.HandleSetupPacket(setupPacket, additionalData: additionalData, resultCallback: response =>
                         {
-                            SendResponse(GenerateURBReply(urbHeader, packet, response));
+                            SendResponse(GenerateURBReply(replyHeader, packet, response));
                         });
                     }
                     else
                     {
-                        var ep = device.USBCore.GetEndpoint((int)urbHeader.EndpointNumber);
+                        var ep = device.USBCore.GetEndpoint((int)urbHeader.EndpointNumber, urbHeader.Direction == URBDirection.Out ? Direction.HostToDevice : Direction.DeviceToHost);
                         if(ep == null)
                         {
                             this.Log(LogLevel.Warning, "URB command directed to a non-existing endpoint 0x{0:X}", urbHeader.EndpointNumber);
@@ -383,19 +383,16 @@ namespace Antmicro.Renode.Extensions.Utilities.USBIP
             var currentOffset = Packet.CalculateLength<USB.ConfigurationDescriptor>();
             for(var i = 0; i < interfaceDescriptors.Length; i++)
             {
-                interfaceDescriptors[i] = Packet.Decode<USB.InterfaceDescriptor>(recursiveBytes, currentOffset);
-                if(i != interfaceDescriptors.Length - 1)
+                // the second byte of each descriptor contains the type
+                while(recursiveBytes[currentOffset + 1] != (byte)DescriptorType.Interface)
                 {
-                    // skip until the next interface descriptor
-                    currentOffset += Packet.CalculateLength<USB.InterfaceDescriptor>();
-
-                    // the second byte of each descriptor contains the type
-                    while(recursiveBytes[currentOffset + 1] != (byte)DescriptorType.Interface)
-                    {
-                        // the first byte of each descriptor contains the length in bytes
-                        currentOffset += recursiveBytes[currentOffset];
-                    }
+                    // the first byte of each descriptor contains the length in bytes
+                    currentOffset += recursiveBytes[currentOffset];
                 }
+
+                interfaceDescriptors[i] = Packet.Decode<USB.InterfaceDescriptor>(recursiveBytes, currentOffset);
+                // skip until the next interface descriptor
+                currentOffset += Packet.CalculateLength<USB.InterfaceDescriptor>();
             }
 
             return result;
@@ -543,10 +540,13 @@ namespace Antmicro.Renode.Extensions.Utilities.USBIP
 
         private enum USBSpeed
         {
-            Low = 0,
-            Full = 1,
-            High = 2,
-            Super = 3
+            Unknown = 0,
+            Low = 1,
+            Full = 2,
+            High = 3,
+            Wireless = 4,
+            Super = 5,
+            SuperPlus = 6,
         }
 
         private enum State

@@ -1,5 +1,5 @@
 ﻿//
-// Copyright (c) 2010-2022 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -88,7 +88,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         
         private const string ResourceNamePrefix = "Antmicro.Renode.Cores.RiscV.Opcodes";
 
-        private static Dictionary<BaseRiscV.InstructionSet, IEnumerable<string>> opcodesFilesMap32 = new Dictionary<BaseRiscV.InstructionSet, IEnumerable<string>>
+        private static readonly Dictionary<BaseRiscV.InstructionSet, IEnumerable<string>> opcodesFilesMap32 = new Dictionary<BaseRiscV.InstructionSet, IEnumerable<string>>
         {
             { BaseRiscV.InstructionSet.I, new [] { "Antmicro.Renode.Cores.RiscV.Opcodes.System",  "Antmicro.Renode.Cores.RiscV.Opcodes.Rv32i" } },
             { BaseRiscV.InstructionSet.M, new [] { "Antmicro.Renode.Cores.RiscV.Opcodes.Rv32m" } },
@@ -97,9 +97,11 @@ namespace Antmicro.Renode.Peripherals.CPU
             { BaseRiscV.InstructionSet.D, new [] { "Antmicro.Renode.Cores.RiscV.Opcodes.Rv32d", "Antmicro.Renode.Cores.RiscV.Opcodes.Rv32d-zfh" } },
             { BaseRiscV.InstructionSet.C, new [] { "Antmicro.Renode.Cores.RiscV.Opcodes.Rvc", "Antmicro.Renode.Cores.RiscV.Opcodes.Rv32c" } },
             { BaseRiscV.InstructionSet.V, new [] { "Antmicro.Renode.Cores.RiscV.Opcodes.Rvv", "Antmicro.Renode.Cores.RiscV.Opcodes.Rvv-pseudo" } },
+            { BaseRiscV.InstructionSet.S, Array.Empty<string>() },
+            { BaseRiscV.InstructionSet.U, Array.Empty<string>() },
         };
         
-        private static Dictionary<BaseRiscV.InstructionSet, IEnumerable<string>> opcodesFilesMap64 = new Dictionary<BaseRiscV.InstructionSet, IEnumerable<string>>
+        private static readonly Dictionary<BaseRiscV.InstructionSet, IEnumerable<string>> opcodesFilesMap64 = new Dictionary<BaseRiscV.InstructionSet, IEnumerable<string>>
         {
             { BaseRiscV.InstructionSet.I, new [] { "Antmicro.Renode.Cores.RiscV.Opcodes.System", "Antmicro.Renode.Cores.RiscV.Opcodes.Rv32i", "Antmicro.Renode.Cores.RiscV.Opcodes.Rv64i" } },
             { BaseRiscV.InstructionSet.M, new [] { "Antmicro.Renode.Cores.RiscV.Opcodes.Rv32m", "Antmicro.Renode.Cores.RiscV.Opcodes.Rv64m" } },
@@ -108,6 +110,8 @@ namespace Antmicro.Renode.Peripherals.CPU
             { BaseRiscV.InstructionSet.D, new [] { "Antmicro.Renode.Cores.RiscV.Opcodes.Rv32d", "Antmicro.Renode.Cores.RiscV.Opcodes.Rv64d" } },
             { BaseRiscV.InstructionSet.C, new [] { "Antmicro.Renode.Cores.RiscV.Opcodes.Rvc", "Antmicro.Renode.Cores.RiscV.Opcodes.Rv64c" } },
             { BaseRiscV.InstructionSet.V, new [] { "Antmicro.Renode.Cores.RiscV.Opcodes.Rvv", "Antmicro.Renode.Cores.RiscV.Opcodes.Rvv-pseudo" } },
+            { BaseRiscV.InstructionSet.S, Array.Empty<string>() },
+            { BaseRiscV.InstructionSet.U, Array.Empty<string>() },
         };
     }
     

@@ -1,11 +1,12 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
 //
 using System;
+using Antmicro.Renode.Exceptions;
 using Antmicro.Renode.Utilities;
 
 namespace Antmicro.Renode.Core.Structure.Registers
@@ -23,6 +24,11 @@ namespace Antmicro.Renode.Core.Structure.Registers
         /// the field's limits causes an ArgumentException.
         /// </summary>
         int Width { get; }
+
+        Action<T, T> ReadCallback { get; set; }
+        Action<T, T> WriteCallback { get; set; }
+        Action<T, T> ChangeCallback { get; set; }
+        Func<T, T> ValueProviderCallback { get; set; }
     }
 
     public partial class PeripheralRegister
@@ -97,7 +103,7 @@ namespace Antmicro.Renode.Core.Structure.Registers
                     ulong binary = ToBinary(value);
                     if((binary >> width) > 0 && width < 64)
                     {
-                        throw new ArgumentException("Value exceeds the size of the field.");
+                        throw new ConstructionException("Value exceeds the size of the field.");
                     }
                     WriteFiltered(binary);
                 }
@@ -105,42 +111,47 @@ namespace Antmicro.Renode.Core.Structure.Registers
 
             public int Width => width;
 
+            public Action<T, T> ReadCallback { get; set; }
+            public Action<T, T> WriteCallback { get; set; }
+            public Action<T, T> ChangeCallback { get; set; }
+            public Func<T, T> ValueProviderCallback { get; set; }
+
             public override void CallReadHandler(ulong oldValue, ulong newValue)
             {
-                if(readCallback != null)
+                if(ReadCallback != null)
                 {
                     var oldValueFiltered = FilterValue(oldValue);
                     var newValueFiltered = FilterValue(newValue);
-                    readCallback(FromBinary(oldValueFiltered), FromBinary(newValueFiltered));
+                    ReadCallback(FromBinary(oldValueFiltered), FromBinary(newValueFiltered));
                 }
             }
 
             public override void CallWriteHandler(ulong oldValue, ulong newValue)
             {
-                if(writeCallback != null)
+                if(WriteCallback != null)
                 {
                     var oldValueFiltered = FilterValue(oldValue);
                     var newValueFiltered = FilterValue(newValue);
-                    writeCallback(FromBinary(oldValueFiltered), FromBinary(newValueFiltered));
+                    WriteCallback(FromBinary(oldValueFiltered), FromBinary(newValueFiltered));
                 }
             }
 
             public override void CallChangeHandler(ulong oldValue, ulong newValue)
             {
-                if(changeCallback != null)
+                if(ChangeCallback != null)
                 {
                     var oldValueFiltered = FilterValue(oldValue);
                     var newValueFiltered = FilterValue(newValue);
-                    changeCallback(FromBinary(oldValueFiltered), FromBinary(newValueFiltered));
+                    ChangeCallback(FromBinary(oldValueFiltered), FromBinary(newValueFiltered));
                 }
             }
 
             public override ulong CallValueProviderHandler(ulong currentValue)
             {
-                if(valueProviderCallback != null)
+                if(ValueProviderCallback != null)
                 {
                     var currentValueFiltered = FilterValue(currentValue);
-                    return UnfilterValue(currentValue, ToBinary(valueProviderCallback(FromBinary(currentValueFiltered))));
+                    return UnfilterValue(currentValue, ToBinary(ValueProviderCallback(FromBinary(currentValueFiltered))));
                 }
                 return currentValue;
             }
@@ -155,23 +166,18 @@ namespace Antmicro.Renode.Core.Structure.Registers
             {
                 if(!fieldMode.IsReadable() && valueProviderCallback != null)
                 {
-                    throw new ArgumentException($"A write-only field cannot provide a value callback.");
+                    throw new ConstructionException($"A write-only field cannot provide a value callback.");
                 }
 
-                this.readCallback = readCallback;
-                this.writeCallback = writeCallback;
-                this.changeCallback = changeCallback;
-                this.valueProviderCallback = valueProviderCallback;
+                ReadCallback = readCallback;
+                WriteCallback = writeCallback;
+                ChangeCallback = changeCallback;
+                ValueProviderCallback = valueProviderCallback;
             }
 
             protected abstract T FromBinary(ulong value);
 
             protected abstract ulong ToBinary(T value);
-
-            private readonly Action<T, T> readCallback;
-            private readonly Action<T, T> writeCallback;
-            private readonly Action<T, T> changeCallback;
-            private readonly Func<T, T> valueProviderCallback;
         }
 
         private abstract class RegisterField
@@ -193,7 +199,7 @@ namespace Antmicro.Renode.Core.Structure.Registers
             {
                 if(!fieldMode.IsValid())
                 {
-                    throw new ArgumentException("Invalid {0} flags for register field: {1}.".FormatWith(fieldMode.GetType().Name, fieldMode.ToString()));
+                    throw new ConstructionException("Invalid {0} flags for register field: {1}.".FormatWith(fieldMode.GetType().Name, fieldMode.ToString()));
                 }
                 this.parent = parent;
                 this.position = position;

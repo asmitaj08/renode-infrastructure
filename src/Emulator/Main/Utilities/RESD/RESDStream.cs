@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -58,7 +58,7 @@ namespace Antmicro.Renode.Utilities.RESD
         }
 
         public static IManagedThread StartSampleFeedThread<T>(this RESDStream<T> @this, IUnderstandRESD owner, uint frequency,
-            ulong startTime = 0, string domain = null) where T: RESDSample, new()
+            ulong startTime = 0, string domain = null, bool shouldStop = true) where T: RESDSample, new()
         {
             Action<T, TimeInterval> beforeCallback = FindCallback<T>(owner, @this.SampleType, RESDStreamStatus.BeforeStream, @this.Channel, domain);
             Action<T, TimeInterval> currentCallback = FindCallback<T>(owner, @this.SampleType, RESDStreamStatus.OK, @this.Channel, domain);
@@ -78,11 +78,11 @@ namespace Antmicro.Renode.Utilities.RESD
                         break;
                 }
             };
-            return @this.StartSampleFeedThread(owner, frequency, sampleCallback, startTime);
+            return @this.StartSampleFeedThread(owner, frequency, sampleCallback, startTime, shouldStop);
         }
 
         public static IManagedThread StartSampleFeedThread<T, Out>(this RESDStream<T, Out> @this, IUnderstandRESD owner, uint frequency,
-            ulong startTime = 0, string domain = null) where T: RESDSample, new()
+            ulong startTime = 0, string domain = null, bool shouldStop = true) where T: RESDSample, new()
         {
             Action<Out, TimeInterval> beforeCallback = FindCallback<Out>(owner, @this.SampleType, RESDStreamStatus.BeforeStream, @this.Channel, domain);
             Action<Out, TimeInterval> currentCallback = FindCallback<Out>(owner, @this.SampleType, RESDStreamStatus.OK, @this.Channel, domain);
@@ -102,7 +102,7 @@ namespace Antmicro.Renode.Utilities.RESD
                         break;
                 }
             };
-            return @this.StartSampleFeedThread(owner, frequency, sampleCallback, startTime);
+            return @this.StartSampleFeedThread(owner, frequency, sampleCallback, startTime, shouldStop);
         }
 
         public static RESDStreamStatus TryGetCurrentSample<T, Out>(this RESDStream<T> @this, IPeripheral peripheral, Func<T, Out> transformer,
@@ -172,11 +172,11 @@ namespace Antmicro.Renode.Utilities.RESD
             return result;
         }
 
-        public IManagedThread StartSampleFeedThread(IPeripheral owner, uint frequency, Action<Out, TimeInterval, RESDStreamStatus> newSampleCallback, ulong startTime = 0)
+        public IManagedThread StartSampleFeedThread(IPeripheral owner, uint frequency, Action<Out, TimeInterval, RESDStreamStatus> newSampleCallback, ulong startTime = 0, bool shouldStop = true)
         {
             Action<T, TimeInterval, RESDStreamStatus> transformedCallback =
                 (sample, timestamp, status) => newSampleCallback(transformer.TransformSample(sample), timestamp, status);
-            return StartSampleFeedThread(owner, frequency, transformedCallback, startTime);
+            return StartSampleFeedThread(owner, frequency, transformedCallback, startTime, shouldStop);
         }
 
         private readonly Func<T, Out> transformer;
@@ -209,12 +209,13 @@ namespace Antmicro.Renode.Utilities.RESD
         {
             var machine = peripheral.GetMachine();
             timestamp = machine.ClockSource.CurrentValue;
-            var timestampInMicroseconds = timestamp.TotalMicroseconds * 1000;
-            return TryGetSample(timestampInMicroseconds, out sample);
+            var timestampInNanoseconds = timestamp.TotalNanoseconds;
+            return TryGetSample(timestampInNanoseconds, out sample);
         }
 
         public RESDStreamStatus TryGetSample(ulong timestamp, out T sample, long? overrideSampleOffsetTime = null)
         {
+            currentTimestampInNanoseconds = timestamp;
             var currentSampleOffsetTime = overrideSampleOffsetTime ?? sampleOffsetTime;
             if(currentSampleOffsetTime < 0)
             {
@@ -233,13 +234,6 @@ namespace Antmicro.Renode.Utilities.RESD
             else
             {
                 timestamp = timestamp + (ulong)currentSampleOffsetTime;
-            }
-
-            if(currentBlock != null && timestamp < currentBlock.StartTime)
-            {
-                Owner?.Log(LogLevel.Debug, "RESD: Tried getting sample at timestamp {0}ns, before the start time of the current block", timestamp);
-                sample = null;
-                return RESDStreamStatus.BeforeStream;
             }
 
             while(blockEnumerator != null)
@@ -292,8 +286,11 @@ namespace Antmicro.Renode.Utilities.RESD
             {
                 if(blockEnumerator == null)
                 {
-                    Owner?.Log(LogLevel.Debug, "RESD: End of sample feeding thread detected");
-                    newSampleCallback(null, TimeInterval.Empty, RESDStreamStatus.AfterStream);
+                    if(shouldStop)
+                    {
+                        feedSample(); // invoke action to update timestamp and status before stopping thread
+                        Owner?.Log(LogLevel.Debug, "RESD: End of sample feeding thread detected");
+                    }
                     return shouldStop;
                 }
                 return false;
@@ -324,6 +321,8 @@ namespace Antmicro.Renode.Utilities.RESD
         public IEmulationElement Owner { get; set; }
 
         public T CurrentSample => currentBlock?.CurrentSample;
+        public DataBlock<T> CurrentBlock => currentBlock;
+        public long CurrentBlockNumber => currentBlockNumber;
         public SampleType SampleType { get; }
         public uint Channel { get; }
         public Action MetadataChanged;
@@ -347,6 +346,7 @@ namespace Antmicro.Renode.Utilities.RESD
 
             while(blockEnumerator.TryGetNext(out var nextBlock))
             {
+                currentBlockNumber++;
                 if(nextBlock.ChannelId != Channel || !(extraFilter?.Invoke(nextBlock) ?? true))
                 {
                     Owner?.Log(LogLevel.Debug, "RESD: Skipping block of type {0} and size {1} bytes", nextBlock.BlockType, nextBlock.DataSize);
@@ -365,7 +365,9 @@ namespace Antmicro.Renode.Utilities.RESD
         [PreSerialization]
         private void BeforeSerialization()
         {
-            serializedTimestamp = currentBlock.CurrentTimestamp;
+            // After stream ended, current block is null so serialize timestamp as the last registered time
+            // so after serialization it will also return RESDStreamStatus.AfterStream
+            serializedTimestamp = currentBlock != null ? currentBlock.CurrentTimestamp : currentTimestampInNanoseconds;
         }
 
         [PostDeserialization]
@@ -380,6 +382,8 @@ namespace Antmicro.Renode.Utilities.RESD
         [Transient]
         private IEnumerator<DataBlock<T>> blockEnumerator;
         private ulong serializedTimestamp;
+        private ulong currentTimestampInNanoseconds;
+        private long currentBlockNumber;
         private long sampleOffsetTime;
 
         private readonly LowLevelRESDParser parser;

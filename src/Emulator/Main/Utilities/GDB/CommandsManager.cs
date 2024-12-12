@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -8,27 +8,30 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Collections;
 using Antmicro.Renode.Core;
 using Antmicro.Renode.Exceptions;
 using Antmicro.Renode.Logging;
 using Antmicro.Renode.Peripherals;
 using Antmicro.Renode.Peripherals.CPU;
+using Antmicro.Migrant;
+using Antmicro.Migrant.Hooks;
 
 namespace Antmicro.Renode.Utilities.GDB
 {
     public class CommandsManager
     {
-        public CommandsManager(IMachine machine, IEnumerable<ICpuSupportingGdb> cpus, bool blockOnStep)
+        public CommandsManager(IMachine machine, IEnumerable<ICpuSupportingGdb> cpus)
         {
             availableCommands = new HashSet<CommandDescriptor>();
+            typesWithCommands = new HashSet<string>();
             activeCommands = new HashSet<Command>();
             mnemonicList = new List<string>();
             Machine = machine;
             CanAttachCPU = true;
-            BlockOnStep = blockOnStep;
 
             commandsCache = new Dictionary<string, Command>();
-            ManagedCpus = new Dictionary<uint, ICpuSupportingGdb>();
+            ManagedCpus = new ManagedCpusDictionary();
             foreach(var cpu in cpus)
             {
                 if(!TryAddManagedCPU(cpu))
@@ -36,7 +39,7 @@ namespace Antmicro.Renode.Utilities.GDB
                     throw new RecoverableException($"Could not create GDB server for CPU: {cpu.GetName()}");
                 }
             }
-            selectedCpuNumber = ManagedCpus.OrderBy(x => x.Key).First().Key;
+            selectedCpu = ManagedCpus[PacketThreadId.Any];
         }
 
         public void AttachCPU(ICpuSupportingGdb cpu)
@@ -54,22 +57,16 @@ namespace Antmicro.Renode.Utilities.GDB
 
         public bool IsCPUAttached(ICpuSupportingGdb cpu)
         {
-            return ManagedCpus.ContainsValue(cpu);
+            return ManagedCpus.Contains(cpu);
         }
 
-        public void SelectCpuForDebugging(uint cpuNumber)
+        public void SelectCpuForDebugging(ICpuSupportingGdb cpu)
         {
-            if(cpuNumber == 0)
+            if(!ManagedCpus.Contains(cpu))
             {
-                // the documentation states that `0` indicates an arbitrary process or thread, so we will take the first one available
-                cpuNumber = ManagedCpus.OrderBy(x => x.Key).First().Key;
+                throw new RecoverableException($"Tried to set invalid CPU: {cpu.GetName()} for debugging, which isn't connected to the current {nameof(GdbStub)}");
             }
-            else if(!ManagedCpus.ContainsKey(cpuNumber))
-            {
-                Logger.Log(LogLevel.Error, "Tried to set invalid CPU number: {0}", cpuNumber);
-                return;
-            }
-            selectedCpuNumber = cpuNumber;
+            selectedCpu = cpu;
         }
 
         public void Register(Type t)
@@ -79,18 +76,8 @@ namespace Antmicro.Renode.Utilities.GDB
                 return;
             }
 
-            var interestingMethods = Command.GetExecutingMethods(t);
-            if(interestingMethods.Length == 0)
-            {
-                Logger.Log(LogLevel.Error, string.Format("No proper constructor or executing methods found in type {0}", t.Name));
-                return;
-            }
-
-            foreach(var interestingMethod in interestingMethods)
-            {
-                availableCommands.Add(new CommandDescriptor(interestingMethod));
-                mnemonicList.Add(interestingMethod.GetCustomAttribute<ExecuteAttribute>().Mnemonic);
-            }
+            typesWithCommands.Add(t.AssemblyQualifiedName);
+            AddCommandsFromType(t);
         }
 
         public bool TryGetCommand(Packet packet, out Command command)
@@ -122,14 +109,14 @@ namespace Antmicro.Renode.Utilities.GDB
                 return unifiedFeatures;
             }
 
-            if(ManagedCpus.Count == 1)
+            if(ManagedCpus.Count() == 1)
             {
                 unifiedFeatures.AddRange(Cpu.GDBFeatures);
                 return unifiedFeatures;
             }
 
             var features = new Dictionary<string, List<GDBFeatureDescriptor>>();
-            foreach(var cpu in ManagedCpus.Values)
+            foreach(var cpu in ManagedCpus)
             {
                 foreach(var feature in cpu.GDBFeatures)
                 {
@@ -169,16 +156,9 @@ namespace Antmicro.Renode.Utilities.GDB
         }
 
         public IMachine Machine { get; }
-        public Dictionary<uint, ICpuSupportingGdb> ManagedCpus { get; set; }
+        public ManagedCpusDictionary ManagedCpus { get; }
         public bool CanAttachCPU { get; set; }
-        public ICpuSupportingGdb Cpu
-        {
-            get
-            {
-                return ManagedCpus[selectedCpuNumber];
-            }
-        }
-        public bool BlockOnStep { get; }
+        public ICpuSupportingGdb Cpu => selectedCpu;
 
         private static GDBFeatureDescriptor UnifyFeature(List<GDBFeatureDescriptor> featureVariations)
         {
@@ -259,7 +239,7 @@ namespace Antmicro.Renode.Utilities.GDB
             {
                 return false;
             }
-            ManagedCpus.Add(cpu.Id + 1, cpu);
+            ManagedCpus.Add(cpu);
             return true;
         }
 
@@ -275,14 +255,93 @@ namespace Antmicro.Renode.Utilities.GDB
             return result;
         }
 
+        [PostDeserialization]
+        private void ExtractCommandsFromTypeNames()
+        {
+            foreach(var typeName in typesWithCommands)
+            {
+                var t = Type.GetType(typeName);
+                AddCommandsFromType(t);
+            }
+        }
+
+        private void AddCommandsFromType(Type t)
+        {
+            var interestingMethods = Command.GetExecutingMethods(t);
+            if(interestingMethods.Length == 0)
+            {
+                Logger.Log(LogLevel.Error, string.Format("No proper constructor or executing methods found in type {0}", t.Name));
+                return;
+            }
+
+            foreach(var interestingMethod in interestingMethods)
+            {
+                availableCommands.Add(new CommandDescriptor(interestingMethod));
+                mnemonicList.Add(interestingMethod.GetCustomAttribute<ExecuteAttribute>().Mnemonic);
+            }
+        }
+
+        [Constructor]
         private readonly HashSet<CommandDescriptor> availableCommands;
+        private readonly HashSet<string> typesWithCommands;
         private readonly HashSet<Command> activeCommands;
         private readonly List<GDBFeatureDescriptor> unifiedFeatures = new List<GDBFeatureDescriptor>();
         private readonly Dictionary<int, GDBRegisterDescriptor[]> unifiedRegisters = new Dictionary<int, GDBRegisterDescriptor[]>();
 
         private readonly Dictionary<string,Command> commandsCache;
-        private uint selectedCpuNumber;
+        private ICpuSupportingGdb selectedCpu;
+        [Constructor]
         private readonly List<string> mnemonicList;
+
+        public class ManagedCpusDictionary : IEnumerable<ICpuSupportingGdb>
+        {
+            /// <remarks> There is no check whatsoever to prevent inserting the same CPU twice here, with different unique ID </remarks>
+            public uint Add(ICpuSupportingGdb cpu)
+            {
+                // Thread id "0" might be interpreted as "any" thread by GDB, so start from 1
+                uint ctr = (uint)cpusToIds.Count + 1;
+                cpusToIds.Add(cpu, ctr);
+                idsToCpus.Add(ctr, cpu);
+                return ctr;
+            }
+
+            public IEnumerator<ICpuSupportingGdb> GetEnumerator()
+            {
+                return cpusToIds.Keys.GetEnumerator();
+            }
+
+            IEnumerator IEnumerable.GetEnumerator()
+            {
+                return this.GetEnumerator();
+            }
+
+            public ICpuSupportingGdb this[int idx]
+            {
+                get
+                {
+                    // There are two special cases here:
+                    // -1 means "all" - not supported right now
+                    // 0 means an arbitrary process or thread - so take the first one available
+                    switch(idx)
+                    {
+                        case PacketThreadId.All:
+                            throw new NotSupportedException("Selecting \"all\" CPUs is not supported");
+                        case PacketThreadId.Any:
+                            return idsToCpus.OrderBy(kv => kv.Key).First().Value;
+                        default:
+                            return idsToCpus[(uint)idx];
+                    }
+                }
+            }
+
+            public ICpuSupportingGdb this[uint idx] => this[(int)idx];
+            public uint this[ICpuSupportingGdb cpu] => cpusToIds[cpu];
+
+            public IEnumerable<uint> GdbCpuIds => idsToCpus.Keys;
+
+            private readonly Dictionary<uint, ICpuSupportingGdb> idsToCpus = new Dictionary<uint, ICpuSupportingGdb>();
+            private readonly Dictionary<ICpuSupportingGdb, uint> cpusToIds = new Dictionary<ICpuSupportingGdb, uint>();
+        }
 
         private class CommandDescriptor
         {

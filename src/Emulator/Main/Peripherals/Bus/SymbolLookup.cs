@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -33,15 +33,17 @@ namespace Antmicro.Renode.Core
         /// Loads the symbols from ELF and puts the symbols into the SymbolLookup.
         /// </summary>
         /// <param name="elf">Elf.</param>
-        public void LoadELF(IELF elf, bool useVirtualAddress)
+        /// <param name="useVirtualAddress">Use the virtual address of the symbols, default is physical.</param>
+        /// <param name="textAddress">Override the starting address of the text section (actually the lowest-address loaded segment).</param>
+        public void LoadELF(IELF elf, bool useVirtualAddress = false, ulong? textAddress = null)
         {
             if(elf is ELF<uint> elf32)
             {
-                LoadELF(elf32, useVirtualAddress);
+                LoadELF(elf32, useVirtualAddress, textAddress);
             }
             else if(elf is ELF<ulong> elf64)
             {
-                LoadELF(elf64, useVirtualAddress);
+                LoadELF(elf64, useVirtualAddress, textAddress);
             }
             else
             {
@@ -57,7 +59,7 @@ namespace Antmicro.Renode.Core
         {
             var symbolToAdd = GetUnique(symbol);
             symbols.Add(symbolToAdd);
-            symbolsByName.Add(symbol.Name, symbol);
+            AddSymbolToNameLookup(symbol);
             maxLoadAddress = SymbolAddress.Max(maxLoadAddress, symbol.End);
         }
 
@@ -174,13 +176,22 @@ namespace Antmicro.Renode.Core
         static private readonly string[] excludedSymbolNames = { "$a", "$d", "$t", "$x" };
         static private readonly SymbolType[] excludedSymbolTypes = { SymbolType.File };
 
-        private void LoadELF<T>(ELF<T> elf, bool useVirtualAddress) where T : struct
+        private void LoadELF<T>(ELF<T> elf, bool useVirtualAddress = false, ulong? textAddress = null) where T : struct
         {
             if(!elf.TryGetSection(".symtab", out var symtabSection))
             {
                 return;
             }
 
+            var segments = elf.Segments.Where(x => x.Type == ELFSharp.ELF.Segments.SegmentType.Load).OfType<ELFSharp.ELF.Segments.Segment<T>>();
+            foreach(var segment in segments)
+            {
+                var loadAddress = useVirtualAddress ? segment.GetSegmentAddress() : segment.GetSegmentPhysicalAddress();
+                minLoadAddress = SymbolAddress.Min(minLoadAddress, loadAddress);
+                maxLoadAddress = SymbolAddress.Max(maxLoadAddress, loadAddress + segment.GetSegmentSize());
+            }
+
+            var offset = (T)Convert.ChangeType(textAddress != null ? textAddress.Value - minLoadAddress.RawValue : 0, typeof(T));
             var thumb = elf.Machine == ELFSharp.ELF.Machine.ARM;
             var symtab = (SymbolTable<T>)symtabSection;
 
@@ -188,7 +199,8 @@ namespace Antmicro.Renode.Core
             // To guard against it we also check if the type of this symbol is not specified
             var elfSymbols = symtab.Entries.Where(x => !(excludedSymbolNames.Contains(x.Name) && x.Type == SymbolType.NotSpecified))
                                 .Where(x => !excludedSymbolTypes.Contains(x.Type))
-                                .Where(x => x.PointedSectionIndex != (uint)SpecialSectionIndex.Undefined).Select(x => new Symbol(x, thumb));
+                                .Where(x => x.PointedSectionIndex != (uint)SpecialSectionIndex.Undefined)
+                                .Select(x => new Symbol(x.OffsetBy(offset), thumb));
             InsertSymbols(elfSymbols);
             EntryPoint = elf.GetEntryPoint();
             FirstNotNullSectionAddress  = elf.Sections
@@ -196,12 +208,6 @@ namespace Antmicro.Renode.Core
                                     .Select(x => x.GetSectionPhysicalAddress())
                                     .Cast<ulong?>()
                                     .Min();
-            var segments = elf.Segments.Where(x => x.Type == ELFSharp.ELF.Segments.SegmentType.Load).OfType<ELFSharp.ELF.Segments.Segment<T>>();
-            foreach(var segment in segments)
-            {
-                var loadAddress = useVirtualAddress ? segment.GetSegmentAddress() : segment.GetSegmentPhysicalAddress();
-                maxLoadAddress = SymbolAddress.Max(maxLoadAddress, loadAddress + segment.GetSegmentSize());
-            }
         }
 
         private bool TryGetSymbol(Symbol symbol, out Symbol outSymbol)
@@ -236,6 +242,14 @@ namespace Antmicro.Renode.Core
         private void AddSymbolToNameLookup(Symbol symbol)
         {
             symbolsByName.Add(symbol.Name, symbol);
+
+            var dotIndex = symbol.Name.IndexOf('.');
+            if(dotIndex >= 0)
+            {
+                // NOTE: Add alias for the symbol if it contains clone suffix
+                var withoutCloneSuffix = symbol.Name.Substring(0, dotIndex);
+                symbolsByName.Add(withoutCloneSuffix, symbol);
+            }
         }
 
         /// <summary>
@@ -276,6 +290,7 @@ namespace Antmicro.Renode.Core
         /// </summary>
         private MultiValueDictionary<string, Symbol> symbolsByName;
 
+        private SymbolAddress minLoadAddress = SymbolAddress.MaxValue;
         private SymbolAddress maxLoadAddress;
 
         private class SortedIntervals : IEnumerable

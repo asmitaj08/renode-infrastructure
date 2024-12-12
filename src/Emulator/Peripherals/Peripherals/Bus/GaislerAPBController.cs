@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2018 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -9,15 +9,14 @@ using System;
 using System.Linq;
 using System.Collections.Generic;
 using Antmicro.Renode.Core;
+using Antmicro.Renode.Exceptions;
 using Antmicro.Renode.Utilities;
 using Antmicro.Renode.Core.Structure;
 using Antmicro.Renode.Core.Extensions;
 using System.Net;
-using Endianess = ELFSharp.ELF.Endianess;
 
 namespace Antmicro.Renode.Peripherals.Bus
 {
-    [Endianess(Endianess.BigEndian)]
     [AllowedTranslations(AllowedTranslation.ByteToDoubleWord)]
     public class GaislerAPBController : IDoubleWordPeripheral, IGaislerAHB
     {
@@ -86,25 +85,38 @@ namespace Antmicro.Renode.Peripherals.Bus
             return spaceType;
         }
         #endregion
+
+        private uint? GetBusAddress(IBusPeripheral peripheral)
+        {
+            var registrationPoint = machine.SystemBus.GetRegistrationPoints(peripheral).SingleOrDefault();
+            if(registrationPoint == null)
+            {
+                return null;
+            }
+            return (uint)(registrationPoint.Range.StartAddress >> 20) & 0xfff;
+        }
   
         private void cacheRecords()
         { 
-            var recordsFound = machine.SystemBus.Children.Where(x => x.Peripheral is IGaislerAPB);
+            var busAddress = GetBusAddress(this) ?? throw new RecoverableException("Failed to get the controller's bus address");
+            var recordsFound = machine.SystemBus.Children
+                .Where(x => x.Peripheral is IGaislerAPB && GetBusAddress(x.Peripheral) == busAddress);
             foreach (var record in recordsFound)
             {
                 var peripheral = (IGaislerAPB)record.Peripheral;
                 var registration = record.RegistrationPoint;
                 var recordEntry = new GaislerAPBPlugAndPlayRecord();
                 var deviceAddress = registration.Range.StartAddress;
+                var deviceSize = registration.Range.Size;
                 recordEntry.ConfigurationWord.Vendor = peripheral.GetVendorID();
                 recordEntry.ConfigurationWord.Device = peripheral.GetDeviceID();
                 recordEntry.BankAddressRegister.Type = peripheral.GetSpaceType();
                 recordEntry.ConfigurationWord.Irq = peripheral.GetInterruptNumber();
                 if(recordEntry.BankAddressRegister.Type == GaislerAPBPlugAndPlayRecord.SpaceType.APBIOSpace)
                 {
-                    recordEntry.BankAddressRegister.Address = (uint)((deviceAddress >> 8) & 0xfff);
+                    recordEntry.BankAddressRegister.Address = (uint)deviceAddress;
+                    recordEntry.BankAddressRegister.Size = deviceSize;
                 }
-                recordEntry.BankAddressRegister.Mask = 0xfff;
                 records.Add(recordEntry);                
             }
         }

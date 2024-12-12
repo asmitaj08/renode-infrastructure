@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -26,6 +26,7 @@ namespace Antmicro.Renode.Logging
 
         public virtual void SetLogLevel(LogLevel level, int sourceId = -1)
         {
+            Logger.SetLogLevel(this, level, sourceId);
             if(sourceId != -1)
             {
                 if(level == null)
@@ -65,7 +66,7 @@ namespace Antmicro.Renode.Logging
 
         public void Reset()
         {
-            logLevel = DefaultLogLevel;
+            logLevel = Logger.DefaultLogLevel;
             peripheralsWithDifferentLogging.Clear();
         }
 
@@ -77,13 +78,12 @@ namespace Antmicro.Renode.Logging
         protected LoggerBackend()
         {
             peripheralsWithDifferentLogging = new Dictionary<int, LogLevel>();
-            logLevel = DefaultLogLevel;
+            logLevel = Logger.DefaultLogLevel;
         }
 
         protected LogLevel logLevel;
 
         private readonly Dictionary<int, LogLevel> peripheralsWithDifferentLogging;
-        private readonly LogLevel DefaultLogLevel = LogLevel.Info;
     }
 }
 

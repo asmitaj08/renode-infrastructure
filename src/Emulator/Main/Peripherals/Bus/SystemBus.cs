@@ -51,6 +51,7 @@ namespace Antmicro.Renode.Peripherals.Bus
             idByCpu = new Dictionary<ICPU, int>();
             hooksOnRead = new Dictionary<ulong, List<BusHookHandler>>();
             hooksOnWrite = new Dictionary<ulong, List<BusHookHandler>>();
+            pcCache.OnChanged += HandleChangedSymbols;
             InitStructures();
             this.Log(LogLevel.Info, "System bus created.");
         }
@@ -65,7 +66,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void Unregister(IBusPeripheral peripheral)
         {
-            using(Machine.ObtainPausedState())
+            using(Machine.ObtainPausedState(true))
             {
                 Machine.UnregisterAsAChildOf(this, peripheral);
                 UnregisterInner(peripheral);
@@ -74,7 +75,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void Unregister(IBusRegistered<IBusPeripheral> busRegisteredPeripheral)
         {
-            using(Machine.ObtainPausedState())
+            using(Machine.ObtainPausedState(true))
             {
                 Machine.UnregisterAsAChildOf(this, busRegisteredPeripheral.RegistrationPoint);
                 UnregisterInner(busRegisteredPeripheral);
@@ -83,7 +84,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void Unregister(IPeripheral peripheral)
         {
-            using(Machine.ObtainPausedState())
+            using(Machine.ObtainPausedState(true))
             {
                 Machine.UnregisterAsAChildOf(this, peripheral);
             }
@@ -91,7 +92,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void Register(IPeripheral peripheral, NullRegistrationPoint registrationPoint)
         {
-            using(Machine.ObtainPausedState())
+            using(Machine.ObtainPausedState(true))
             {
                 // NullRegistrationPoint peripherals are not mapped on the bus and
                 // are not directly accessible from the emulated software.
@@ -102,20 +103,42 @@ namespace Antmicro.Renode.Peripherals.Bus
         public void Register(IBusPeripheral peripheral, BusRangeRegistration registrationPoint)
         {
             var methods = PeripheralAccessMethods.CreateWithLock();
-            FillAccessMethodsWithDefaultMethods(peripheral, ref methods);
-            RegisterInner(peripheral, methods, registrationPoint, registrationPoint.CPU);
+            if(registrationPoint is BusParametrizedRegistration parametrizedRegistrationPoint)
+            {
+                parametrizedRegistrationPoint.RegisterForEachContext((contextRegistration) =>
+                {
+                    // Prepare accessor methods in the context of registration,
+                    // as it may want to fill them according to the CPU context.
+                    methods = PeripheralAccessMethods.CreateWithLock();
+                    contextRegistration.FillAccessMethods(peripheral, ref methods);
+                    FillAccessMethodsWithDefaultMethods(peripheral, ref methods);
+                    RegisterInner(peripheral, methods, contextRegistration, context: contextRegistration.CPU);
+                });
+            }
+            else if(registrationPoint is BusMultiRegistration multiRegistrationPoint)
+            {
+                if(peripheral is IMapped)
+                {
+                    throw new ConstructionException(string.Format("It is not allowed to register `{0}` peripheral using `{1}`", typeof(IMapped).Name, typeof(BusMultiRegistration).Name));
+                }
+                FillAccessMethodsWithTaggedMethods(peripheral, multiRegistrationPoint.ConnectionRegionName, ref methods);
+                multiRegistrationPoint.RegisterForEachContext((contextRegistration) => RegisterInner(peripheral, methods, contextRegistration, context: contextRegistration.CPU));
+            }
+            else
+            {
+                FillAccessMethodsWithDefaultMethods(peripheral, ref methods);
+                registrationPoint.RegisterForEachContext((contextRegistration) => RegisterInner(peripheral, methods, contextRegistration, context: contextRegistration.CPU));
+            }
         }
 
         public void Register(IBusPeripheral peripheral, BusMultiRegistration registrationPoint)
         {
-            if(peripheral is IMapped)
-            {
-                throw new ConstructionException(string.Format("It is not allowed to register `{0}` peripheral using `{1}`", typeof(IMapped).Name, typeof(BusMultiRegistration).Name));
-            }
+            Register(peripheral, (BusRangeRegistration)registrationPoint);
+        }
 
-            var methods = PeripheralAccessMethods.CreateWithLock();
-            FillAccessMethodsWithTaggedMethods(peripheral, registrationPoint.ConnectionRegionName, ref methods);
-            RegisterInner(peripheral, methods, registrationPoint, context: registrationPoint.CPU);
+        public void Register(IBusPeripheral peripheral, BusParametrizedRegistration registrationPoint)
+        {
+            Register(peripheral, (BusRangeRegistration)registrationPoint);
         }
 
         void IPeripheralRegister<IBusPeripheral, BusMultiRegistration>.Unregister(IBusPeripheral peripheral)
@@ -125,7 +148,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void Register(IKnownSize peripheral, BusPointRegistration registrationPoint)
         {
-            Register(peripheral, new BusRangeRegistration(new Range(registrationPoint.StartingPoint, checked((ulong)peripheral.Size)), registrationPoint.Offset, registrationPoint.CPU));
+            Register(peripheral, new BusRangeRegistration(new Range(registrationPoint.StartingPoint, checked((ulong)peripheral.Size)), registrationPoint.Offset, registrationPoint.CPU, registrationPoint.Cluster));
         }
 
         public void Unregister(IKnownSize peripheral)
@@ -133,40 +156,55 @@ namespace Antmicro.Renode.Peripherals.Bus
             Unregister((IBusPeripheral)peripheral);
         }
 
-        public void MoveRegistrationWithinContext(IBusPeripheral peripheral, ulong newAddress, ICPU context, Func<IEnumerable<IBusRegistered<IBusPeripheral>>, IBusRegistered<IBusPeripheral>> selector = null)
+        public void MoveRegistrationWithinContext(IBusPeripheral peripheral, BusRangeRegistration newRegistration, ICPU context, Func<IEnumerable<IBusRegistered<IBusPeripheral>>, IBusRegistered<IBusPeripheral>> selector = null)
         {
-            if(context == null ? !TryFindCurrentThreadCPUAndId(out context, out var _) : !context.OnPossessedThread)
+            if(context == null && !TryFindCurrentThreadCPUAndId(out context, out var _))
             {
-                throw new RecoverableException("Moving a peripheral is supported only from context's CPU thread");
+                throw new RecoverableException("Moving a peripheral is supported only from CPU thread if context isn't explicitly set");
             }
-            if(mappingsForPeripheral.ContainsKey(peripheral))
-            {
-                throw new RecoverableException("Moving mapped peripherals is not yet supported");
-            }
-            var registrationPoints = cpuLocalPeripherals[context].Peripherals.Where(x => x.Peripheral == peripheral).ToList();
-            if(registrationPoints.Count == 0)
+            var wasMapped = RemoveMappingsForPeripheral(peripheral);
+            var busRegisteredEntries = peripheralsCollectionByContext[context].Peripherals.Where(x => x.Peripheral == peripheral).ToList();
+            if(busRegisteredEntries.Count == 0)
             {
                 throw new RecoverableException("Attempted to move a peripheral that isn't registered within current context");
             }
-            IBusRegistered<IBusPeripheral> registrationPoint;
+            IBusRegistered<IBusPeripheral> busRegistered;
             if(selector != null)
             {
-                registrationPoint = selector(registrationPoints);
-                if(registrationPoint == null)
+                busRegistered = selector(busRegisteredEntries);
+                if(busRegistered == null)
                 {
                     throw new RecoverableException("Provided selector failed to find a suitable registration point");
                 }
             }
             else
             {
-                if(registrationPoints.Count > 1)
+                if(busRegisteredEntries.Count > 1)
                 {
-                    throw new RecoverableException($"Unable to unambiguously determine a registration point, found multiple candidates: {String.Join(", ", registrationPoints.Select(x => x.RegistrationPoint))}");
+                    throw new RecoverableException($"Unable to unambiguously determine a registration point, found multiple candidates: {String.Join(", ", busRegisteredEntries.Select(x => x.RegistrationPoint))}");
                 }
-                registrationPoint = registrationPoints[0];
+                busRegistered = busRegisteredEntries[0];
             }
-            var newRegistrationPoint = cpuLocalPeripherals[context].Move(registrationPoint, newAddress);
-            Machine.ExchangeRegistrationPointForPeripheral(this, peripheral, registrationPoint.RegistrationPoint, newRegistrationPoint.RegistrationPoint);
+            if(IsAddressRangeLocked(busRegistered.RegistrationPoint.Range, context))
+            {
+                throw new RecoverableException("Moving a peripheral to a locked address range is not supported");
+            }
+            UnregisterAccessFlags(busRegistered.RegistrationPoint, context);
+            peripheralsCollectionByContext[context].Move(busRegistered, newRegistration);
+            Machine.ExchangeRegistrationPointForPeripheral(this, peripheral, busRegistered.RegistrationPoint, newRegistration);
+            if(wasMapped)
+            {
+                AddMappingsForPeripheral(peripheral, newRegistration, context);
+            }
+
+            if(peripheral is ArrayMemory)
+            {
+                foreach(var cpu in GetCPUsForContext<ICPUWithMappedMemory>(context))
+                {
+                    var range = newRegistration.Range;
+                    cpu.RegisterAccessFlags(range.StartAddress, range.Size, isIoMemory: true);
+                }
+            }
         }
 
         public void Register(ICPU cpu, CPURegistrationPoint registrationPoint)
@@ -188,8 +226,9 @@ namespace Antmicro.Renode.Peripherals.Bus
                 }
                 Machine.RegisterAsAChildOf(this, cpu, registrationPoint);
                 cpuById.Add(registrationPoint.Slot.Value, cpu);
-                cpuLocalPeripherals[cpu] = new PeripheralCollection(this);
+                peripheralsCollectionByContext[cpu] = new PeripheralCollection(this);
                 idByCpu.Add(cpu, registrationPoint.Slot.Value);
+                lockedRangesCollectionByContext[cpu] = new MinimalRangesCollection();
                 if(cpu is ICPUWithMappedMemory memoryMappedCpu)
                 {
                     foreach(var mapping in mappingsForPeripheral.SelectMany(x => x.Value)
@@ -198,27 +237,39 @@ namespace Antmicro.Renode.Peripherals.Bus
                         memoryMappedCpu.MapMemory(mapping);
                     }
                 }
+
+                if(cpu.Endianness != Endianess)
+                {
+                    hasCpuWithMismatchedEndianness = true;
+                    UpdateAccessMethods();
+                }
+
+                if(GetCPUs().Select(x => x.Endianness).Distinct().Count() > 1)
+                {
+                    throw new RegistrationException("Currently there can't be CPUs with different endiannesses on the same bus.");
+                }
             }
         }
 
         public void Unregister(ICPU cpu)
         {
-            using(Machine.ObtainPausedState())
+            using(Machine.ObtainPausedState(true))
             {
-                Machine.UnregisterAsAChildOf(this, cpu);
+                Machine.UnregisterFromParent(cpu);
                 lock(cpuSync)
                 {
                     var id = idByCpu[cpu];
                     idByCpu.Remove(cpu);
                     cpuById.Remove(id);
-                    cpuLocalPeripherals.Remove(cpu);
+                    peripheralsCollectionByContext.RemoveContextKey(cpu);
+                    lockedRangesCollectionByContext.RemoveContextKey(cpu);
                 }
             }
         }
 
         public void SetPCOnAllCores(ulong pc)
         {
-            using(Machine.ObtainPausedState())
+            using(Machine.ObtainPausedState(true))
             {
                 lock(cpuSync)
                 {
@@ -256,28 +307,34 @@ namespace Antmicro.Renode.Peripherals.Bus
                     }
                     if(enable)
                     {
-                        pam.WriteByte = new BusAccess.ByteWriteMethod(new WriteLoggingWrapper<byte>(busPeripheral, new Action<long, byte>(pam.WriteByte)).Write);
-                        pam.WriteWord = new BusAccess.WordWriteMethod(new WriteLoggingWrapper<ushort>(busPeripheral, new Action<long, ushort>(pam.WriteWord)).Write);
-                        pam.WriteDoubleWord = new BusAccess.DoubleWordWriteMethod(new WriteLoggingWrapper<uint>(busPeripheral, new Action<long, uint>(pam.WriteDoubleWord)).Write);
-                        pam.WriteQuadWord = new BusAccess.QuadWordWriteMethod(new WriteLoggingWrapper<ulong>(busPeripheral, new Action<long, ulong>(pam.WriteQuadWord)).Write);
-                        pam.ReadByte = new BusAccess.ByteReadMethod(new ReadLoggingWrapper<byte>(busPeripheral, new Func<long, byte>(pam.ReadByte)).Read);
-                        pam.ReadWord = new BusAccess.WordReadMethod(new ReadLoggingWrapper<ushort>(busPeripheral, new Func<long, ushort>(pam.ReadWord)).Read);
-                        pam.ReadDoubleWord = new BusAccess.DoubleWordReadMethod(new ReadLoggingWrapper<uint>(busPeripheral, new Func<long, uint>(pam.ReadDoubleWord)).Read);
-                        pam.ReadQuadWord = new BusAccess.QuadWordReadMethod(new ReadLoggingWrapper<ulong>(busPeripheral, new Func<long, ulong>(pam.ReadQuadWord)).Read);
+                        pam.WrapMethods(typeof(ReadLoggingWrapper<>), typeof(WriteLoggingWrapper<>));
                         return pam;
                     }
                     else
                     {
-                        pam.WriteByte = new BusAccess.ByteWriteMethod(((WriteLoggingWrapper<byte>)pam.WriteByte.Target).OriginalMethod);
-                        pam.WriteWord = new BusAccess.WordWriteMethod(((WriteLoggingWrapper<ushort>)pam.WriteWord.Target).OriginalMethod);
-                        pam.WriteDoubleWord = new BusAccess.DoubleWordWriteMethod(((WriteLoggingWrapper<uint>)pam.WriteDoubleWord.Target).OriginalMethod);
-                        pam.WriteQuadWord = new BusAccess.QuadWordWriteMethod(((WriteLoggingWrapper<ulong>)pam.WriteQuadWord.Target).OriginalMethod);
-                        pam.ReadByte = new BusAccess.ByteReadMethod(((ReadLoggingWrapper<byte>)pam.ReadByte.Target).OriginalMethod);
-                        pam.ReadWord = new BusAccess.WordReadMethod(((ReadLoggingWrapper<ushort>)pam.ReadWord.Target).OriginalMethod);
-                        pam.ReadDoubleWord = new BusAccess.DoubleWordReadMethod(((ReadLoggingWrapper<uint>)pam.ReadDoubleWord.Target).OriginalMethod);
-                        pam.ReadQuadWord = new BusAccess.QuadWordReadMethod(((ReadLoggingWrapper<ulong>)pam.ReadQuadWord.Target).OriginalMethod);
+                        pam.RemoveWrappersOfType(typeof(ReadLoggingWrapper<>), typeof(WriteLoggingWrapper<>));
                         return pam;
                     }
+                });
+            }
+        }
+
+        public void EnableAllTranslations(bool enable = true)
+        {
+            foreach(var p in allPeripherals.SelectMany(x => x.Peripherals))
+            {
+                EnableAllTranslations(p.Peripheral, enable);
+            }
+        }
+
+        public void EnableAllTranslations(IBusPeripheral busPeripheral, bool enable = true)
+        {
+            foreach(var peripherals in allPeripherals)
+            {
+                peripherals.VisitAccessMethods(busPeripheral, pam =>
+                {
+                    pam.EnableAllTranslations(enable, Endianess);
+                    return pam;
                 });
             }
         }
@@ -290,7 +347,7 @@ namespace Antmicro.Renode.Peripherals.Bus
             }
         }
 
-        public int GetCPUId(ICPU cpu)
+        public int GetCPUSlot(ICPU cpu)
         {
             lock(cpuSync)
             {
@@ -321,6 +378,27 @@ namespace Antmicro.Renode.Peripherals.Bus
                 throw new RecoverableException(CantFindCpuIdMessage);
             }
             return id;
+        }
+
+        public IEnumerable<ICPU> GetAllContextKeys()
+        {
+            return peripheralsCollectionByContext.GetAllContextKeys();
+        }
+
+        private void HandleChangedSymbols()
+        {
+            OnSymbolsChanged?.Invoke(Machine);
+        }
+
+        private IEnumerable<ICPU> GetCPUsForContext(ICPU context)
+        {
+            return GetCPUs().Where(x => context == null || x == context);
+        }
+
+        private IEnumerable<T> GetCPUsForContext<T>(ICPU context)
+            where T : ICPU
+        {
+            return GetCPUsForContext(context).OfType<T>();
         }
 
         private bool TryGetCurrentCPUId(out int cpuId)
@@ -433,7 +511,7 @@ namespace Antmicro.Renode.Peripherals.Bus
         /// </returns>
         public IBusRegistered<IBusPeripheral> WhatIsAt(ulong address, ICPU context = null)
         {
-            return GetPeripheralsForContext(context).FirstOrDefault(x => x.RegistrationPoint.Range.Contains(address));
+            return GetAccessiblePeripheralsForContext(context).FirstOrDefault(x => x.RegistrationPoint.Range.Contains(address));
         }
 
         public IPeripheral WhatPeripheralIsAt(ulong address, ICPU context = null)
@@ -448,17 +526,34 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public IBusRegistered<MappedMemory> FindMemory(ulong address, ICPU context = null)
         {
-            return GetPeripheralsForContext(context)
+            return GetAccessiblePeripheralsForContext(context)
                 .Where(x => x.Peripheral is MappedMemory)
                 .Convert<IBusPeripheral, MappedMemory>()
                 .FirstOrDefault(x => x.RegistrationPoint.Range.Contains(address));
         }
 
+        public bool IsMemory(ulong address, ICPU context = null)
+        {
+            return GetAccessiblePeripheralsForContext(context)
+                .Any(x => x.Peripheral is IMemory && x.RegistrationPoint.Range.Contains(address));
+        }
+
         public IEnumerable<IBusRegistered<IMapped>> GetMappedPeripherals(ICPU context = null)
         {
-            return GetPeripheralsForContext(context)
+            return GetAccessiblePeripheralsForContext(context)
                 .Where(x => x.Peripheral is IMapped)
                 .Convert<IBusPeripheral, IMapped>();
+        }
+
+        public IEnumerable<IBusRegistered<IBusPeripheral>> GetRegistrationsForPeripheralType<T>(ICPU context = null)
+        {
+            return GetAccessiblePeripheralsForContext(context)
+                .Where(x => x.Peripheral is T);
+        }
+
+        public IEnumerable<IBusRegistered<IBusPeripheral>> GetRegisteredPeripherals(ICPU context = null)
+        {
+            return GetAccessiblePeripheralsForContext(context);
         }
 
         public void SilenceRange(Range range)
@@ -565,68 +660,28 @@ namespace Antmicro.Renode.Peripherals.Bus
             WriteBytes(zeroBlock, range.StartAddress + blocksNo * (ulong)zeroBlock.Length, (int)range.Size % zeroBlock.Length, context: context);
         }
 
-        public void LoadSymbolsFrom(ReadFilePath fileName, bool useVirtualAddress = false)
+        // Specifying `textAddress` will override the address of the program text - the symbols will be applied
+        // as if the first loaded segment started at the specified address. This is equivalent to the ADDR parameter
+        // to GDB's add-symbol-file.
+        public void LoadSymbolsFrom(IELF elf, bool useVirtualAddress = false, ulong? textAddress = null, ICPU context = null)
         {
-            using (var elf = GetELFFromFile(fileName))
-            {
-                Lookup.LoadELF(elf, useVirtualAddress);
-            }
+            GetOrCreateLookup(context).LoadELF(elf, useVirtualAddress, textAddress);
             pcCache.Invalidate();
         }
 
-        public void AddSymbol(Range address, string name, bool isThumb = false)
+        public void ClearSymbols(ICPU context = null)
+        {
+            RemoveLookup(context);
+            pcCache.Invalidate();
+        }
+
+        public void AddSymbol(Range address, string name, bool isThumb = false, ICPU context = null)
         {
             checked
             {
-                Lookup.InsertSymbol(name, address.StartAddress, address.Size);
+                GetOrCreateLookup(context).InsertSymbol(name, address.StartAddress, address.Size);
             }
             pcCache.Invalidate();
-        }
-
-        public void LoadELF(ReadFilePath fileName, bool useVirtualAddress = false, bool allowLoadsOnlyToMemory = true, IInitableCPU cpu = null)
-        {
-            if(!Machine.IsPaused)
-            {
-                throw new RecoverableException("Cannot load ELF on an unpaused machine.");
-            }
-            this.DebugLog("Loading ELF {0}.", fileName);
-            using(var elf = GetELFFromFile(fileName))
-            {
-                var segmentsToLoad = elf.Segments.Where(x => x.Type == SegmentType.Load);
-                if(!segmentsToLoad.Any())
-                {
-                    throw new RecoverableException($"ELF '{fileName}' has no loadable segments.");
-                }
-
-                foreach (var s in segmentsToLoad)
-                {
-                    var contents = s.GetContents();
-                    var loadAddress = useVirtualAddress ? s.GetSegmentAddress() : s.GetSegmentPhysicalAddress();
-                    this.Log(LogLevel.Info,
-                        "Loading segment of {0} bytes length at 0x{1:X}.",
-                        s.GetSegmentSize(),
-                        loadAddress
-                    );
-                    this.WriteBytes(contents, loadAddress, allowLoadsOnlyToMemory, cpu);
-                    UpdateLowestLoadedAddress(loadAddress);
-                    this.DebugLog("Segment loaded.");
-                }
-                Lookup.LoadELF(elf, useVirtualAddress);
-                pcCache.Invalidate();
-
-                if(cpu != null)
-                {
-                    cpu.InitFromElf(elf);
-                }
-                else
-                {
-                    foreach(var c in GetCPUs().OfType<IInitableCPU>())
-                    {
-                        c.InitFromElf(elf);
-                    }
-                }
-                AddFingerprint(fileName);
-            }
         }
 
         public void LoadUImage(ReadFilePath fileName, IInitableCPU cpu = null)
@@ -697,47 +752,36 @@ namespace Antmicro.Renode.Peripherals.Bus
             return new BinaryFingerprint(fileName);
         }
 
-        public bool TryGetAllSymbolAddresses(string symbolName, out IEnumerable<ulong> symbolAddresses)
+        public bool TryGetAllSymbolAddresses(string symbolName, out IEnumerable<ulong> symbolAddresses, ICPU context = null)
         {
-            var result = Lookup.TryGetSymbolsByName(symbolName, out var symbols);
+            var result = GetLookup(context).TryGetSymbolsByName(symbolName, out var symbols);
             symbolAddresses = symbols.Select(symbol => symbol.Start.RawValue);
             return result;
         }
 
-        public IEnumerable<ulong> GetAllSymbolAddresses(string symbolName)
+        public IEnumerable<ulong> GetAllSymbolAddresses(string symbolName, ICPU context = null)
         {
-            if(!TryGetAllSymbolAddresses(symbolName, out var symbolAddresses))
+            if(!TryGetAllSymbolAddresses(symbolName, out var symbolAddresses, context))
             {
                 throw new RecoverableException(string.Format("No symbol with name `{0}` found.", symbolName));
             }
             return symbolAddresses;
         }
 
-        public ulong GetSymbolAddress(string symbolName)
+        public string FindSymbolAt(ulong offset, ICPU context = null)
         {
-            var addresses = GetAllSymbolAddresses(symbolName).ToArray();
-            if(addresses.Length > 1)
-            {
-                throw new RecoverableException(string.Format("Ambiguous symbol name: `{0}`. Use GetAllSymbolAddresses to get all possible addresses.", symbolName));
-            }
-            return addresses[0];
-
-        }
-
-        public string FindSymbolAt(ulong offset)
-        {
-            if(!TryFindSymbolAt(offset, out var name, out var _))
+            if(!TryFindSymbolAt(offset, out var name, out var _, context))
             {
                 return null;
             }
             return name;
         }
 
-        public bool TryFindSymbolAt(ulong offset, out string name, out Symbol symbol)
+        public bool TryFindSymbolAt(ulong offset, out string name, out Symbol symbol, ICPU context = null)
         {
             if(!pcCache.TryGetValue(offset, out var entry))
             {
-                if(!Lookup.TryGetSymbolByAddress(offset, out symbol))
+                if(!GetLookup(context).TryGetSymbolByAddress(offset, out symbol))
                 {
                     symbol = null;
                     name = null;
@@ -779,18 +823,13 @@ namespace Antmicro.Renode.Peripherals.Bus
             }
         }
 
-        public void UnmapMemory(ulong start, ulong size)
-        {
-            UnmapMemory(start.By(size));
-        }
-
-        public void UnmapMemory(Range range)
+        public void UnmapMemory(Range range, ICPU context = null)
         {
             lock(cpuSync)
             {
-                mappingsRemoved = true;
-                foreach(var cpu in idByCpu.Keys.OfType<ICPUWithMappedMemory>())
+                foreach(var cpu in GetCPUsForContext<ICPUWithMappedMemory>(context))
                 {
+                    mappingsRemoved = true;
                     cpu.UnmapMemory(range);
                 }
             }
@@ -893,13 +932,15 @@ namespace Antmicro.Renode.Peripherals.Bus
             return hooksOnWrite.TryGetValue(address, out result);
         }
 
+        /// <remarks>Doesn't include peripherals registered using NullRegistrationPoints.</remarks>
         public IEnumerable<BusRangeRegistration> GetRegistrationPoints(IBusPeripheral peripheral, ICPU context = null)
         {
-            return GetPeripheralsForContext(context)
+            return GetAccessiblePeripheralsForContext(context)
                 .Where(x => x.Peripheral == peripheral)
                 .Select(x => x.RegistrationPoint);
         }
 
+        /// <remarks>Doesn't include peripherals registered using NullRegistrationPoints.</remarks>
         public IEnumerable<BusRangeRegistration> GetRegistrationPoints(IBusPeripheral peripheral)
         {
             // try to detect the CPU context based on the current thread
@@ -969,6 +1010,32 @@ namespace Antmicro.Renode.Peripherals.Bus
             }
         }
 
+        public void SetAddressRangeLocked(Range range, bool locked, ICPU context = null)
+        {
+            lock(lockedRangesCollectionByContext)
+            {
+                // Check if `range` needs to be locked or unlocked at all.
+                if(locked ? lockedRangesCollectionByContext[context].ContainsWholeRange(range) : !IsAddressRangeLocked(range, context))
+                {
+                    return;
+                }
+
+                using(Machine.ObtainPausedState(internalPause: true))
+                {
+                    RelockRange(range, locked, context);
+
+                    if(locked)
+                    {
+                        lockedRangesCollectionByContext[context].Add(range);
+                    }
+                    else
+                    {
+                        lockedRangesCollectionByContext[context].Remove(range);
+                    }
+                }
+            }
+        }
+
         public void SetPeripheralEnabled(IPeripheral peripheral, bool enabled)
         {
             if(enabled)
@@ -982,6 +1049,14 @@ namespace Antmicro.Renode.Peripherals.Bus
                     lockedPeripherals.Add(peripheral);
                 }
             }
+        }
+
+        /// <returns>True if any part of the <c>range</c> is locked for the given CPU (globally if <c>null</c> passed as <c>context</c>).</returns>
+        public bool IsAddressRangeLocked(Range range, ICPU context = null)
+        {
+            // The locked range is either mapped for the CPU context, or globally (that is the reason for the OR)
+            return lockedRangesCollectionByContext[context].ContainsOverlappingRange(range)
+                || lockedRangesCollectionByContext[null].ContainsOverlappingRange(range);
         }
 
         public bool IsPeripheralEnabled(IPeripheral peripheral)
@@ -1001,7 +1076,8 @@ namespace Antmicro.Renode.Peripherals.Bus
         public void Reset()
         {
             LowestLoadedAddress = null;
-            Lookup = new SymbolLookup();
+            globalLookup = new SymbolLookup();
+            localLookups = new Dictionary<ICPU, SymbolLookup>();
             pcCache.Invalidate();
         }
 
@@ -1030,6 +1106,17 @@ namespace Antmicro.Renode.Peripherals.Bus
             return builder.ToString();
         }
 
+        public SymbolLookup GetLookup(ICPU context = null)
+        {
+            if(context == null
+               || !localLookups.TryGetValue(context, out var cpuLookup))
+            {
+                return globalLookup;
+            }
+
+            return cpuLookup;
+        }
+
         public IMachine Machine { get; }
 
         public int UnexpectedReads
@@ -1050,6 +1137,10 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public ulong? LowestLoadedAddress { get; private set; }
 
+        /// <returns>
+        /// The returned <c>IEnumerable</c> always enumerates all peripherals registered globally
+        /// but also peripherals registered per CPU are enumerated if called in CPU context.
+        /// </returns>
         public IEnumerable<IRegistered<IBusPeripheral, BusRangeRegistration>> Children
         {
             get
@@ -1085,59 +1176,69 @@ namespace Antmicro.Renode.Peripherals.Bus
             }
         }
 
-        public SymbolLookup Lookup
+        public UnhandledAccessBehaviour UnhandledAccessBehaviour { get; set; }
+
+        public event Action<IMachine> OnSymbolsChanged;
+
+        private SymbolLookup GetOrCreateLookup(ICPU context)
         {
-            get;
-            private set;
+            if(context == null)
+            {
+                return globalLookup;
+            }
+
+            if(!localLookups.TryGetValue(context, out var lookup))
+            {
+                lookup = new SymbolLookup();
+                localLookups[context] = lookup;
+            }
+
+            return lookup;
         }
 
-        public UnhandledAccessBehaviour UnhandledAccessBehaviour { get; set; }
+        private void RemoveLookup(ICPU context = null)
+        {
+            if(context == null)
+            {
+                globalLookup = new SymbolLookup();
+            }
+            else
+            {
+                localLookups.Remove(context);
+            }
+        }
 
         private void UnregisterInner(IBusPeripheral peripheral)
         {
-            if(mappingsForPeripheral.ContainsKey(peripheral))
-            {
-                foreach(var mapping in mappingsForPeripheral[peripheral])
-                {
-                    UnmapMemory(new Range(mapping.StartingOffset, checked((ulong)mapping.Size)));
-                }
-                mappingsForPeripheral.Remove(peripheral);
-            }
+            RemoveMappingsForPeripheral(peripheral);
 
             // remove the peripheral from all cpu-local and the global mappings
-            foreach(var context in cpuLocalPeripherals.Keys.ToArray())
+            foreach(var context in peripheralsCollectionByContext.GetAllContextKeys())
             {
-                cpuLocalPeripherals[context].Remove(peripheral);
+                peripheralsCollectionByContext[context].Remove(peripheral);
             }
-            globalPeripherals.Remove(peripheral);
+            peripheralsCollectionByContext[null].Remove(peripheral);
         }
 
-        private void UnregisterInner(IBusRegistered<IBusPeripheral> registrationPoint)
+        private void UnregisterInner(IBusRegistered<IBusPeripheral> busRegistered)
         {
-            if(mappingsForPeripheral.ContainsKey(registrationPoint.Peripheral))
+            if(mappingsForPeripheral.ContainsKey(busRegistered.Peripheral))
             {
                 var toRemove = new HashSet<MappedSegmentWrapper>();
                 // it is assumed that mapped segment cannot be partially outside the registration point range
-                foreach(var mapping in mappingsForPeripheral[registrationPoint.Peripheral].Where(x => registrationPoint.RegistrationPoint.Range.Contains(x.StartingOffset)))
+                foreach(var mapping in mappingsForPeripheral[busRegistered.Peripheral].Where(x => busRegistered.RegistrationPoint.Range.Contains(x.StartingOffset)))
                 {
                     UnmapMemory(new Range(mapping.StartingOffset, checked((ulong)mapping.Size)));
                     toRemove.Add(mapping);
                 }
-                mappingsForPeripheral[registrationPoint.Peripheral].RemoveAll(x => toRemove.Contains(x));
-                if(mappingsForPeripheral[registrationPoint.Peripheral].Count == 0)
+                mappingsForPeripheral[busRegistered.Peripheral].RemoveAll(x => toRemove.Contains(x));
+                if(mappingsForPeripheral[busRegistered.Peripheral].Count == 0)
                 {
-                    mappingsForPeripheral.Remove(registrationPoint.Peripheral);
+                    mappingsForPeripheral.Remove(busRegistered.Peripheral);
                 }
             }
-            var perCoreRegistration = registrationPoint as IPerCoreRegistration;
-            if(perCoreRegistration.CPU != null)
-            {
-                cpuLocalPeripherals[perCoreRegistration.CPU].Remove(registrationPoint.RegistrationPoint.Range.StartAddress, registrationPoint.RegistrationPoint.Range.EndAddress);
-            }
-            else
-            {
-                globalPeripherals.Remove(registrationPoint.RegistrationPoint.Range.StartAddress, registrationPoint.RegistrationPoint.Range.EndAddress);
-            }
+            var perCoreRegistration = busRegistered.RegistrationPoint as IBusRegistration;
+            peripheralsCollectionByContext[perCoreRegistration.CPU].Remove(busRegistered.RegistrationPoint.Range.StartAddress, busRegistered.RegistrationPoint.Range.EndAddress);
         }
 
         // this wrapper is to avoid compiler crashing on Ubuntu 20.04;
@@ -1147,21 +1248,26 @@ namespace Antmicro.Renode.Peripherals.Bus
         private IEnumerable<IBusRegistered<IBusPeripheral>> GetPeripheralsForCurrentCPU()
         {
             TryGetCurrentCPU(out var context);
-            return GetPeripheralsForContext(context);
+            return GetAccessiblePeripheralsForContext(context);
         }
 
-        private IEnumerable<IBusRegistered<IBusPeripheral>> GetPeripheralsForContext(ICPU context)
+        /// <summary>
+        /// This method will return all accessible peripherals for the given context.
+        /// This means all peripherals accessible only in the current context, and peripherals accessible globally (from any - `null` - context).
+        /// </summary>
+        private IEnumerable<IBusRegistered<IBusPeripheral>> GetAccessiblePeripheralsForContext(ICPU context)
         {
-            return (context != null)
-                ? cpuLocalPeripherals[context].Peripherals.Concat(globalPeripherals.Peripherals)
-                : globalPeripherals.Peripherals;
+            var locals = peripheralsCollectionByContext[context].Peripherals;
+            return context != null ? locals.Concat(peripheralsCollectionByContext[null].Peripherals) : locals;
         }
 
         private void FillAccessMethodsWithTaggedMethods(IBusPeripheral peripheral, string tag, ref PeripheralAccessMethods methods)
         {
             methods.Peripheral = peripheral;
+            methods.Tag = tag;
 
             var customAccessMethods = new Dictionary<Tuple<BusAccess.Method, BusAccess.Operation>, MethodInfo>();
+            bool noRegion = true;
             foreach(var method in peripheral.GetType().GetMethods())
             {
                 Type signature = null;
@@ -1187,6 +1293,21 @@ namespace Antmicro.Renode.Peripherals.Bus
 
                 customAccessMethods[tuple] = method;
                 methods.SetMethod(method, peripheral, accessOperation, accessMethod);
+                noRegion = false;
+            }
+
+            if(noRegion)
+            {
+                throw new RegistrationException($"No region \"{tag}\" is available for {peripheral}.");
+            }
+
+            foreach(var tuple in customAccessMethods)
+            {
+                var complementingOperation = BusAccess.GetComplementingOperation(tuple.Key.Item2);
+                if(!customAccessMethods.ContainsKey(Tuple.Create(tuple.Key.Item1, complementingOperation)))
+                {
+                    throw new RegistrationException($"{complementingOperation}{tuple.Key.Item1} is not specified for {tag}");
+                }
             }
 
             FillAccessMethodsWithDefaultMethods(peripheral, ref methods);
@@ -1234,6 +1355,13 @@ namespace Antmicro.Renode.Peripherals.Bus
             // We need to pass in Endianess as a default because at this point the peripheral
             // is not yet associated with a machine.
             Endianess periEndianess = peripheral.GetEndianness(Endianess);
+            // Note that the condition for applying ReadByteUsingDoubleWordBigEndian et al is different than the condition
+            // for byte-swapping correctly-sized accesses! The former is needed for all big-endian peripherals, the
+            // latter - only in the cross-endianness case. This is to ensure that on a big-endian bus, reading a byte
+            // at offset 0 from a peripheral that only supports double word access and has a single register with value
+            // 0x11223344 correctly returns 0x11, and not 0x44 as it would if ReadByteUsingDoubleWord were used.
+            var translatedAccessNeedsSwap = Endianess == Endianess.BigEndian;
+            var matchingAccessNeedsSwap = periEndianess != Endianess;
 
             var allowedTranslations = default(AllowedTranslation);
             var allowedTranslationsAttributes = peripheral.GetType().GetCustomAttributes(typeof(AllowedTranslationsAttribute), true);
@@ -1242,43 +1370,81 @@ namespace Antmicro.Renode.Peripherals.Bus
                 allowedTranslations = ((AllowedTranslationsAttribute)allowedTranslationsAttributes[0]).AllowedTranslations;
             }
 
-            if(methods.ReadByte == null) // they are null or not always in pairs
+            // If the CPU endianness does not match the bus endianness, this endianness mismatch
+            // is basically an additional swap. Instead of performing it we reverse the condition.
+            // This is the case on PowerPC, for example: there the translation library is always built
+            // in big-endian mode, and if the CPU is running in little-endian mode, it performs byte
+            // swapping separately. This is to support switching endianness at runtime, but note that
+            // if this is actually done, peripheral accesses will be reversed.
+            if(hasCpuWithMismatchedEndianness)
             {
-                if(bytePeripheral != null)
+                matchingAccessNeedsSwap = !matchingAccessNeedsSwap;
+                translatedAccessNeedsSwap = !translatedAccessNeedsSwap;
+                // Other translation types will behave incorrectly in this case.
+                allowedTranslations &=
+                    AllowedTranslation.ByteToWord | AllowedTranslation.ByteToDoubleWord | AllowedTranslation.ByteToQuadWord |
+                    AllowedTranslation.WordToByte | AllowedTranslation.DoubleWordToByte | AllowedTranslation.QuadWordToByte;
+            }
+
+            // When methods don't have tag, it means they are regular peripheral methods (not regions).
+            // Use peripheral methods for accesses.
+            if(methods.Tag == null)
+            {
+                if(methods.ReadByte == null && bytePeripheral != null)
                 {
                     methods.ReadByte = bytePeripheral.ReadByte;
                     methods.WriteByte = bytePeripheral.WriteByte;
                 }
-                else if(qwordWrapper != null && (allowedTranslations & AllowedTranslation.ByteToQuadWord) != 0)
+                if(methods.ReadWord == null && wordPeripheral != null)
                 {
-                    methods.ReadByte = periEndianess == Endianess.LittleEndian ? (BusAccess.ByteReadMethod)qwordWrapper.ReadByteUsingQword : qwordWrapper.ReadByteUsingQwordBigEndian;
-                    methods.WriteByte = periEndianess == Endianess.LittleEndian ? (BusAccess.ByteWriteMethod)qwordWrapper.WriteByteUsingQword : qwordWrapper.WriteByteUsingQwordBigEndian;
+                    methods.ReadWord = matchingAccessNeedsSwap ? (BusAccess.WordReadMethod)wordPeripheral.ReadWordBigEndian : wordPeripheral.ReadWord;
+                    methods.WriteWord = matchingAccessNeedsSwap ? (BusAccess.WordWriteMethod)wordPeripheral.WriteWordBigEndian : wordPeripheral.WriteWord;
+                }
+                if(methods.ReadDoubleWord == null && dwordPeripheral != null)
+                {
+                    methods.ReadDoubleWord = matchingAccessNeedsSwap ? (BusAccess.DoubleWordReadMethod)dwordPeripheral.ReadDoubleWordBigEndian : dwordPeripheral.ReadDoubleWord;
+                    methods.WriteDoubleWord = matchingAccessNeedsSwap ? (BusAccess.DoubleWordWriteMethod)dwordPeripheral.WriteDoubleWordBigEndian : dwordPeripheral.WriteDoubleWord;
+                }
+                if(methods.ReadQuadWord == null && qwordPeripheral != null)
+                {
+                    methods.ReadQuadWord = matchingAccessNeedsSwap ? (BusAccess.QuadWordReadMethod)qwordPeripheral.ReadQuadWordBigEndian : qwordPeripheral.ReadQuadWord;
+                    methods.WriteQuadWord = matchingAccessNeedsSwap ? (BusAccess.QuadWordWriteMethod)qwordPeripheral.WriteQuadWordBigEndian : qwordPeripheral.WriteQuadWord;
+                }
+            }
+
+            if(methods.ReadByte == null) // they are null or not always in pairs
+            {
+                if(qwordWrapper != null && (allowedTranslations & AllowedTranslation.ByteToQuadWord) != 0)
+                {
+                    methods.ReadByte = translatedAccessNeedsSwap ? (BusAccess.ByteReadMethod)qwordWrapper.ReadByteUsingQuadWordBigEndian : qwordWrapper.ReadByteUsingQuadWord;
+                    methods.WriteByte = translatedAccessNeedsSwap ? (BusAccess.ByteWriteMethod)qwordWrapper.WriteByteUsingQuadWordBigEndian : qwordWrapper.WriteByteUsingQuadWord;
                 }
                 else if(dwordWrapper != null && (allowedTranslations & AllowedTranslation.ByteToDoubleWord) != 0)
                 {
-                    methods.ReadByte = periEndianess == Endianess.LittleEndian ? (BusAccess.ByteReadMethod)dwordWrapper.ReadByteUsingDword : dwordWrapper.ReadByteUsingDwordBigEndian;
-                    methods.WriteByte = periEndianess == Endianess.LittleEndian ? (BusAccess.ByteWriteMethod)dwordWrapper.WriteByteUsingDword : dwordWrapper.WriteByteUsingDwordBigEndian;
+                    methods.ReadByte = translatedAccessNeedsSwap ? (BusAccess.ByteReadMethod)dwordWrapper.ReadByteUsingDoubleWordBigEndian : dwordWrapper.ReadByteUsingDoubleWord;
+                    methods.WriteByte = translatedAccessNeedsSwap ? (BusAccess.ByteWriteMethod)dwordWrapper.WriteByteUsingDoubleWordBigEndian : dwordWrapper.WriteByteUsingDoubleWord;
                 }
                 else if(wordWrapper != null && (allowedTranslations & AllowedTranslation.ByteToWord) != 0)
                 {
-                    methods.ReadByte = periEndianess == Endianess.LittleEndian ? (BusAccess.ByteReadMethod)wordWrapper.ReadByteUsingWord : wordWrapper.ReadByteUsingWordBigEndian;
-                    methods.WriteByte = periEndianess == Endianess.LittleEndian ? (BusAccess.ByteWriteMethod)wordWrapper.WriteByteUsingWord : wordWrapper.WriteByteUsingWordBigEndian;
+                    methods.ReadByte = translatedAccessNeedsSwap ? (BusAccess.ByteReadMethod)wordWrapper.ReadByteUsingWordBigEndian : wordWrapper.ReadByteUsingWord;
+                    methods.WriteByte = translatedAccessNeedsSwap ? (BusAccess.ByteWriteMethod)wordWrapper.WriteByteUsingWordBigEndian : wordWrapper.WriteByteUsingWord;
                 }
                 else if(qwordPeripheral != null && (allowedTranslations & AllowedTranslation.ByteToQuadWord) != 0)
                 {
-                    methods.ReadByte = periEndianess == Endianess.LittleEndian ? (BusAccess.ByteReadMethod)qwordPeripheral.ReadByteUsingQword : qwordPeripheral.ReadByteUsingQwordBigEndian;
-                    methods.WriteByte = periEndianess == Endianess.LittleEndian ? (BusAccess.ByteWriteMethod)qwordPeripheral.WriteByteUsingQword : qwordPeripheral.WriteByteUsingQwordBigEndian;
+                    methods.ReadByte = translatedAccessNeedsSwap ? (BusAccess.ByteReadMethod)qwordPeripheral.ReadByteUsingQuadWordBigEndian : qwordPeripheral.ReadByteUsingQuadWord;
+                    methods.WriteByte = translatedAccessNeedsSwap ? (BusAccess.ByteWriteMethod)qwordPeripheral.WriteByteUsingQuadWordBigEndian : qwordPeripheral.WriteByteUsingQuadWord;
                 }
                 else if(dwordPeripheral != null && (allowedTranslations & AllowedTranslation.ByteToDoubleWord) != 0)
                 {
-                    methods.ReadByte = periEndianess == Endianess.LittleEndian ? (BusAccess.ByteReadMethod)dwordPeripheral.ReadByteUsingDword : dwordPeripheral.ReadByteUsingDwordBigEndian;
-                    methods.WriteByte = periEndianess == Endianess.LittleEndian ? (BusAccess.ByteWriteMethod)dwordPeripheral.WriteByteUsingDword : dwordPeripheral.WriteByteUsingDwordBigEndian;
+                    methods.ReadByte = translatedAccessNeedsSwap ? (BusAccess.ByteReadMethod)dwordPeripheral.ReadByteUsingDoubleWordBigEndian : dwordPeripheral.ReadByteUsingDoubleWord;
+                    methods.WriteByte = translatedAccessNeedsSwap ? (BusAccess.ByteWriteMethod)dwordPeripheral.WriteByteUsingDoubleWordBigEndian : dwordPeripheral.WriteByteUsingDoubleWord;
                 }
                 else if(wordPeripheral != null && (allowedTranslations & AllowedTranslation.ByteToWord) != 0)
                 {
-                    methods.ReadByte = periEndianess == Endianess.LittleEndian ? (BusAccess.ByteReadMethod)wordPeripheral.ReadByteUsingWord : wordPeripheral.ReadByteUsingWordBigEndian;
-                    methods.WriteByte = periEndianess == Endianess.LittleEndian ? (BusAccess.ByteWriteMethod)wordPeripheral.WriteByteUsingWord : wordPeripheral.WriteByteUsingWordBigEndian;
+                    methods.ReadByte = translatedAccessNeedsSwap ? (BusAccess.ByteReadMethod)wordPeripheral.ReadByteUsingWordBigEndian : wordPeripheral.ReadByteUsingWord;
+                    methods.WriteByte = translatedAccessNeedsSwap ? (BusAccess.ByteWriteMethod)wordPeripheral.WriteByteUsingWordBigEndian : wordPeripheral.WriteByteUsingWord;
                 }
+
                 else
                 {
                     methods.ReadByte = peripheral.ReadByteNotTranslated;
@@ -1288,40 +1454,35 @@ namespace Antmicro.Renode.Peripherals.Bus
 
             if(methods.ReadWord == null)
             {
-                if(wordPeripheral != null)
+                if(qwordWrapper != null && (allowedTranslations & AllowedTranslation.WordToQuadWord) != 0)
                 {
-                    methods.ReadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.WordReadMethod)wordPeripheral.ReadWord : wordPeripheral.ReadWordBigEndian;
-                    methods.WriteWord = periEndianess == Endianess.LittleEndian ? (BusAccess.WordWriteMethod)wordPeripheral.WriteWord : wordPeripheral.WriteWordBigEndian;
-                }
-                else if(qwordWrapper != null && (allowedTranslations & AllowedTranslation.WordToQuadWord) != 0)
-                {
-                    methods.ReadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.WordReadMethod)qwordWrapper.ReadWordUsingQword : qwordWrapper.ReadWordUsingQwordBigEndian;
-                    methods.WriteWord = periEndianess == Endianess.LittleEndian ? (BusAccess.WordWriteMethod)qwordWrapper.WriteWordUsingQword : qwordWrapper.WriteWordUsingQwordBigEndian;
+                    methods.ReadWord = translatedAccessNeedsSwap ? (BusAccess.WordReadMethod)qwordWrapper.ReadWordUsingQuadWordBigEndian : qwordWrapper.ReadWordUsingQuadWord;
+                    methods.WriteWord = translatedAccessNeedsSwap ? (BusAccess.WordWriteMethod)qwordWrapper.WriteWordUsingQuadWordBigEndian : qwordWrapper.WriteWordUsingQuadWord;
                 }
                 else if(dwordWrapper != null && (allowedTranslations & AllowedTranslation.WordToDoubleWord) != 0)
                 {
-                    methods.ReadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.WordReadMethod)dwordWrapper.ReadWordUsingDword : dwordWrapper.ReadWordUsingDwordBigEndian;
-                    methods.WriteWord = periEndianess == Endianess.LittleEndian ? (BusAccess.WordWriteMethod)dwordWrapper.WriteWordUsingDword : dwordWrapper.WriteWordUsingDwordBigEndian;
+                    methods.ReadWord = translatedAccessNeedsSwap ? (BusAccess.WordReadMethod)dwordWrapper.ReadWordUsingDoubleWordBigEndian : dwordWrapper.ReadWordUsingDoubleWord;
+                    methods.WriteWord = translatedAccessNeedsSwap ? (BusAccess.WordWriteMethod)dwordWrapper.WriteWordUsingDoubleWordBigEndian : dwordWrapper.WriteWordUsingDoubleWord;
                 }
                 else if(byteWrapper != null && (allowedTranslations & AllowedTranslation.WordToByte) != 0)
                 {
-                    methods.ReadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.WordReadMethod)byteWrapper.ReadWordUsingByte : byteWrapper.ReadWordUsingByteBigEndian;
-                    methods.WriteWord = periEndianess == Endianess.LittleEndian ? (BusAccess.WordWriteMethod)byteWrapper.WriteWordUsingByte : byteWrapper.WriteWordUsingByteBigEndian;
+                    methods.ReadWord = translatedAccessNeedsSwap ? (BusAccess.WordReadMethod)byteWrapper.ReadWordUsingByteBigEndian : byteWrapper.ReadWordUsingByte;
+                    methods.WriteWord = translatedAccessNeedsSwap ? (BusAccess.WordWriteMethod)byteWrapper.WriteWordUsingByteBigEndian : byteWrapper.WriteWordUsingByte;
                 }
                 else if(qwordPeripheral != null && (allowedTranslations & AllowedTranslation.WordToQuadWord) != 0)
                 {
-                    methods.ReadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.WordReadMethod)qwordPeripheral.ReadWordUsingQword : qwordPeripheral.ReadWordUsingQwordBigEndian;
-                    methods.WriteWord = periEndianess == Endianess.LittleEndian ? (BusAccess.WordWriteMethod)qwordPeripheral.WriteWordUsingQword : qwordPeripheral.WriteWordUsingQwordBigEndian;
+                    methods.ReadWord = translatedAccessNeedsSwap ? (BusAccess.WordReadMethod)qwordPeripheral.ReadWordUsingQuadWordBigEndian : qwordPeripheral.ReadWordUsingQuadWord;
+                    methods.WriteWord = translatedAccessNeedsSwap ? (BusAccess.WordWriteMethod)qwordPeripheral.WriteWordUsingQuadWordBigEndian : qwordPeripheral.WriteWordUsingQuadWord;
                 }
                 else if(dwordPeripheral != null && (allowedTranslations & AllowedTranslation.WordToDoubleWord) != 0)
                 {
-                    methods.ReadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.WordReadMethod)dwordPeripheral.ReadWordUsingDword : dwordPeripheral.ReadWordUsingDwordBigEndian;
-                    methods.WriteWord = periEndianess == Endianess.LittleEndian ? (BusAccess.WordWriteMethod)dwordPeripheral.WriteWordUsingDword : dwordPeripheral.WriteWordUsingDwordBigEndian;
+                    methods.ReadWord = translatedAccessNeedsSwap ? (BusAccess.WordReadMethod)dwordPeripheral.ReadWordUsingDoubleWordBigEndian : dwordPeripheral.ReadWordUsingDoubleWord;
+                    methods.WriteWord = translatedAccessNeedsSwap ? (BusAccess.WordWriteMethod)dwordPeripheral.WriteWordUsingDoubleWordBigEndian : dwordPeripheral.WriteWordUsingDoubleWord;
                 }
                 else if(bytePeripheral != null && (allowedTranslations & AllowedTranslation.WordToByte) != 0)
                 {
-                    methods.ReadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.WordReadMethod)bytePeripheral.ReadWordUsingByte : bytePeripheral.ReadWordUsingByteBigEndian;
-                    methods.WriteWord = periEndianess == Endianess.LittleEndian ? (BusAccess.WordWriteMethod)bytePeripheral.WriteWordUsingByte : bytePeripheral.WriteWordUsingByteBigEndian;
+                    methods.ReadWord = translatedAccessNeedsSwap ? (BusAccess.WordReadMethod)bytePeripheral.ReadWordUsingByteBigEndian : bytePeripheral.ReadWordUsingByte;
+                    methods.WriteWord = translatedAccessNeedsSwap ? (BusAccess.WordWriteMethod)bytePeripheral.WriteWordUsingByteBigEndian : bytePeripheral.WriteWordUsingByte;
                 }
                 else
                 {
@@ -1329,49 +1490,43 @@ namespace Antmicro.Renode.Peripherals.Bus
                     methods.WriteWord = peripheral.WriteWordNotTranslated;
                 }
             }
-            else if(periEndianess == Endianess.BigEndian)
+            else if(matchingAccessNeedsSwap && wordWrapper != null)
             {
-                // if methods.ReadWord != null then we have a wordWrapper
                 methods.ReadWord = (BusAccess.WordReadMethod)wordWrapper.ReadWordBigEndian;
                 methods.WriteWord = (BusAccess.WordWriteMethod)wordWrapper.WriteWordBigEndian;
             }
 
             if(methods.ReadDoubleWord == null)
             {
-                if(dwordPeripheral != null)
+                if(qwordWrapper != null && (allowedTranslations & AllowedTranslation.DoubleWordToQuadWord) != 0)
                 {
-                    methods.ReadDoubleWord = periEndianess == Endianess.LittleEndian ? (BusAccess.DoubleWordReadMethod)dwordPeripheral.ReadDoubleWord : dwordPeripheral.ReadDoubleWordBigEndian;
-                    methods.WriteDoubleWord = periEndianess == Endianess.LittleEndian ? (BusAccess.DoubleWordWriteMethod)dwordPeripheral.WriteDoubleWord : dwordPeripheral.WriteDoubleWordBigEndian;
-                }
-                else if(qwordWrapper != null && (allowedTranslations & AllowedTranslation.DoubleWordToQuadWord) != 0)
-                {
-                    methods.ReadDoubleWord = periEndianess == Endianess.LittleEndian ? (BusAccess.DoubleWordReadMethod)qwordWrapper.ReadDoubleWordUsingQword : qwordWrapper.ReadDoubleWordUsingQwordBigEndian;
-                    methods.WriteDoubleWord = periEndianess == Endianess.LittleEndian ? (BusAccess.DoubleWordWriteMethod)qwordWrapper.WriteDoubleWordUsingQword : qwordWrapper.WriteDoubleWordUsingQwordBigEndian;
+                    methods.ReadDoubleWord = translatedAccessNeedsSwap ? (BusAccess.DoubleWordReadMethod)qwordWrapper.ReadDoubleWordUsingQuadWordBigEndian : qwordWrapper.ReadDoubleWordUsingQuadWord;
+                    methods.WriteDoubleWord = translatedAccessNeedsSwap ? (BusAccess.DoubleWordWriteMethod)qwordWrapper.WriteDoubleWordUsingQuadWordBigEndian : qwordWrapper.WriteDoubleWordUsingQuadWord;
                 }
                 else if(wordWrapper != null && (allowedTranslations & AllowedTranslation.DoubleWordToWord) != 0)
                 {
-                    methods.ReadDoubleWord = periEndianess == Endianess.LittleEndian ? (BusAccess.DoubleWordReadMethod)wordWrapper.ReadDoubleWordUsingWord : wordWrapper.ReadDoubleWordUsingWordBigEndian;
-                    methods.WriteDoubleWord = periEndianess == Endianess.LittleEndian ? (BusAccess.DoubleWordWriteMethod)wordWrapper.WriteDoubleWordUsingWord : wordWrapper.WriteDoubleWordUsingWordBigEndian;
+                    methods.ReadDoubleWord = translatedAccessNeedsSwap ? (BusAccess.DoubleWordReadMethod)wordWrapper.ReadDoubleWordUsingWordBigEndian : wordWrapper.ReadDoubleWordUsingWord;
+                    methods.WriteDoubleWord = translatedAccessNeedsSwap ? (BusAccess.DoubleWordWriteMethod)wordWrapper.WriteDoubleWordUsingWordBigEndian : wordWrapper.WriteDoubleWordUsingWord;
                 }
                 else if(byteWrapper != null && (allowedTranslations & AllowedTranslation.DoubleWordToByte) != 0)
                 {
-                    methods.ReadDoubleWord = periEndianess == Endianess.LittleEndian ? (BusAccess.DoubleWordReadMethod)byteWrapper.ReadDoubleWordUsingByte : byteWrapper.ReadDoubleWordUsingByteBigEndian;
-                    methods.WriteDoubleWord = periEndianess == Endianess.LittleEndian ? (BusAccess.DoubleWordWriteMethod)byteWrapper.WriteDoubleWordUsingByte : byteWrapper.WriteDoubleWordUsingByteBigEndian;
+                    methods.ReadDoubleWord = translatedAccessNeedsSwap ? (BusAccess.DoubleWordReadMethod)byteWrapper.ReadDoubleWordUsingByteBigEndian : byteWrapper.ReadDoubleWordUsingByte;
+                    methods.WriteDoubleWord = translatedAccessNeedsSwap ? (BusAccess.DoubleWordWriteMethod)byteWrapper.WriteDoubleWordUsingByteBigEndian : byteWrapper.WriteDoubleWordUsingByte;
                 }
                 else if(qwordPeripheral != null && (allowedTranslations & AllowedTranslation.DoubleWordToQuadWord) != 0)
                 {
-                    methods.ReadDoubleWord = periEndianess == Endianess.LittleEndian ? (BusAccess.DoubleWordReadMethod)qwordPeripheral.ReadDoubleWordUsingQword : qwordPeripheral.ReadDoubleWordUsingQwordBigEndian;
-                    methods.WriteDoubleWord = periEndianess == Endianess.LittleEndian ? (BusAccess.DoubleWordWriteMethod)qwordPeripheral.WriteDoubleWordUsingQword : qwordPeripheral.WriteDoubleWordUsingQwordBigEndian;
+                    methods.ReadDoubleWord = translatedAccessNeedsSwap ? (BusAccess.DoubleWordReadMethod)qwordPeripheral.ReadDoubleWordUsingQuadWordBigEndian : qwordPeripheral.ReadDoubleWordUsingQuadWord;
+                    methods.WriteDoubleWord = translatedAccessNeedsSwap ? (BusAccess.DoubleWordWriteMethod)qwordPeripheral.WriteDoubleWordUsingQuadWordBigEndian : qwordPeripheral.WriteDoubleWordUsingQuadWord;
                 }
                 else if(wordPeripheral != null && (allowedTranslations & AllowedTranslation.DoubleWordToWord) != 0)
                 {
-                    methods.ReadDoubleWord = periEndianess == Endianess.LittleEndian ? (BusAccess.DoubleWordReadMethod)wordPeripheral.ReadDoubleWordUsingWord : wordPeripheral.ReadDoubleWordUsingWordBigEndian;
-                    methods.WriteDoubleWord = periEndianess == Endianess.LittleEndian ? (BusAccess.DoubleWordWriteMethod)wordPeripheral.WriteDoubleWordUsingWord : wordPeripheral.WriteDoubleWordUsingWordBigEndian;
+                    methods.ReadDoubleWord = translatedAccessNeedsSwap ? (BusAccess.DoubleWordReadMethod)wordPeripheral.ReadDoubleWordUsingWordBigEndian : wordPeripheral.ReadDoubleWordUsingWord;
+                    methods.WriteDoubleWord = translatedAccessNeedsSwap ? (BusAccess.DoubleWordWriteMethod)wordPeripheral.WriteDoubleWordUsingWordBigEndian : wordPeripheral.WriteDoubleWordUsingWord;
                 }
                 else if(bytePeripheral != null && (allowedTranslations & AllowedTranslation.DoubleWordToByte) != 0)
                 {
-                    methods.ReadDoubleWord = periEndianess == Endianess.LittleEndian ? (BusAccess.DoubleWordReadMethod)bytePeripheral.ReadDoubleWordUsingByte : bytePeripheral.ReadDoubleWordUsingByteBigEndian;
-                    methods.WriteDoubleWord = periEndianess == Endianess.LittleEndian ? (BusAccess.DoubleWordWriteMethod)bytePeripheral.WriteDoubleWordUsingByte : bytePeripheral.WriteDoubleWordUsingByteBigEndian;
+                    methods.ReadDoubleWord = translatedAccessNeedsSwap ? (BusAccess.DoubleWordReadMethod)bytePeripheral.ReadDoubleWordUsingByteBigEndian : bytePeripheral.ReadDoubleWordUsingByte;
+                    methods.WriteDoubleWord = translatedAccessNeedsSwap ? (BusAccess.DoubleWordWriteMethod)bytePeripheral.WriteDoubleWordUsingByteBigEndian : bytePeripheral.WriteDoubleWordUsingByte;
                 }
                 else
                 {
@@ -1379,48 +1534,42 @@ namespace Antmicro.Renode.Peripherals.Bus
                     methods.WriteDoubleWord = peripheral.WriteDoubleWordNotTranslated;
                 }
             }
-            else if(periEndianess == Endianess.BigEndian)
+            else if(matchingAccessNeedsSwap && dwordWrapper != null)
             {
-                // if methods.ReadDoubleWord != null then we have a dwordWrapper
                 methods.ReadDoubleWord = (BusAccess.DoubleWordReadMethod)dwordWrapper.ReadDoubleWordBigEndian;
                 methods.WriteDoubleWord = (BusAccess.DoubleWordWriteMethod)dwordWrapper.WriteDoubleWordBigEndian;
             }
             if(methods.ReadQuadWord == null)
             {
-                if(qwordPeripheral != null)
+                if(dwordWrapper != null && (allowedTranslations & AllowedTranslation.QuadWordToDoubleWord) != 0)
                 {
-                    methods.ReadQuadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.QuadWordReadMethod)qwordPeripheral.ReadQuadWord : qwordPeripheral.ReadQuadWordBigEndian;
-                    methods.WriteQuadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.QuadWordWriteMethod)qwordPeripheral.WriteQuadWord : qwordPeripheral.WriteQuadWordBigEndian;
-                }
-                else if(dwordWrapper != null && (allowedTranslations & AllowedTranslation.QuadWordToDoubleWord) != 0)
-                {
-                    methods.ReadQuadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.QuadWordReadMethod)dwordWrapper.ReadQuadWordUsingDword : dwordWrapper.ReadQuadWordUsingDwordBigEndian;
-                    methods.WriteQuadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.QuadWordWriteMethod)dwordWrapper.WriteQuadWordUsingDword : dwordWrapper.WriteQuadWordUsingDwordBigEndian;
+                    methods.ReadQuadWord = translatedAccessNeedsSwap ? (BusAccess.QuadWordReadMethod)dwordWrapper.ReadQuadWordUsingDoubleWordBigEndian : dwordWrapper.ReadQuadWordUsingDoubleWord;
+                    methods.WriteQuadWord = translatedAccessNeedsSwap ? (BusAccess.QuadWordWriteMethod)dwordWrapper.WriteQuadWordUsingDoubleWordBigEndian : dwordWrapper.WriteQuadWordUsingDoubleWord;
                 }
                 else if(wordWrapper != null && (allowedTranslations & AllowedTranslation.QuadWordToWord) != 0)
                 {
-                    methods.ReadQuadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.QuadWordReadMethod)wordWrapper.ReadQuadWordUsingWord : wordWrapper.ReadQuadWordUsingWordBigEndian;
-                    methods.WriteQuadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.QuadWordWriteMethod)wordWrapper.WriteQuadWordUsingWord : wordWrapper.WriteQuadWordUsingWordBigEndian;
+                    methods.ReadQuadWord = translatedAccessNeedsSwap ? (BusAccess.QuadWordReadMethod)wordWrapper.ReadQuadWordUsingWordBigEndian : wordWrapper.ReadQuadWordUsingWord;
+                    methods.WriteQuadWord = translatedAccessNeedsSwap ? (BusAccess.QuadWordWriteMethod)wordWrapper.WriteQuadWordUsingWordBigEndian : wordWrapper.WriteQuadWordUsingWord;
                 }
                 else if(byteWrapper != null && (allowedTranslations & AllowedTranslation.QuadWordToByte) != 0)
                 {
-                    methods.ReadQuadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.QuadWordReadMethod)byteWrapper.ReadQuadWordUsingByte : byteWrapper.ReadQuadWordUsingByteBigEndian;
-                    methods.WriteQuadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.QuadWordWriteMethod)byteWrapper.WriteQuadWordUsingByte : byteWrapper.WriteQuadWordUsingByteBigEndian;
+                    methods.ReadQuadWord = translatedAccessNeedsSwap ? (BusAccess.QuadWordReadMethod)byteWrapper.ReadQuadWordUsingByteBigEndian : byteWrapper.ReadQuadWordUsingByte;
+                    methods.WriteQuadWord = translatedAccessNeedsSwap ? (BusAccess.QuadWordWriteMethod)byteWrapper.WriteQuadWordUsingByteBigEndian : byteWrapper.WriteQuadWordUsingByte;
                 }
                 else if(dwordPeripheral != null && (allowedTranslations & AllowedTranslation.QuadWordToDoubleWord) != 0)
                 {
-                    methods.ReadQuadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.QuadWordReadMethod)dwordPeripheral.ReadQuadWordUsingDword : dwordPeripheral.ReadQuadWordUsingDwordBigEndian;
-                    methods.WriteQuadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.QuadWordWriteMethod)dwordPeripheral.WriteQuadWordUsingDword : dwordPeripheral.WriteQuadWordUsingDwordBigEndian;
+                    methods.ReadQuadWord = translatedAccessNeedsSwap ? (BusAccess.QuadWordReadMethod)dwordPeripheral.ReadQuadWordUsingDoubleWordBigEndian : dwordPeripheral.ReadQuadWordUsingDoubleWord;
+                    methods.WriteQuadWord = translatedAccessNeedsSwap ? (BusAccess.QuadWordWriteMethod)dwordPeripheral.WriteQuadWordUsingDoubleWordBigEndian : dwordPeripheral.WriteQuadWordUsingDoubleWord;
                 }
                 else if(wordPeripheral != null && (allowedTranslations & AllowedTranslation.QuadWordToWord) != 0)
                 {
-                    methods.ReadQuadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.QuadWordReadMethod)wordPeripheral.ReadQuadWordUsingWord : wordPeripheral.ReadQuadWordUsingWordBigEndian;
-                    methods.WriteQuadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.QuadWordWriteMethod)wordPeripheral.WriteQuadWordUsingWord : wordPeripheral.WriteQuadWordUsingWordBigEndian;
+                    methods.ReadQuadWord = translatedAccessNeedsSwap ? (BusAccess.QuadWordReadMethod)wordPeripheral.ReadQuadWordUsingWordBigEndian : wordPeripheral.ReadQuadWordUsingWord;
+                    methods.WriteQuadWord = translatedAccessNeedsSwap ? (BusAccess.QuadWordWriteMethod)wordPeripheral.WriteQuadWordUsingWordBigEndian : wordPeripheral.WriteQuadWordUsingWord;
                 }
                 else if(bytePeripheral != null && (allowedTranslations & AllowedTranslation.QuadWordToByte) != 0)
                 {
-                    methods.ReadQuadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.QuadWordReadMethod)bytePeripheral.ReadQuadWordUsingByte : bytePeripheral.ReadQuadWordUsingByteBigEndian;
-                    methods.WriteQuadWord = periEndianess == Endianess.LittleEndian ? (BusAccess.QuadWordWriteMethod)bytePeripheral.WriteQuadWordUsingByte : bytePeripheral.WriteQuadWordUsingByteBigEndian;
+                    methods.ReadQuadWord = translatedAccessNeedsSwap ? (BusAccess.QuadWordReadMethod)bytePeripheral.ReadQuadWordUsingByteBigEndian : bytePeripheral.ReadQuadWordUsingByte;
+                    methods.WriteQuadWord = translatedAccessNeedsSwap ? (BusAccess.QuadWordWriteMethod)bytePeripheral.WriteQuadWordUsingByteBigEndian : bytePeripheral.WriteQuadWordUsingByte;
                 }
                 else
                 {
@@ -1428,33 +1577,38 @@ namespace Antmicro.Renode.Peripherals.Bus
                     methods.WriteQuadWord = peripheral.WriteQuadWordNotTranslated;
                 }
             }
-            else if(periEndianess == Endianess.BigEndian)
+            else if(matchingAccessNeedsSwap && qwordWrapper != null)
             {
-                // if methods.ReadQuadWord != null then we have a qwordWrapper
                 methods.ReadQuadWord = (BusAccess.QuadWordReadMethod)qwordWrapper.ReadQuadWordBigEndian;
                 methods.WriteQuadWord = (BusAccess.QuadWordWriteMethod)qwordWrapper.WriteQuadWordBigEndian;
             }
+        }
 
-            peripheralRegistered = true;
+        private void UpdateAccessMethods()
+        {
+            foreach(var peripherals in allPeripherals)
+            {
+                peripherals.VisitAccessMethods(null, pam =>
+                {
+                    if(pam.Tag != null)
+                    {
+                        FillAccessMethodsWithTaggedMethods(pam.Peripheral, pam.Tag, ref pam);
+                    }
+                    else
+                    {
+                        FillAccessMethodsWithDefaultMethods(pam.Peripheral, ref pam);
+                    }
+                    return pam;
+                });
+            }
         }
 
         private void RegisterInner(IBusPeripheral peripheral, PeripheralAccessMethods methods, BusRangeRegistration registrationPoint, ICPU context)
         {
-            PeripheralCollection peripherals = null;
-
-            using(Machine.ObtainPausedState())
+            using(Machine.ObtainPausedState(true))
             {
-                // Register only for the selected core
-                if(context != null)
-                {
-                    peripherals = cpuLocalPeripherals[context];
-                }
-                else
-                {
-                    peripherals = globalPeripherals;
-                }
-
-                var intersecting = GetPeripheralsForContext(context).FirstOrDefault(x => x.RegistrationPoint.Range.Intersects(registrationPoint.Range));
+                var busRegisteredInContext = peripheralsCollectionByContext[context].Peripherals;
+                var intersecting = busRegisteredInContext.FirstOrDefault(x => x.RegistrationPoint.Range.Intersects(registrationPoint.Range));
                 if(intersecting != null)
                 {
                     throw new RegistrationException($"Given address {registrationPoint.Range} for peripheral {peripheral} conflicts with address {intersecting.RegistrationPoint.Range} of peripheral {intersecting.Peripheral}", "address");
@@ -1462,25 +1616,83 @@ namespace Antmicro.Renode.Peripherals.Bus
 
                 var registeredPeripheral = new BusRegistered<IBusPeripheral>(peripheral, registrationPoint);
 
+                if(IsAddressRangeLocked(registrationPoint.Range, context))
+                {
+                    // If it's impossible to re-lock the range, the peripheral can't be registered
+                    if(!CanRangeBeLocked(registrationPoint.Range, context, out var _, out var __))
+                    {
+                        throw new RegistrationException($"Cannot register peripheral {peripheral} on locked range {registrationPoint.Range}");
+                    }
+                }
+
                 // we also have to put missing methods
                 var absoluteAddressAware = peripheral as IAbsoluteAddressAware;
                 if(absoluteAddressAware != null)
                 {
                     methods.SetAbsoluteAddress = absoluteAddressAware.SetAbsoluteAddress;
                 }
-                peripherals.Add(registrationPoint.Range.StartAddress, registrationPoint.Range.EndAddress + 1, registeredPeripheral, methods);
+                peripheralsCollectionByContext[context].Add(registrationPoint.Range.StartAddress, registrationPoint.Range.EndAddress + 1, registeredPeripheral, methods);
                 // let's add new mappings
-                var mappedPeripheral = peripheral as IMapped;
-                var cpuWithMappedMemory = context as ICPUWithMappedMemory;
-                if(mappedPeripheral != null)
+                AddMappingsForPeripheral(peripheral, registrationPoint, context);
+                // After adding new mappings, if the address range is locked, the mappings possibly have to be modified/unmapped on the CPU's side
+                // RelockRange to make this happen
+                if(IsAddressRangeLocked(registrationPoint.Range, context))
                 {
-                    var segments = mappedPeripheral.MappedSegments;
-                    var mappings = segments.Select(x => FromRegistrationPointToSegmentWrapper(x, registrationPoint, cpuWithMappedMemory)).Where(x => x != null);
-                    AddMappings(mappings, peripheral);
+                    // We've checked before if the range can be locked, so this should succeed
+                    RelockRange(registrationPoint.Range, true, context);
                 }
                 Machine.RegisterAsAChildOf(this, peripheral, registrationPoint);
                 Machine.RegisterBusController(peripheral, this);
             }
+
+            peripheralRegistered = true;
+        }
+
+        /// <summary>
+        /// This method can be used to re-trigger locking/unlocking actions on a range which is already registered as locked.
+        /// This is useful when adding or relocating peripherals to the locked range.
+        /// <summary>
+        /// <remarks>
+        /// Locking should almost always be done by calling <see cref="SetAddressRangeLocked"/> 
+        /// since this method doesn't update locked ranges and so should be used with caution.
+        /// </remarks>
+        private void RelockRange(Range range, bool locked, ICPU context)
+        {
+            using(Machine.ObtainPausedState(internalPause: true))
+            {
+                var cpusWithMappedMemory = idByCpu.Keys.OfType<ICPUWithMappedMemory>();
+                if(cpusWithMappedMemory.Any())
+                {
+                    if(!CanRangeBeLocked(range, context, out var mappedInRange, out var onlyPartiallyInRange))
+                    {
+                        throw new RecoverableException(
+                            $"Mapped peripherals registered at the given range {range} have to be fully included:\n"
+                            + $"* {string.Join("\n* ", onlyPartiallyInRange)}"
+                        );
+                    }
+
+                    foreach(var busRegistered in mappedInRange)
+                    {
+                        var registrationContext = busRegistered.RegistrationPoint.CPU;
+                        var registrationRange = busRegistered.RegistrationPoint.Range;
+                        foreach(var cpu in GetCPUsForContext<ICPUWithMappedMemory>(registrationContext))
+                        {
+                            // There's no need to remove mappings from `mappingsForPeripheral`.
+                            // They're only used when a new ICPUWithMappedMemory gets registered
+                            // which isn't possible after `mappingsRemoved` is set in `UnmapMemory`.
+                            cpu.SetMappedMemoryEnabled(registrationRange, enabled: !locked);
+                        }
+                    }
+                }
+            }
+        }
+
+        private bool CanRangeBeLocked(Range range, ICPU context, out IEnumerable<IBusRegistered<IMapped>> mappedInRange, out IEnumerable<IBusRegistered<IMapped>> onlyPartiallyInRange)
+        {
+            mappedInRange = GetMappedPeripherals(context).Where(x => x.RegistrationPoint.Range.Intersects(range));
+            // Only allow including whole registration range of IMapped peripherals.
+            onlyPartiallyInRange = mappedInRange.Where(x => !range.Contains(x.RegistrationPoint.Range));
+            return !onlyPartiallyInRange.Any();
         }
 
         private IEnumerable<PeripheralLookupResult> FindTargets(ulong address, ulong count, ICPU context = null)
@@ -1497,7 +1709,7 @@ namespace Antmicro.Renode.Peripherals.Bus
                     var holeStart = currentPosition;
                     // we can omit part of the array
                     // but how much?
-                    var nextPeripheral = GetPeripheralsForContext(context).OrderBy(x => x.RegistrationPoint.Range.StartAddress).FirstOrDefault(x => x.RegistrationPoint.Range.StartAddress > currentPosition);
+                    var nextPeripheral = GetAccessiblePeripheralsForContext(context).OrderBy(x => x.RegistrationPoint.Range.StartAddress).FirstOrDefault(x => x.RegistrationPoint.Range.StartAddress > currentPosition);
                     if(nextPeripheral == null)
                     {
                         // hole reaches the end of the required range
@@ -1545,23 +1757,6 @@ namespace Antmicro.Renode.Peripherals.Bus
             }
         }
 
-        private static IELF GetELFFromFile(ReadFilePath fileName)
-        {
-            try
-            {
-                if(!ELFReader.TryLoad(fileName, out var result))
-                {
-                    throw new RecoverableException($"Could not load ELF from path: {fileName}");
-                }
-                return result;
-            }
-            catch(Exception e)
-            {
-                // ELF creating exception are recoverable in the sense of emulator state
-                throw new RecoverableException(string.Format("Error while loading ELF: {0}.", e.Message), e);
-            }
-        }
-
         private void ClearAll()
         {
             lock(cpuSync)
@@ -1603,11 +1798,12 @@ namespace Antmicro.Renode.Peripherals.Bus
             hooksOnRead.Clear();
             hooksOnWrite.Clear();
             pcCache.Invalidate();
-            Lookup = new SymbolLookup();
+            globalLookup = new SymbolLookup();
+            localLookups = new Dictionary<ICPU, SymbolLookup>();
             cachedCpuId = new ThreadLocal<int>();
-            globalPeripherals = new PeripheralCollection(this);
-            cpuLocalPeripherals = new Dictionary<ICPU, PeripheralCollection>();
+            peripheralsCollectionByContext = new ContextKeyDictionary<PeripheralCollection>(new PeripheralCollection(this));
             lockedPeripherals = new HashSet<IPeripheral>();
+            lockedRangesCollectionByContext = new ContextKeyDictionary<MinimalRangesCollection>(new MinimalRangesCollection());
             mappingsForPeripheral = new Dictionary<IBusPeripheral, List<MappedSegmentWrapper>>();
             tags = new Dictionary<Range, TagEntry>();
             svdDevices = new List<SVDParser>();
@@ -1623,7 +1819,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         private void AddMappings(IEnumerable<MappedSegmentWrapper> newMappings, IBusPeripheral owner)
         {
-            using(Machine.ObtainPausedState())
+            using(Machine.ObtainPausedState(true))
             {
                 lock(cpuSync)
                 {
@@ -1639,32 +1835,64 @@ namespace Antmicro.Renode.Peripherals.Bus
                     // Old mappings are given to the CPU in the moment of its registration.
                     foreach(var mapping in mappingsList)
                     {
-                        if(mapping.Context != null)
+                        foreach(var cpu in GetCPUsForContext<ICPUWithMappedMemory>(mapping.Context))
                         {
-                            mapping.Context.MapMemory(mapping);
-                        }
-                        else
-                        {
-                            foreach(var cpu in idByCpu.Keys.OfType<ICPUWithMappedMemory>())
-                            {
-                                cpu.MapMemory(mapping);
-                            }
+                            cpu.MapMemory(mapping);
                         }
                     }
                 }
             }
         }
 
+        private void AddMappingsForPeripheral(IBusPeripheral peripheral, BusRangeRegistration registrationPoint, ICPU context)
+        {
+            var mappedPeripheral = peripheral as IMapped;
+            if(mappedPeripheral == null) // The context can be null to map it globally
+            {
+                return;
+            }
+            var cpuWithMappedMemory = context as ICPUWithMappedMemory;
+            var segments = mappedPeripheral.MappedSegments;
+            var mappings = segments.Select(x => FromRegistrationPointToSegmentWrapper(x, registrationPoint, cpuWithMappedMemory)).Where(x => x != null);
+            AddMappings(mappings, mappedPeripheral);
+        }
+
+        private void UnregisterAccessFlags(BusRangeRegistration registrationPoint, ICPU context)
+        {
+            foreach(var cpu in GetCPUsForContext<ICPUWithMappedMemory>(context))
+            {
+                var range = registrationPoint.Range;
+                cpu.RegisterAccessFlags(range.StartAddress, range.Size);
+            }
+        }
+
+        private bool RemoveMappingsForPeripheral(IBusPeripheral peripheral)
+        {
+            if(!mappingsForPeripheral.ContainsKey(peripheral))
+            {
+                return false;
+            }
+            foreach(var mapping in mappingsForPeripheral[peripheral])
+            {
+                UnmapMemory(new Range(mapping.StartingOffset, mapping.Size));
+            }
+            mappingsForPeripheral.Remove(peripheral);
+            return true;
+        }
+
         private string TryGetTag(ulong address, out ulong defaultValue)
         {
-            var tag = tags.FirstOrDefault(x => x.Key.Contains(address));
-            defaultValue = default(ulong);
-            if(tag.Key == Range.Empty)
+            // The `return` inside is intentional; we just want to find the first tag.
+            // `FirstOrDefault` isn't used cause the default `Range` is a valid `<0, 0>` range.
+            // `Any` + `First` aren't used to avoid analyzing `tags` keys up to the matching one twice.
+            // `ToArray` isn't used to avoid analyzing all `tags` keys since we only use the first one.
+            foreach(var tag in tags.Where(x => x.Key.Contains(address)).Select(x => x.Value))
             {
-                return null;
+                defaultValue = tag.DefaultValue;
+                return tag.Name;
             }
-            defaultValue = tag.Value.DefaultValue;
-            return tag.Value.Name;
+            defaultValue = default(ulong);
+            return null;
         }
 
         private string EnterTag(string str, ulong address, out bool tagEntered, out ulong defaultValue)
@@ -1768,15 +1996,92 @@ namespace Antmicro.Renode.Peripherals.Bus
             return new MappedSegmentWrapper(segment, registrationPoint.Range.StartAddress - registrationPoint.Offset, desiredSize, context);
         }
 
-        private IEnumerable<PeripheralCollection> allPeripherals => cpuLocalPeripherals.Values.Concat(new [] { globalPeripherals }).Distinct();
+        private IEnumerable<PeripheralCollection> allPeripherals => peripheralsCollectionByContext.GetAllDistinctValues();
 
-        private PeripheralCollection globalPeripherals;
-        private Dictionary<ICPU, PeripheralCollection> cpuLocalPeripherals;
         private ISet<IPeripheral> lockedPeripherals;
+
+        private ContextKeyDictionary<PeripheralCollection> peripheralsCollectionByContext;
+        private ContextKeyDictionary<MinimalRangesCollection> lockedRangesCollectionByContext;
+
+        // It doesn't implement IDictionary because serialization doesn't work correctly for dictionaries without two generic parameters.
+        private class ContextKeyDictionary<TValue> where TValue : class
+        {
+            public ContextKeyDictionary(TValue globalValue)
+            {
+                this.globalValue = globalValue;
+            }
+
+            public void RemoveContextKey(ICPU key)
+            {
+                if(key == null || !cpuLocalValues.ContainsKey(key))
+                {
+                    throw new KeyNotFoundException($"Key: {key} is null or doesn't exist");
+                }
+                cpuLocalValues.Remove(key);
+            }
+
+            public TValue this[ICPU key]
+            {
+                get => GetValue(key);
+                set
+                {
+                    if(key == null)
+                    {
+                        throw new InvalidOperationException($"Cannot modify {nameof(globalValue)}");
+                    }
+                    else
+                    {
+                        cpuLocalValues[key] = value;
+                    }
+                }
+            }
+
+            public TValue GetValue(ICPU key)
+            {
+                if(!TryGetValue(key, out var value))
+                {
+                    throw new KeyNotFoundException($"{typeof(TValue).Name} not found for the given CPU: {key.GetName()}");
+                }
+                return value;
+            }
+
+            public IEnumerable<TValue> GetAllDistinctValues()
+            {
+                return cpuLocalValues.Values.Concat(new [] { globalValue }).Distinct();
+            }
+
+            public IEnumerable<ICPU> GetAllContextKeys()
+            {
+                return cpuLocalValues.Keys;
+            }
+
+            private bool TryGetValue(ICPU key, out TValue value)
+            {
+                if(key == null)
+                {
+                    value = globalValue;
+                }
+                else if(cpuLocalValues.TryGetValue(key, out var cpuLocalValue))
+                {
+                    value = cpuLocalValue;
+                }
+                else
+                {
+                    value = default(TValue);
+                    return false;
+                }
+                return true;
+            }
+
+            private readonly Dictionary<ICPU, TValue> cpuLocalValues = new Dictionary<ICPU, TValue>();
+            private readonly TValue globalValue;
+        }
+
         private Dictionary<IBusPeripheral, List<MappedSegmentWrapper>> mappingsForPeripheral;
         private bool mappingsRemoved;
         private bool peripheralRegistered;
         private Endianess endianess;
+        private bool hasCpuWithMismatchedEndianness;
         private readonly Dictionary<ICPU, int> idByCpu;
         private readonly Dictionary<int, ICPU> cpuById;
         private readonly Dictionary<ulong, List<BusHookHandler>> hooksOnRead;
@@ -1787,6 +2092,8 @@ namespace Antmicro.Renode.Peripherals.Bus
         [Transient]
         private ThreadLocalContext threadLocalContext;
         private object cpuSync;
+        private SymbolLookup globalLookup;
+        private Dictionary<ICPU, SymbolLookup> localLookups;
         private Dictionary<Range, TagEntry> tags;
         private List<SVDParser> svdDevices;
         private HashSet<string> pausingTags;
@@ -1795,8 +2102,6 @@ namespace Antmicro.Renode.Peripherals.Bus
         private const string NonExistingWrite = "Write{2} to non existing peripheral at 0x{0:X}, value 0x{1:X}.";
         private const string IOExceptionMessage = "I/O error while loading ELF: {0}.";
         private const string CantFindCpuIdMessage = "Can't verify current CPU in the given context.";
-        private const bool Overlap = true;
-        // TODO
 
         private int unexpectedReads;
         private int unexpectedWrites;
@@ -1933,7 +2238,7 @@ namespace Antmicro.Renode.Peripherals.Bus
                     return emptyDisposable;
                 }
                 var previousContext = context.Value;
-                context.Value = parent.GetCPUId(cpu);
+                context.Value = parent.GetCPUSlot(cpu);
                 return DisposableWrapper.New(() =>
                 {
                     context.Value = previousContext;

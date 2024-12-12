@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -48,7 +48,6 @@ namespace Antmicro.Renode.Utilities
                 bus.WriteDoubleWord(addr, elem);
                 addr += 4;
             }
-
         }
 
         public static void LoadFdt(this IBusController sysbus, string file, ulong address, string bootargs = null, bool append = true, string disabledNodes = "", ICPU context = null)
@@ -113,11 +112,17 @@ namespace Antmicro.Renode.Utilities
             sysbus.WriteBytes(fdtBlob, address, true, context);
         }
 
+        public static void WriteASCIIString(this IBusController sysbus, ulong address, string stringToLoad, ICPU context = null)
+        {
+            sysbus.WriteBytes(Encoding.ASCII.GetBytes(stringToLoad), address, true, context);
+        }
+
         public static Dictionary<PeripheralTreeEntry, IEnumerable<IRegistrationPoint>> GetPeripheralsWithAllRegistrationPoints(this IMachine machine)
         {
             var result = new Dictionary<PeripheralTreeEntry, IEnumerable<IRegistrationPoint>>();
 
             var peripheralEntries = machine.GetRegisteredPeripherals().ToArray();
+            var sysbusEntry = peripheralEntries.First(x => x.Name == Machine.SystemBusName).Peripheral;
             foreach(var entryList in peripheralEntries.OrderBy(x => x.Name).GroupBy(x => x.Peripheral))
             {
                 var uniqueEntryList = entryList.DistinctBy(x => x.RegistrationPoint).ToArray();
@@ -125,6 +130,16 @@ namespace Antmicro.Renode.Utilities
                 if(entry != null)
                 {
                     result.Add(entry, uniqueEntryList.Select(x => x.RegistrationPoint).ToList());
+                }
+                // The peripherals command will not print the entry under sysbus if its first occurence in entryList is not directly a child of sysbus.
+                // This check prevents loosing sysbus registration info in peripherals command output.
+                if(entry.Parent != sysbusEntry)
+                {
+                    entry = uniqueEntryList.FirstOrDefault(x => x.Parent == sysbusEntry);
+                    if(entry != null)
+                    {
+                        result.Add(entry, uniqueEntryList.Where(x => x.Parent == sysbusEntry).Select(x => x.RegistrationPoint).ToList());
+                    }
                 }
             }
 

@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2022 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -8,6 +8,9 @@
 using Antmicro.Migrant;
 using System.IO;
 using System;
+using System.Collections.Generic;
+using System.IO.Compression;
+using System.Text;
 using Antmicro.Renode.Exceptions;
 using IronPython.Runtime;
 using Antmicro.Renode.Peripherals.Python;
@@ -51,7 +54,7 @@ namespace Antmicro.Renode.Core
         public ProgressMonitor ProgressMonitor { get; private set; }
 
         public Emulation CurrentEmulation
-        { 
+        {
             get
             {
                 //Console.WriteLine("^^^^ Emulation Manager - Get Current Emulation");
@@ -104,12 +107,10 @@ namespace Antmicro.Renode.Core
 
         public void Load(ReadFilePath path)
         {
-            // Console.WriteLine("^^^^^^^Load in EmulationManager def^^^^^^^");
-            using(var stream = new FileStream(path, FileMode.Open, FileAccess.Read))
-            // using(var stream = new MemoryStream())
-             // Assuming globalMemoryStream is already populated with data
-            // stream.Seek(0, SeekOrigin.Begin);  // Reset position to the beginning of the stream
-    
+            using(var fstream = new FileStream(path, FileMode.Open, FileAccess.Read))
+            using(var stream = path.ToString().EndsWith(".gz", StringComparison.InvariantCulture)
+                                ? (Stream) new GZipStream(fstream, CompressionMode.Decompress)
+                                : (Stream) fstream)
             {
                 var deserializationResult = serializer.TryDeserialize<string>(stream, out var version);
                 Console.WriteLine("^^^^^^^Load in EmulationManager trydeserialize string ^^^^^^^");
@@ -132,8 +133,7 @@ namespace Antmicro.Renode.Core
                 }
 
                 CurrentEmulation = emulation;
-                CurrentEmulation.BlobManager.Load(stream);
-                // Console.WriteLine("^^^^^^^Load in EmulationManager blob manager load doen ^^^^^^^");
+                CurrentEmulation.BlobManager.Load(stream, fstream.Name);
 
                 if(version != VersionString)
                 {
@@ -154,11 +154,12 @@ namespace Antmicro.Renode.Core
                 // stream.SetLength(0);  // Clear the stream
                 // stream.Seek(0, SeekOrigin.Begin);  // Set position to the start
                 {
-                    using(CurrentEmulation.ObtainPausedState())
+                    using(CurrentEmulation.ObtainSafeState())
                     {
                         // Console.WriteLine("^^^^^^^Save in EmulationManager currentEmu Paused^^^^^^^");
                         try
                         {
+                            CurrentEmulation.SnapshotTracker.Save(CurrentEmulation.MasterTimeSource.ElapsedVirtualTime, path);
                             serializer.Serialize(VersionString, stream);
                            Console.WriteLine("^^^^^^^Save in EmulationManager serilaize version string^^^^^^^");
                             // Start the stopwatch to measure the time
@@ -179,6 +180,25 @@ namespace Antmicro.Renode.Core
                             {
                                 message += "\nHint: Set 'serialization-mode = Reflection' in the Renode config file for detailed information.";
                             }
+                            else if(e is NonSerializableTypeException && e.Data.Contains("nonSerializableObject") && e.Data.Contains("parentsObjects"))
+                            {
+                                if(TryFindPath(e.Data["nonSerializableObject"], (Dictionary<object, IEnumerable<object>>)e.Data["parentsObjects"], typeof(Emulation), out List<object> parentsPath))
+                                {
+                                    var pathText = new StringBuilder();
+
+                                    parentsPath.Reverse();
+                                    foreach(var o in parentsPath)
+                                    {
+                                        pathText.Append(o.GetType().Name);
+                                        pathText.Append(" => ");
+                                    }
+                                    pathText.Remove(pathText.Length - 4, 4);
+                                    pathText.Append("\n");
+
+                                    message += "The class path that led to it was:\n" + pathText;
+                                }
+                            }
+
                             throw new RecoverableException(message);
                         }
                     }
@@ -273,6 +293,44 @@ namespace Antmicro.Renode.Core
         public event Action EmulationChanged;
 
         public static bool DisableEmulationFilesCleanup = false;
+
+        private static bool TryFindPath(object obj, Dictionary<object, IEnumerable<object>> parents, Type finalType, out List<object> resultPath)
+        {
+            return TryFindPathInnerRecursive(obj, parents, new List<object>(), finalType, out resultPath);
+        }
+
+        private static bool TryFindPathInnerRecursive(object obj, Dictionary<object, IEnumerable<object>> parents, List<object> currentPath, Type finalType, out List<object> resultPath)
+        {
+            currentPath.Add(obj);
+            if(obj.GetType() == finalType)
+            {
+                resultPath = currentPath;
+                return true;
+            }
+
+            if(parents.ContainsKey(obj))
+            {
+                foreach(var parent in parents[obj])
+                {
+                    if(!currentPath.Contains(parent))
+                    {
+                        if(TryFindPathInnerRecursive(parent, parents, currentPath, finalType, out resultPath))
+                        {
+                            return true;
+                        }
+                    }
+                }
+
+                currentPath.RemoveAt(currentPath.Count - 1);
+                resultPath = null;
+                return false;
+            }
+            else
+            {
+                resultPath = currentPath;
+                return false;
+            }
+        }
 
         private EmulationManager()
         {

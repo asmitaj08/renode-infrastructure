@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -11,20 +11,19 @@ using Antmicro.Renode.Core.Structure;
 using Antmicro.Renode.Exceptions;
 using Antmicro.Renode.Logging;
 using Antmicro.Renode.Utilities.Binding;
-using Antmicro.Renode.Peripherals.Memory;
 using Antmicro.Renode.Peripherals.Timers;
 using Antmicro.Renode.Peripherals.IRQControllers;
+using Antmicro.Renode.Debugging;
 
 using Endianess = ELFSharp.ELF.Endianess;
 
 namespace Antmicro.Renode.Peripherals.CPU
 {
-    public partial class ARMv8R : TranslationCPU, IARMSingleSecurityStateCPU, IPeripheralRegister<ARM_GenericTimer, NullRegistrationPoint>
+    public partial class ARMv8R : BaseARMv8, IARMSingleSecurityStateCPU, IPeripheralRegister<ARM_GenericTimer, NullRegistrationPoint>
     {
-        public ARMv8R(string cpuType, IMachine machine, ARM_GenericInterruptController genericInterruptController, uint cpuId = 0, Endianess endianness = Endianess.LittleEndian, SecurityState securityState = SecurityState.NonSecure, uint mpuRegionsCount = 16, ulong defaultHVBARValue = 0, ulong defaultVBARValue = 0, uint mpuHyperRegionsCount = 16)
-                : base(cpuId, cpuType, machine, endianness, CpuBitness.Bits64)
+        public ARMv8R(string cpuType, IMachine machine, ARM_GenericInterruptController genericInterruptController, uint cpuId = 0, Endianess endianness = Endianess.LittleEndian, uint mpuRegionsCount = 16, ulong defaultHVBARValue = 0, ulong defaultVBARValue = 0, uint mpuHyperRegionsCount = 16)
+                : base(cpuId, cpuType, machine, endianness)
         {
-            SecurityState = securityState;
             Affinity = new Affinity(cpuId);
             this.defaultHVBARValue = defaultHVBARValue;
             this.defaultVBARValue = defaultVBARValue;
@@ -130,7 +129,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
-        public void RegisterTCMRegion(MappedMemory memory, uint regionIndex)
+        public void RegisterTCMRegion(IMemory memory, uint regionIndex)
         {
             if(!machine.IsPaused)
             {
@@ -154,7 +153,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
-        private bool TryRegisterTCMRegion(MappedMemory memory, uint regionIndex)
+        private bool TryRegisterTCMRegion(IMemory memory, uint regionIndex)
         {
             ulong address;
             if(!TCMConfiguration.TryFindRegistrationAddress(machine.SystemBus, this, memory, out address))
@@ -169,8 +168,17 @@ namespace Antmicro.Renode.Peripherals.CPU
             return true;
         }
 
+        public ExceptionLevel ExceptionLevel => exceptionLevel;
+        // ARMv8R AArch32 cores always execute in NonSecure mode ("Arm Architecture Reference Manual Supplement Armv8, for the Armv8-R AArch32 architecture profile" - A1.3.1)
+        // ARMv8R AArch64 cores always execute in Secure mode ("Arm Architecture Reference Manual Supplement Armv8, for R-profile AArch64 architecture" - C1.11 and A1.3)
+        // since at this moment we only have AArch32 core supporting this ISA, let's lock it in NonSecure state
+        public SecurityState SecurityState => SecurityState.NonSecure;
+
+        public bool TrapGeneralExceptions => (GetSystemRegisterValue("hcr") & (1 << 27)) != 0;
+        public bool FIQMaskOverride => (GetSystemRegisterValue("hcr") & 0b01000) != 0 || TrapGeneralExceptions;
+        public bool IRQMaskOverride => (GetSystemRegisterValue("hcr") & 0b10000) != 0 || TrapGeneralExceptions;
+
         public Affinity Affinity { get; }
-        public SecurityState SecurityState { get; private set; }
 
         protected override Interrupt DecodeInterrupt(int number)
         {
@@ -180,6 +188,10 @@ namespace Antmicro.Renode.Peripherals.CPU
                     return Interrupt.Hard;
                 case InterruptSignalType.FIQ:
                     return Interrupt.TargetExternal1;
+                case InterruptSignalType.vIRQ:
+                    return Interrupt.TargetExternal2;
+                case InterruptSignalType.vFIQ:
+                    return Interrupt.TargetExternal3;
                 default:
                     this.Log(LogLevel.Error, "Unexpected interrupt type for IRQ#{0}", number);
                     throw InvalidInterruptNumberException;
@@ -249,7 +261,9 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         private void OnExecutionModeChanged(uint el, uint isSecure)
         {
-            this.Log(LogLevel.Debug, "Unimplemented OnExecutionModeChanged(el={0}, isSecure={1}) was called.", el, isSecure);
+            exceptionLevel = (ExceptionLevel)el;
+            // ARMv8R cores cannot change security state (Architecture Manual mandates it)
+            DebugHelper.Assert((isSecure != 0 ? SecurityState.Secure : SecurityState.NonSecure) == SecurityState, $"{nameof(ARMv8R)} should not change its Security State.");
         }
 
         private void ValidateSystemRegisterAccess(string name, bool isWrite)
@@ -273,6 +287,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
+        private ExceptionLevel exceptionLevel;
         private ARM_GenericTimer timer;
 
         private readonly ARM_GenericInterruptController gic;

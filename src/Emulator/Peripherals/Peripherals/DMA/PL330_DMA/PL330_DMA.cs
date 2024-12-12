@@ -17,12 +17,12 @@ using Antmicro.Renode.Utilities;
 
 namespace Antmicro.Renode.Peripherals.DMA
 {
-    public partial class PL330_DMA : BasicDoubleWordPeripheral, IKnownSize, IDMA, INumberedGPIOOutput
+    public partial class PL330_DMA : BasicDoubleWordPeripheral, IKnownSize, IDMA, INumberedGPIOOutput, IGPIOReceiver
     {
         // This model doesn't take into account differences in AXI bus width, 
         // which could have impact on unaligned transfers in real HW
         // this is a know limitation at this moment
-        public PL330_DMA(IMachine machine, uint numberOfSupportedEventsAndInterrupts = 32, byte revision = 0x3) : base(machine)
+        public PL330_DMA(IMachine machine, uint numberOfSupportedEventsAndInterrupts = MaximumSupportedEventsOrInterrupts, uint numberOfSupportedPeripheralRequestInterfaces = MaximumSupportedPeripheralRequestInterfaces, byte revision = 0x3) : base(machine)
         {
             this.Revision = revision;
             if(numberOfSupportedEventsAndInterrupts > MaximumSupportedEventsOrInterrupts)
@@ -30,6 +30,11 @@ namespace Antmicro.Renode.Peripherals.DMA
                 throw new ConstructionException($"No more than {MaximumSupportedEventsOrInterrupts} Events or Interrupts are supported by this peripheral");
             }
             this.NumberOfSupportedEventsAndInterrupts = (int)numberOfSupportedEventsAndInterrupts;
+            if(numberOfSupportedPeripheralRequestInterfaces > MaximumSupportedPeripheralRequestInterfaces)
+            {
+                throw new ConstructionException($"No more than {MaximumSupportedPeripheralRequestInterfaces} Peripheral Request Interfaces are supported by this peripheral");
+            }
+            this.NumberOfSupportedPeripheralRequestInterfaces = (int)numberOfSupportedPeripheralRequestInterfaces;
 
             channels = new Channel[NumberOfChannels];
             for(int i = 0; i < channels.Length; ++i)
@@ -55,6 +60,7 @@ namespace Antmicro.Renode.Peripherals.DMA
         public override void Reset()
         {
             base.Reset();
+            debugStatus = false;
 
             for(int i = 0; i < channels.Length; ++i)
             {
@@ -70,6 +76,41 @@ namespace Antmicro.Renode.Peripherals.DMA
                 eventActive[i] = false;
             }
             AbortIRQ.Unset();
+        }
+
+        public void OnGPIO(int number, bool value)
+        {
+            if(!IsPeripheralInterfaceValid((uint)number))
+            {
+                return;
+            }
+            lock(executeLock)
+            {
+                if(!value)
+                {
+                    // To simulate requestLast, hold IRQ line high during the entire transmission sequence,
+                    // and bring it down, when all data is sent
+                    // If this feature is not used at all in DMA microcode (program) this doesn't matter
+                    foreach(var channel in channels.Where(c => c?.Peripheral == number))
+                    {
+                        channel.RequestLast = true;
+                    }
+                    return;
+                }
+
+                bool anyChangedState = false;
+                foreach(var channel in channels.Where(c => c.Status == Channel.ChannelStatus.WaitingForPeripheral).Where(c => c.WaitingEventOrPeripheralNumber == number))
+                {
+                    // A peripheral has signaled that it's ready for DMA operations to start
+                    channel.Status = Channel.ChannelStatus.Executing;
+                    anyChangedState = true;
+                }
+                if(anyChangedState)
+                {
+                    // Rerun ExecuteLoop if any channel woke up from sleep
+                    ExecuteLoop();
+                }
+            }
         }
 
         public void RequestTransfer(int channel)
@@ -102,7 +143,7 @@ namespace Antmicro.Renode.Peripherals.DMA
 
         public byte Revision { get; }
         public int NumberOfSupportedEventsAndInterrupts { get; }
-        public int NumberOfSupportedPeripheralRequestInterfaces { get; set; } = 32;
+        public int NumberOfSupportedPeripheralRequestInterfaces { get; }
 
         // The values below are only used in Configuration and DmaConfiguration registers - they have no impact on the model's operation
         public int InstructionCacheLineLength { get; set; } = 16;
@@ -128,7 +169,7 @@ namespace Antmicro.Renode.Peripherals.DMA
                                 Connections[idx].Unset();
                             }
                         },
-                        name: "DMA Interrupt Enable")
+                    name: "DMA Interrupt Enable")
                 .WithReservedBits(NumberOfSupportedEventsAndInterrupts, 32 - NumberOfSupportedEventsAndInterrupts);
 
             Registers.DmaEventInterruptRawStatus.Define(this)
@@ -152,7 +193,7 @@ namespace Antmicro.Renode.Peripherals.DMA
                                 Connections[idx].Unset();
                             }
                         },
-                        name: "DMA Interrupt Clear")
+                    name: "DMA Interrupt Clear")
                 .WithReservedBits(NumberOfSupportedEventsAndInterrupts, 32 - NumberOfSupportedEventsAndInterrupts);
 
             // This register is RO. To bring channel out of fault, issue KILL to Debug Registers
@@ -162,22 +203,22 @@ namespace Antmicro.Renode.Peripherals.DMA
                     name: "Faulting channels");
 
             Registers.DebugStatus.Define(this)
-                .WithFlag(0, out debugStatus, FieldMode.Read, name: "Debug status (dbgstatus)")
+                .WithFlag(0, FieldMode.Read, valueProviderCallback: _ => debugStatus, name: "Debug status (dbgstatus)")
                 .WithReservedBits(1, 31);
 
             Registers.DebugCommand.Define(this)
                 .WithValueField(0, 2, FieldMode.Write,
                     writeCallback: (_, val) =>
-                    {
-                        if(val == 0b00)
                         {
-                            ExecuteDebugStart();
-                        }
-                        else
-                        {
-                            this.Log(LogLevel.Error, "Undefined DMA Debug Command: {0}", val);
-                        }
-                    },
+                            if(val == 0b00)
+                            {
+                                ExecuteDebugStart();
+                            }
+                            else
+                            {
+                                this.Log(LogLevel.Error, "Undefined DMA Debug Command: {0}", val);
+                            }
+                        },
                     name: "Debug Command")
                 .WithReservedBits(2, 30);
 
@@ -280,6 +321,17 @@ namespace Antmicro.Renode.Peripherals.DMA
             return true;
         }
 
+        private bool IsPeripheralInterfaceValid(uint peripheral)
+        {
+            if(peripheral >= NumberOfSupportedPeripheralRequestInterfaces)
+            {
+                this.Log(LogLevel.Error, "Peripheral Request Interface {0} is not supported. {1} Request Interfaces are enabled.",
+                    peripheral, NumberOfSupportedPeripheralRequestInterfaces);
+                return false;
+            }
+            return true;
+        }
+
         private bool SignalEventOrInterrupt(uint eventNumber)
         {
             if(!IsEventOrInterruptValid(eventNumber))
@@ -300,7 +352,7 @@ namespace Antmicro.Renode.Peripherals.DMA
                 // Raise an event
                 eventActive[eventNumber] = true;
                 bool anyResumed = false;
-                foreach(var channel in channels.Where(c => c.Status == Channel.ChannelStatus.WaitingForEvent).Where(c => c.WaitingEventNumber == eventNumber))
+                foreach(var channel in channels.Where(c => c.Status == Channel.ChannelStatus.WaitingForEvent).Where(c => c.WaitingEventOrPeripheralNumber == eventNumber))
                 {
                     anyResumed = true;
                     // The channel will execute in next iteration of `ExecuteLoop`
@@ -330,7 +382,7 @@ namespace Antmicro.Renode.Peripherals.DMA
 
         private void ExecuteDebugStart()
         {
-            debugStatus.Value = true;
+            debugStatus = true;
             ulong debugInstructionBytes = debugInstructionByte2_3_4_5.Value << 16 | debugInstructionByte1.Value << 8 | debugInstructionByte0.Value;
 
             string binaryInstructionString = Convert.ToString((long)debugInstructionBytes, 2);
@@ -344,7 +396,7 @@ namespace Antmicro.Renode.Peripherals.DMA
 
             debugInstruction.ParseAll(debugInstructionBytes);
             ExecuteDebugInstruction(debugInstruction, (int)debugChannelNumber.Value, debugThreadType.Value);
-            debugStatus.Value = false;
+            debugStatus = false;
         }
 
         private void ExecuteDebugInstruction(Instruction firstInstruction, int channelIndex, DMAThreadType threadType)
@@ -357,54 +409,59 @@ namespace Antmicro.Renode.Peripherals.DMA
                 return;
             }
 
-            LogInstructionExecuted(firstInstruction);
+            LogInstructionExecuted(firstInstruction, threadType, channelIndex);
             // This is an instruction provided by the debug registers - it can't advance PC
             firstInstruction.Execute(threadType, threadType != DMAThreadType.Manager ? (int?)channelIndex : null, suppressAdvance: true);
-            debugStatus.Value = false;
+            debugStatus = false;
             ExecuteLoop();
         }
 
         private void ExecuteLoop()
         {
-            // TODO: in case of infinite loop, this will hang the emulation.
-            // It's not ideal - separate thread will be good, but what about time flow?
-            // Still, it's enough in the beginning, for simple use cases
-            do
+            // lock uses Monitor calls, and is re-entrant, so there will be no problems when executing on the same thread
+            lock(executeLock)
             {
-                foreach(var channelThread in channels.Where(c => c.Status == Channel.ChannelStatus.Executing))
+                // TODO: in case of infinite loop, this will hang the emulation.
+                // It's not ideal - separate thread will be good, but what about time flow?
+                // Still, it's enough in the beginning, for simple use cases
+                do
                 {
-                    this.Log(LogLevel.Debug, "Executing channel thread: {0}", channelThread.Id);
-
-                    while(channelThread.Status == Channel.ChannelStatus.Executing)
+                    foreach(var channelThread in channels.Where(c => c.Status == Channel.ChannelStatus.Executing))
                     {
-                        var address = channelThread.PC;
-                        var insn = sysbus.ReadByte(address, context: GetCurrentCPUOrNull());
-                        if(!decoderRoot.TryParseOpcode(insn, out var instruction))
-                        {
-                            this.Log(LogLevel.Error, "Invalid instruction at address: 0x{0:X}. Aborting thread {1}.", address, channelThread.Id);
-                            channelThread.SignalChannelAbort(Channel.ChannelFaultReason.UndefinedInstruction);
-                            continue;
-                        }
+                        this.Log(LogLevel.Debug, "Executing channel thread: {0}", channelThread.Id);
 
-                        while(!instruction.IsFinished)
+                        while(channelThread.Status == Channel.ChannelStatus.Executing)
                         {
-                            instruction.Parse(sysbus.ReadByte(address, context: GetCurrentCPUOrNull()));
-                            address += sizeof(byte);
-                        }
+                            var address = channelThread.PC;
+                            var insn = sysbus.ReadByte(address, context: GetCurrentCPUOrNull());
+                            if(!decoderRoot.TryParseOpcode(insn, out var instruction))
+                            {
+                                this.Log(LogLevel.Error, "Invalid instruction with opcode 0x{0:X} at address: 0x{1:X}. Aborting thread {2}.", insn, address, channelThread.Id);
+                                channelThread.SignalChannelAbort(Channel.ChannelFaultReason.UndefinedInstruction);
+                                continue;
+                            }
 
-                        LogInstructionExecuted(instruction, channelThread.PC);
-                        instruction.Execute(DMAThreadType.Channel, channelThread.Id);
+                            while(!instruction.IsFinished)
+                            {
+                                instruction.Parse(sysbus.ReadByte(address, context: GetCurrentCPUOrNull()));
+                                address += sizeof(byte);
+                            }
+
+                            LogInstructionExecuted(instruction, DMAThreadType.Channel, channelThread.Id, channelThread.PC);
+                            instruction.Execute(DMAThreadType.Channel, channelThread.Id);
+                        }
                     }
-                }
 
-            // A channel might have become unpaused as a result of an event generated by another channel
-            // As long as there are any channels in executing state, we have to retry
-            } while(channels.Any(c => c.Status == Channel.ChannelStatus.Executing));
+                // A channel might have become unpaused as a result of an event generated by another channel
+                // As long as there are any channels in executing state, we have to retry
+                } while(channels.Any(c => c.Status == Channel.ChannelStatus.Executing));
+            }
         }
 
-        private void LogInstructionExecuted(Instruction insn, ulong? address = null)
+        private void LogInstructionExecuted(Instruction insn, DMAThreadType threadType, int threadId, ulong? address = null)
         {
-            this.Log(LogLevel.Noisy, "Executing: {0} {1}", insn.ToString(), address != null ? $"@ 0x{address:X}" : "" );
+            this.Log(LogLevel.Noisy, "[{0}] Executing: {1} {2}", threadType == DMAThreadType.Manager ? "M" : threadId.ToString(),
+                insn.ToString(), address != null ? $"@ 0x{address:X}" : "" );
         }
 
         private ICPU GetCurrentCPUOrNull()
@@ -422,12 +479,17 @@ namespace Antmicro.Renode.Peripherals.DMA
         private IValueRegisterField debugInstructionByte1;
         private IValueRegisterField debugInstructionByte2_3_4_5;
         private IFlagRegisterField[] interruptEnabled;
-        private IFlagRegisterField debugStatus;
+        // It's volatile, so this status is visible if several CPU threads will try to drive the DMA
+        private volatile bool debugStatus;
         private readonly bool[] eventActive;
+        // Driving DMA from several cores at once has little sense
+        // but it's still possible that another core will drive a client peripheral requesting transfers
+        private readonly object executeLock = new object();
 
         private readonly Channel[] channels;
 
         private const int MaximumSupportedEventsOrInterrupts = 32;
+        private const int MaximumSupportedPeripheralRequestInterfaces = 32;
 
         private class Channel
         {
@@ -451,7 +513,8 @@ namespace Antmicro.Renode.Peripherals.DMA
                 faultReason = ChannelFaultReason.NoFault;
                 RequestType = ChannelRequestType.Single;
                 RequestLast = false;
-                WaitingEventNumber = 0;
+                WaitingEventOrPeripheralNumber = 0;
+                Peripheral = null;
 
                 LoopCounter[0] = 0;
                 LoopCounter[1] = 0;
@@ -465,10 +528,10 @@ namespace Antmicro.Renode.Peripherals.DMA
 
                 (Registers.Channel0Status + Id * 8).Define(Parent)
                     .WithValueField(0, 4, FieldMode.Read, valueProviderCallback: _ => (ulong)Status, name: $"Channel {Id} Status")
-                    .WithValueField(4, 5, FieldMode.Read, valueProviderCallback: _ => WaitingEventNumber, name: $"Channel {Id} Wakeup Number")
+                    .WithValueField(4, 5, FieldMode.Read, valueProviderCallback: _ => WaitingEventOrPeripheralNumber, name: $"Channel {Id} Wakeup Number")
                     .WithReservedBits(9, 5)
-                    .WithTaggedFlag("DMAWFP single/burst", 14)
-                    .WithTaggedFlag("DMAWFP is periph set", 15)
+                    .WithFlag(14, FieldMode.Read, valueProviderCallback: _ => RequestType == ChannelRequestType.Burst, name: "DMAWFP is burst set") // dmawfp_b_ns
+                    .WithTaggedFlag("DMAWFP is periph bit set", 15) // It the transfer type is driven by the peripheral
                     .WithReservedBits(16, 5)
                     .WithTaggedFlag("Channel Non Secure", 21)
                     .WithReservedBits(22, 10);
@@ -517,6 +580,7 @@ namespace Antmicro.Renode.Peripherals.DMA
 
             public void SignalChannelAbort(Channel.ChannelFaultReason reason)
             {
+                Parent.Log(LogLevel.Error, "Channel {0} is aborting because of {1}", Id, reason.ToString());
                 // Changing status will automatically set Abort IRQ
                 this.Status = Channel.ChannelStatus.Faulting;
                 this.faultReason = reason;
@@ -558,7 +622,9 @@ namespace Antmicro.Renode.Peripherals.DMA
             
             // What event is the channel waiting for (after calling DMAWFE)
             // We don't care about clearing this, since it only has meaning when the channel is in WaitingForEvent state
-            public uint WaitingEventNumber { get; set; }
+            public uint WaitingEventOrPeripheralNumber { get; set; }
+            // Peripheral bound to the channel
+            public int? Peripheral { get; set; }
 
             public readonly int Id;
             public readonly byte[] LoopCounter = new byte[2];
@@ -577,6 +643,7 @@ namespace Antmicro.Renode.Peripherals.DMA
                 Stopped = 0b0000,
                 Executing = 0b0001,
                 WaitingForEvent = 0b0100,
+                WaitingForPeripheral = 0b0111,
                 Faulting = 0b1111,
             }
 
@@ -594,7 +661,7 @@ namespace Antmicro.Renode.Peripherals.DMA
                 InstructionFetchError = 1 << 16,      // instr_fetch_err
                 DataWriteError = 1 << 17,             // data_write_err
                 DataReadError = 1 << 18,              // data_read_err
-                OriginatesFromDebugInsruction = 1 << 30, // dbg_instr
+                OriginatesFromDebugInstruction = 1 << 30, // dbg_instr
                 LockupError = 1 << 31,                // lockup_err
             }
 

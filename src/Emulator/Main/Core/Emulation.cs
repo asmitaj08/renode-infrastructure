@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -66,12 +66,14 @@ namespace Antmicro.Renode.Core
             BackendManager = new BackendManager();
             BlobManager = new BlobManager();
             theBag = new Dictionary<string, object>();
-            // Console.WriteLine("^^^^^^^Emulation class () Done!!^^^^^^^");
+            SnapshotTracker = new SnapshotTracker();
         }
 
         public MasterTimeSource MasterTimeSource { get; private set; }
 
         public BackendManager BackendManager { get; private set; }
+
+        public SnapshotTracker SnapshotTracker { get; }
 
         public BlobManager BlobManager { get; set; }
 
@@ -152,6 +154,11 @@ namespace Antmicro.Renode.Core
         public MACRepository MACRepository { get; private set; }
 
         public HostMachine HostMachine { get; private set; }
+
+        public bool TryGetMachine(string key, out IMachine machine)
+        {
+            return machs.TryGetValue(key, out machine);
+        }
 
         public bool TryGetMachineName(IMachine machine, out string name)
         {
@@ -330,6 +337,17 @@ namespace Antmicro.Renode.Core
             return new PausedState(this);
         }
 
+        public IDisposable ObtainSafeState()
+        {
+            // check if we are on a safe thread that executes sync phase
+            if(MasterTimeSource.IsOnSyncPhaseThread)
+            {
+                return null;
+            }
+
+            return ObtainPausedState();
+        }
+
         public AutoResetEvent GetStartedStateChangedEvent(bool requiredStartedState, bool waitForTransition = true)
         {
             var evt = new AutoResetEvent(false);
@@ -365,6 +383,22 @@ namespace Antmicro.Renode.Core
                 return randomGenerator.Value;
             }
         }
+
+        public bool SingleStepBlocking
+        {
+            get => singleStepBlocking;
+            set
+            {
+                if(singleStepBlocking == value)
+                {
+                    return;
+                }
+                singleStepBlocking = value;
+                SingleStepBlockingChanged?.Invoke();
+            }
+        }
+
+        public event Action SingleStepBlockingChanged;
 
         public void SetNameForMachine(string name, IMachine machine)
         {
@@ -627,6 +661,7 @@ namespace Antmicro.Renode.Core
             {
                 mach.StateChanged += OnMachineStateChanged;
             }
+            singleStepBlocking = true;
         }
 
         #region Event processors
@@ -675,6 +710,9 @@ namespace Antmicro.Renode.Core
 
         [Constructor]
         private CachingFileFetcher fileFetcher;
+
+        [field: Transient]
+        private bool singleStepBlocking = true;
 
         [Constructor(NameCacheSize)]
         private readonly LRUCache<object, Tuple<string, string>> nameCache;

@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -19,6 +19,11 @@ using Antmicro.Renode.Utilities.RESD;
 
 namespace Antmicro.Renode.Peripherals.Sensors
 {
+    /// <summary>
+    /// This model supports different ways to provide sensor samples. Setting one of those overrides the other method.
+    /// 1. Explicit samples are fed when they are set manually, <see cref="Temperature"/> and <see cref="Humidity"/>.
+    /// 2. RESD samples are fed when the RESD file is loaded, <see cref="FeedTemperatureSamplesFromRESD"/> and <see cref="FeedHumiditySamplesFromRESD"/>.
+    /// </summary>
     public class HS3001 : II2CPeripheral, IProvidesRegisterCollection<WordRegisterCollection>, ITemperatureSensor, IHumiditySensor
     {
         public HS3001(IMachine machine, ushort sensorIdHigh = 0x0, ushort sensorIdLow = 0x0)
@@ -185,21 +190,25 @@ namespace Antmicro.Renode.Peripherals.Sensors
 
         public decimal Temperature
         {
-            get => GetSampleFromRESDStream(ref resdTemperatureStream, (sample) => sample.Temperature / 1000, DefaultTemperature);
-            set => throw new RecoverableException($"Explicitly setting temperature is not supported by this model. " +
-                $"Temperature should be provided from a RESD file or set via the '{nameof(DefaultTemperature)}' property");
+            get => GetSampleFromRESDStream(ref resdTemperatureStream, (sample) => sample.Temperature / 1000, temperature);
+            set
+            {
+                resdTemperatureStream?.Dispose();
+                resdTemperatureStream = null;
+                temperature = value;
+            }
         }
 
         public decimal Humidity
         {
-            get => GetSampleFromRESDStream(ref resdHumidityStream, (sample) => sample.Humidity / 1000, DefaultHumidity);
-            set => throw new RecoverableException($"Explicitly setting humidity is not supported by this model. " +
-                $"Humidity should be provided from a RESD file or set via the '{nameof(DefaultHumidity)}' property");
+            get => GetSampleFromRESDStream(ref resdHumidityStream, (sample) => sample.Humidity / 1000, humidity);
+            set
+            {
+                resdHumidityStream?.Dispose();
+                resdHumidityStream = null;
+                humidity = value;
+            }
         }
-
-        public decimal DefaultTemperature { get; set; }
-
-        public decimal DefaultHumidity { get; set; }
 
         private decimal GetSampleFromRESDStream<T>(ref RESDStream<T> stream, Func<T, decimal> transformer, decimal defaultValue)
             where T: RESDSample, new()
@@ -282,7 +291,7 @@ namespace Antmicro.Renode.Peripherals.Sensors
                     name: "Humidity Sensor Resolution Write",
                     writeCallback: (_, value) => humidityResolution = value)
                 .WithReservedBits(12, 4);
-            
+
             Registers.TemperatureSensorResolutionRead.Define(this)
                 .WithReservedBits(0, 10)
                 .WithEnumField<WordRegister, MeasurementResolution>(10, 2, FieldMode.Read,
@@ -300,7 +309,7 @@ namespace Antmicro.Renode.Peripherals.Sensors
             Registers.ReadSensorIDHigh.Define(this)
                 .WithValueField(0, 16, FieldMode.Read, name: "Sensor ID High",
                     valueProviderCallback: _ => sensorIdHigh);
-            
+
             Registers.ReadSensorIDLow.Define(this)
                 .WithValueField(0, 16, FieldMode.Read, name: "Sensor ID Low",
                     valueProviderCallback: _ => sensorIdLow);
@@ -321,6 +330,9 @@ namespace Antmicro.Renode.Peripherals.Sensors
 
         private MeasurementResolution temperatureResolution;
         private MeasurementResolution humidityResolution;
+
+        private decimal temperature;
+        private decimal humidity;
 
         private const byte MeasurementBits = 14;
         private const ushort MaxMeasurementValue = (1 << MeasurementBits) - 1;

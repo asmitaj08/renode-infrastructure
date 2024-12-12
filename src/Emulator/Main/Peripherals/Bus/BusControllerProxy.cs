@@ -141,9 +141,14 @@ namespace Antmicro.Renode.Peripherals.Bus
             return ParentController.GetCPUs();
         }
 
-        public virtual int GetCPUId(ICPU cpu)
+        public IEnumerable<ICPU> GetAllContextKeys()
         {
-            return ParentController.GetCPUId(cpu);
+            return ParentController.GetAllContextKeys();
+        }
+
+        public virtual int GetCPUSlot(ICPU cpu)
+        {
+            return ParentController.GetCPUSlot(cpu);
         }
 
         public virtual bool TryGetCurrentCPU(out ICPU cpu)
@@ -154,6 +159,16 @@ namespace Antmicro.Renode.Peripherals.Bus
         public virtual ICPU GetCurrentCPU()
         {
             return ParentController.GetCurrentCPU();
+        }
+
+        public virtual IEnumerable<IBusRegistered<IBusPeripheral>> GetRegisteredPeripherals(ICPU context = null)
+        {
+            return ParentController.GetRegisteredPeripherals(context);
+        }
+
+        public IEnumerable<IBusRegistered<IBusPeripheral>> GetRegistrationsForPeripheralType<T>(ICPU context = null)
+        {
+            return ParentController.GetRegistrationsForPeripheralType<T>(context);
         }
 
         public virtual IEnumerable<BusRangeRegistration> GetRegistrationPoints(IBusPeripheral peripheral)
@@ -196,9 +211,19 @@ namespace Antmicro.Renode.Peripherals.Bus
             return ParentController.TryGetWatchpointsAt(address, access, out result);
         }
 
-        public virtual string FindSymbolAt(ulong offset)
+        public virtual string FindSymbolAt(ulong offset, ICPU context = null)
         {
-            return ParentController.FindSymbolAt(offset);
+            return ParentController.FindSymbolAt(offset, context);
+        }
+
+        public virtual bool IsAddressRangeLocked(Range range, ICPU context = null)
+        {
+            return ParentController.IsAddressRangeLocked(range, context);
+        }
+
+        public virtual void SetAddressRangeLocked(Range range, bool locked, ICPU context = null)
+        {
+            ParentController.SetAddressRangeLocked(range, locked, context);
         }
 
         public virtual void DisablePeripheral(IPeripheral peripheral)
@@ -216,9 +241,9 @@ namespace Antmicro.Renode.Peripherals.Bus
             ParentController.SetPeripheralEnabled(peripheral, enabled);
         }
 
-        public virtual bool TryFindSymbolAt(ulong offset, out string name, out Symbol symbol)
+        public virtual bool TryFindSymbolAt(ulong offset, out string name, out Symbol symbol, ICPU context = null)
         {
-            return ParentController.TryFindSymbolAt(offset, out name, out symbol);
+            return ParentController.TryFindSymbolAt(offset, out name, out symbol, context);
         }
 
         public virtual ulong ReadQuadWord(ulong address, ICPU context = null)
@@ -251,9 +276,24 @@ namespace Antmicro.Renode.Peripherals.Bus
             ParentController.Register(peripheral, registrationPoint);
         }
 
-        public void MoveRegistrationWithinContext(IBusPeripheral peripheral, ulong newAddress, ICPU context, Func<IEnumerable<IBusRegistered<IBusPeripheral>>, IBusRegistered<IBusPeripheral>> selector = null)
+        public virtual void Register(IBusPeripheral peripheral, BusParametrizedRegistration registrationPoint)
         {
-            ParentController.MoveRegistrationWithinContext(peripheral, newAddress, context, selector);
+            ParentController.Register(peripheral, registrationPoint);
+        }
+
+        public virtual void EnableAllTranslations(bool enable = true)
+        {
+            ParentController.EnableAllTranslations(enable);
+        }
+
+        public virtual void EnableAllTranslations(IBusPeripheral busPeripheral, bool enable = true)
+        {
+            ParentController.EnableAllTranslations(busPeripheral, enable);
+        }
+
+        public void MoveRegistrationWithinContext(IBusPeripheral peripheral, BusRangeRegistration newRegistration, ICPU context, Func<IEnumerable<IBusRegistered<IBusPeripheral>>, IBusRegistered<IBusPeripheral>> selector = null)
+        {
+            ParentController.MoveRegistrationWithinContext(peripheral, newRegistration, context, selector);
         }
 
         void IPeripheralRegister<IBusPeripheral, BusMultiRegistration>.Unregister(IBusPeripheral peripheral)
@@ -264,6 +304,11 @@ namespace Antmicro.Renode.Peripherals.Bus
         void IPeripheralRegister<IBusPeripheral, BusRangeRegistration>.Unregister(IBusPeripheral peripheral)
         {
             ((IPeripheralRegister<IBusPeripheral, BusRangeRegistration>)ParentController).Unregister(peripheral);
+        }
+
+        void IPeripheralRegister<IBusPeripheral, BusParametrizedRegistration>.Unregister(IBusPeripheral peripheral)
+        {
+            ((IPeripheralRegister<IBusPeripheral, BusParametrizedRegistration>)ParentController).Unregister(peripheral);
         }
 
         public void Unregister(IPeripheral peripheral)
@@ -301,19 +346,14 @@ namespace Antmicro.Renode.Peripherals.Bus
             ParentController.UnregisterFromAddress(address, context);
         }
 
-        public virtual ulong GetSymbolAddress(string symbolName)
-        {
-            return ParentController.GetSymbolAddress(symbolName);
-        }
-
         public virtual IBusRegistered<MappedMemory> FindMemory(ulong address, ICPU context = null)
         {
             return ParentController.FindMemory(address, context);
         }
 
-        public virtual void LoadELF(ReadFilePath fileName, bool useVirtualAddress = false, bool allowLoadsOnlyToMemory = true, IInitableCPU cpu = null)
+        public virtual bool IsMemory(ulong address, ICPU context = null)
         {
-            ParentController.LoadELF(fileName, useVirtualAddress, allowLoadsOnlyToMemory, cpu);
+            return ParentController.IsMemory(address, context);
         }
 
         public virtual void LoadFileChunks(string path, IEnumerable<FileChunk> chunks, ICPU cpu)
@@ -331,6 +371,11 @@ namespace Antmicro.Renode.Peripherals.Bus
             ParentController.ApplySVD(path);
         }
 
+        public void LoadSymbolsFrom(IELF elf, bool useVirtualAddress = false, ulong? textAddress = null, ICPU context = null)
+        {
+            ParentController.LoadSymbolsFrom(elf, useVirtualAddress, textAddress, context);
+        }
+
         public virtual void LoadUImage(ReadFilePath fileName, IInitableCPU cpu = null)
         {
             ParentController.LoadUImage(fileName, cpu);
@@ -346,9 +391,17 @@ namespace Antmicro.Renode.Peripherals.Bus
             ParentController.MapMemory(segment, owner, relative, context);
         }
 
-        public virtual IMachine Machine => ParentController.Machine;
+        public virtual SymbolLookup GetLookup(ICPU context = null)
+        {
+            return ParentController.GetLookup(context);
+        }
 
-        public virtual SymbolLookup Lookup => ParentController.Lookup;
+        public virtual bool TryGetAllSymbolAddresses(string symbolName, out IEnumerable<ulong> symbolAddresses, ICPU context = null)
+        {
+            return ParentController.TryGetAllSymbolAddresses(symbolName, out symbolAddresses, context);
+        }
+
+        public virtual IMachine Machine => ParentController.Machine;
 
         public virtual IEnumerable<IRegistered<IBusPeripheral, BusRangeRegistration>> Children => ParentController.Children;
 
@@ -361,6 +414,19 @@ namespace Antmicro.Renode.Peripherals.Bus
         protected virtual bool ValidateOperation(ref ulong address, BusAccessPrivileges accessType, ICPU context = null)
         {
             return true;
+        }
+
+        event Action<IMachine> IBusController.OnSymbolsChanged
+        {
+            add
+            {
+                ParentController.OnSymbolsChanged += value;
+            }
+
+            remove
+            {
+                ParentController.OnSymbolsChanged -= value;
+            }
         }
     }
 }
