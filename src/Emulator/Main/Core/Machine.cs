@@ -74,6 +74,7 @@ namespace Antmicro.Renode.Core
         [PreSerialization]
         private void SerializeAtomicMemoryState()
         {
+            Console.WriteLine("^^^^^ Machine.cs : SerializeAtomicMemoryState : PreSerialization");
             atomicMemoryState = new byte[AtomicMemoryStateSize];
             Marshal.Copy(atomicMemoryStatePointer, atomicMemoryState, 0, atomicMemoryState.Length);
             // the first byte of an atomic memory state contains value 0 or 1
@@ -85,6 +86,7 @@ namespace Antmicro.Renode.Core
         [PostDeserialization]
         public void InitAtomicMemoryState()
         {
+            // Console.WriteLine("^^^^^ Machine.cs : InitAtomicMemoryState : PostDeserialization");
             atomicMemoryStatePointer = Marshal.AllocHGlobal(AtomicMemoryStateSize);
 
             // the beginning of an atomic memory state contains two 8-bit flags:

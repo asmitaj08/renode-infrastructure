@@ -429,17 +429,20 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
 
         private static void HandleLoad(uint value)
         {
+            // Console.WriteLine("^^^^^EmulationController HandleLoad()");
             ThreadPool.QueueUserWorkItem(delegate { EmulationManager.Instance.Load(string.Format(SavepointName, value)); });
         }
 
         private static void HandleSave(uint value)
         {
+            // Console.WriteLine("^^^^^EmulationController HandleSave()");
             ThreadPool.QueueUserWorkItem(delegate { EmulationManager.Instance.Save(string.Format(SavepointName, value)); });
         }
 
         [PostDeserialization]
         private void AfterDeserialization()
         {
+            // Console.WriteLine("^^^^^ EmulatorController.cs AfterDeserialization");
             if(state == State.FileSend || state == State.FileReceive)
             {
                 // we don't know whether the file is still available etc.

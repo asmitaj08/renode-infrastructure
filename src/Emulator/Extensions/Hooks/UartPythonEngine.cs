@@ -40,6 +40,7 @@ namespace Antmicro.Renode.Hooks
         [PostDeserialization]
         private void InnerInit()
         {
+            Console.WriteLine("^^^^ UARTPythonEngine.cs  InnerInit --- postDeserialization");
             Scope.SetVariable(Core.Machine.MachineKeyword, Machine);
             Scope.SetVariable("uart", Uart);
             Scope.SetVariable("self", Uart);

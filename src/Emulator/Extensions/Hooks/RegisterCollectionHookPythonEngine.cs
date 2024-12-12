@@ -43,6 +43,7 @@ namespace Antmicro.Renode.Hooks
         [PostDeserialization]
         private void InnerInit()
         {
+            Console.WriteLine("^^^^ RegisterCollectionHookPythonEngine.cs  InnerInit --- postDeserialization");
             Scope.SetVariable("self", registerCollectionProvider);
 
             var source = Engine.CreateScriptSourceFromString(script);

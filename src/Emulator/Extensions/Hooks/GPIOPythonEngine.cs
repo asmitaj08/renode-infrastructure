@@ -37,6 +37,7 @@ namespace Antmicro.Renode.Hooks
         [PostDeserialization]
         private void InnerInit()
         {
+           Console.WriteLine("^^^^ GPIOPythonEngine.cs  InnerInit --- postDeserialization");
             Scope.SetVariable("self", gpio);
             var source = Engine.CreateScriptSourceFromString(script);
             code = Compile(source);

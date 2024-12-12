@@ -104,12 +104,15 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public ulong TranslationCacheSize
         {
+           
             get
             {
+                // Console.WriteLine("^^^^ Translation CPU - TranslationCacheSize - get");
                 return translationCacheSize;
             }
             set
             {
+                //  Console.WriteLine("^^^^ Translation CPU - TranslationCacheSize - set ");
                 if(value == translationCacheSize)
                 {
                     return;
@@ -203,6 +206,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void SubmitTranslationCacheSizeUpdate()
         {
+            // Console.WriteLine("^^^^^Translation CPU - SubmitTranslationCacheSizeUpdate");
             lock(translationCacheSync)
             {
                 var currentTCacheSize = translationCacheSize;
@@ -213,6 +217,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void UpdateTranslationCacheSize(ulong sizeAtThatTime)
         {
+            // Console.WriteLine("^^^^^Translation CPU - UpdateTranslationCacheSize");
             lock(translationCacheSync)
             {
                 if(sizeAtThatTime != translationCacheSize)
@@ -223,6 +228,7 @@ namespace Antmicro.Renode.Peripherals.CPU
                 currentTimer = null;
                 using(machine?.ObtainPausedState())
                 {
+                    // Console.WriteLine("^^^^^Translation CPU - UpdateTranslationCacheSize- obtainePauedState - prepare, dispose, restore");
                     PrepareState();
                     DisposeInner(true);
                     RestoreState();
@@ -234,20 +240,24 @@ namespace Antmicro.Renode.Peripherals.CPU
         private void PrepareState()
         {
             var statePtr = TlibExportState();
+            Console.WriteLine("^^^^^^^^^^^ Prepare state - Translation CPU ^^^^^^^^^^^^^^");
             BeforeSave(statePtr);
-            cpuState = new byte[TlibGetStateSize()];
-            Marshal.Copy(statePtr, cpuState, 0, cpuState.Length);
+            cpuState = new byte[TlibGetStateSize()]; // This line initializes the cpuState array with a size equal to the value returned by the function TlibGetStateSize(), TlibGetStateSize() is likely a function that returns the size of the CPU state in bytes
+            Marshal.Copy(statePtr, cpuState, 0, cpuState.Length); // Marshal.Copy is used to copy data from unmanaged memory (pointed to by statePtr) into managed memory (cpuState), 0: The start index in the destination array (cpuState).cpuState.Length: The number of bytes to copy, which is the size of the cpuState array.
+            Console.WriteLine("^^^^^^^^^^^ Prepare state - Translation CPU Done!! ^^^^^^^^^^^^^^");
         }
 
         [PostSerialization]
         private void FreeState()
         {
             cpuState = null;
+            // Console.WriteLine("^^^^^^^^^^^ Free state - Translation CPU ^^^^^^^^^^^^^^");
         }
 
         [LatePostDeserialization]
         private void RestoreState()
         {
+            // Console.WriteLine("^^^^ Translation CPU - RestoreState");
             Init();
             // TODO: state of the reset events
             FreeState();
@@ -256,6 +266,7 @@ namespace Antmicro.Renode.Peripherals.CPU
                 // Repeat memory hook enable to make sure that the tcg context is set not to use the tlb
                 TlibOnMemoryAccessEventEnabled(1);
             }
+            //  Console.WriteLine("^^^^ Translation CPU - RestoreState Doen!!!^^^^");
         }
 
         public override ExecutionMode ExecutionMode
@@ -385,6 +396,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public void MapMemory(IMappedSegment segment)
         {
+            // Console.WriteLine("^^^^^ Translation CPU - MapMemory");
             if(segment.StartingOffset > bitness.GetMaxAddress() || segment.Size > bitness.GetMaxAddress())
             {
                 throw new RecoverableException("Could not map memory segment: starting offset or size are too high");
@@ -399,10 +411,13 @@ namespace Antmicro.Renode.Peripherals.CPU
                     TranslationCacheSize += segment.Size / 4;
                 }
             }
+
+            // Console.WriteLine("^^^^^ Translation CPU - MapMemory Done");
         }
 
         public void UnmapMemory(Range range)
         {
+            // Console.WriteLine("^^^^^ Translation CPU - UnMapMemory");
             using(machine?.ObtainPausedState())
             {
                 var startAddress = range.StartAddress;
@@ -1206,6 +1221,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void Init()
         {
+            // Console.WriteLine("^^^^^ TranslationCPU - Init ^^^^^^^^");
             memoryManager = new SimpleMemoryManager(this);
             isPaused = true;
 
@@ -1239,6 +1255,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             {
                 var statePtr = TlibExportState();
                 Marshal.Copy(cpuState, 0, statePtr, cpuState.Length);
+                // Console.WriteLine("^^^^^ TranslationCPU - Init - cpuState!=null, calling afterLoad ^^^^^^^^");
                 AfterLoad(statePtr);
             }
             if(machine != null)
@@ -1251,6 +1268,8 @@ namespace Antmicro.Renode.Peripherals.CPU
                 TlibAddBreakpoint(hook.Key);
             }
             CyclesPerInstruction = 1;
+
+            //  Console.WriteLine("^^^^^ TranslationCPU - Init Done!!^^^^^^^^");
         }
 
         protected override ulong SkipInstructions
@@ -1712,10 +1731,12 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected virtual void BeforeSave(IntPtr statePtr)
         {
+            // Console.WriteLine("^^^^^^^^^^^ Before save - Translation CPU ^^^^^^^^^^^^^^");
         }
 
         protected virtual void AfterLoad(IntPtr statePtr)
         {
+            // Console.WriteLine("^^^^^^^^^^^ After Load - Translation CPU ^^^^^^^^^^^^^^");
         }
 
         [Export]

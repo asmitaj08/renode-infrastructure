@@ -1753,6 +1753,7 @@ namespace Antmicro.Renode.Peripherals.Bus
         [PostDeserialization]
         private void PostDeserializationInitStructures()
         {
+            // Console.WriteLine("^^^^^^^ SystemBus.cs PostDeserializationInitStructures");
             threadLocalContext = new ThreadLocalContext(this);
         }
 

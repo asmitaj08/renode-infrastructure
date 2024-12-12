@@ -26,6 +26,7 @@ namespace Antmicro.Renode.Core
     {
         public Emulation()
         {
+            // Console.WriteLine("^^^^^^^Emulation class ()^^^^^^^");
             MasterTimeSource = new MasterTimeSource();
             HostMachine = new HostMachine();
             MACRepository = new MACRepository();
@@ -65,6 +66,7 @@ namespace Antmicro.Renode.Core
             BackendManager = new BackendManager();
             BlobManager = new BlobManager();
             theBag = new Dictionary<string, object>();
+            // Console.WriteLine("^^^^^^^Emulation class () Done!!^^^^^^^");
         }
 
         public MasterTimeSource MasterTimeSource { get; private set; }
@@ -619,6 +621,7 @@ namespace Antmicro.Renode.Core
         [PostDeserialization]
         private void AfterDeserialization()
         {
+            // Console.WriteLine("^^^^ Emualtion - AfterDeserialization()");
             // recreate events
             foreach(var mach in machs.Rights)
             {
@@ -630,6 +633,7 @@ namespace Antmicro.Renode.Core
 
         private void OnMachineStateChanged(IMachine machine, MachineStateChangedEventArgs ea)
         {
+            // Console.WriteLine("^^^^ Emualtion - OnMachineStateChanged()");
             var msc = MachineStateChanged;
             if(msc != null)
             {
@@ -639,6 +643,7 @@ namespace Antmicro.Renode.Core
 
         private void OnMachineAdded(IMachine machine)
         {
+            // Console.WriteLine("^^^^ Emualtion - OnMachineAdded()");
             var ma = MachineAdded;
             if(ma != null)
             {

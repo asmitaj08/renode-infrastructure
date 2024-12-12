@@ -81,10 +81,10 @@ namespace Antmicro.Renode.Peripherals.Sensors
                 // Console.WriteLine($"Selected Reg present in config file ");
             }
             // Uncomment the following if you want to fuzz the data length as well
-            if ((!(present_in_config_flag)) && general_fuzz_data!=0xAA){
+            if ((!(present_in_config_flag)) && general_fuzz_data_length!=0xAA){
                     // count = general_fuzz_data;
-                    count = 100010;
-                    Console.WriteLine($"fuzzing length : {count}, reg : {selectedRegister}");
+                    count = general_fuzz_data_length;
+                    // Console.WriteLine($"fuzzing length : {count}, reg : {selectedRegister}");
             }
             byte[] buf = new byte[count];
             for(int i = 0; i < buf.Length; i++)
@@ -111,6 +111,7 @@ namespace Antmicro.Renode.Peripherals.Sensors
 
         public void ReadFromFuzzer(byte[] data){
                 general_fuzz_data = data[0];
+                general_fuzz_data_length = data.Length;
         }
 
         // public decimal Temperature
@@ -298,6 +299,7 @@ namespace Antmicro.Renode.Peripherals.Sensors
             return config;
         }
         private Dictionary<byte, byte> configValues; // To store configuration from the file.
+        private int general_fuzz_data_length = 0xAA ;
         private byte general_fuzz_data = 0xAA ;
         private Registers selectedRegister;
         private const byte resetRequestVal = 0xB6;

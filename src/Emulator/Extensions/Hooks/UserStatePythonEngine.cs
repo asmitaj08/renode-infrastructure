@@ -38,6 +38,7 @@ namespace Antmicro.Renode.Hooks
         [PostDeserialization]
         private void InnerInit()
         {
+            Console.WriteLine("^^^^ USerStatePythonEngine.cs  InnerInit --- postDeserialization");
             Scope.SetVariable(Core.Machine.MachineKeyword, Machine);
             Scope.SetVariable("self", Machine);
             var source = Engine.CreateScriptSourceFromString(Script);

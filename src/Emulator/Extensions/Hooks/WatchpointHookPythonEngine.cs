@@ -42,6 +42,7 @@ namespace Antmicro.Renode.Hooks
         [PostDeserialization]
         private void InnerInit()
         {
+            Console.WriteLine("^^^^ WatchPointHookPythonEngine.cs  InnerInit --- postDeserialization");
             Scope.SetVariable("self", sysbus);
 
             var source = Engine.CreateScriptSourceFromString(script);

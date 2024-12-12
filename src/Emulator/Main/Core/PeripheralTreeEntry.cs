@@ -55,12 +55,14 @@ namespace Antmicro.Renode.Core
         [PreSerialization]
         private void SaveType()
         {
+            Console.WriteLine("^^^^ PeripheralTreeEntry.cs SaveType -- preSerialization");
             typeName = type.FullName;
         }
 
         [PostDeserialization]
         private void RecoverType()
         {
+            Console.WriteLine("^^^^ PeripheralTreeEntry.cs RecoverType -- PostDeserialization");
             type = TypeManager.Instance.GetTypeByName(typeName);
             typeName = null;
         }

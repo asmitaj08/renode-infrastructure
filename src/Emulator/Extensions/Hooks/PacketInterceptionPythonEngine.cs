@@ -49,6 +49,7 @@ namespace Antmicro.Renode.Hooks
         [PostDeserialization]
         private void InnerInit()
         {
+            Console.WriteLine("^^^^ PacketInterceptionPythonEngine.cs  InnerInit --- postDeserialization");
             Scope.SetVariable("self", radio);
             Scope.SetVariable("machine", machine);
             if(script != null)

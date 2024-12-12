@@ -421,6 +421,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public void Load(PrimitiveReader reader)
         {
+            // Console.WriteLine("^^^^^^^^^^^ Load - mappedMemory ^^^^^^^^^^^^^^");
             // checking magic
             var magic = reader.ReadUInt32();
             if(magic != Magic)
@@ -454,6 +455,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public void Save(PrimitiveWriter writer)
         {
+            Console.WriteLine("^^^^^^^^^^^ Save - mappedMemeory ^^^^^^^^^^^^^^");
             var globalStopwatch = Stopwatch.StartNew();
             var realSegmentsCount = 0;
 

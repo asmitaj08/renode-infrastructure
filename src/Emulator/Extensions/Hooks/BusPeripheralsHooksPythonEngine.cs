@@ -59,6 +59,7 @@ namespace Antmicro.Renode.Hooks
         [PostDeserialization]
         private void InnerInit()
         {
+            Console.WriteLine("^^^^ BusPeripheralHookPythonEngine.cs  InnerInit --- postDeserialization");
             Scope.SetVariable("self", Peripheral);
             Scope.SetVariable("sysbus", Sysbus);
             Scope.SetVariable(Machine.MachineKeyword, Sysbus.Machine);

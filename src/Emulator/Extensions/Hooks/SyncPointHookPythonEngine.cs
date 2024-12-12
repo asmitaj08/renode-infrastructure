@@ -37,6 +37,7 @@ namespace Antmicro.Renode.Hooks
         [PostDeserialization]
         private void InnerInit()
         {
+            Console.WriteLine("^^^^ SyncPointHookPythonEngine.cs  InnerInit --- postDeserialization");
             Scope.SetVariable("self", emulation);
             var source = Engine.CreateScriptSourceFromString(script);
             code = Compile(source);

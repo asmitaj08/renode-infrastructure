@@ -27,11 +27,20 @@ namespace Antmicro.Renode.Core
 
         public static EmulationManager Instance { get; private set; }
 
+        // private static MemoryStream stream ;
+
         static EmulationManager()
         {
             ExternalWorld = new ExternalWorldTimeDomain();
             RebuildInstance();
+            // stream = new MemoryStream();
         }
+
+        // // Initialize MemoryStream in the constructor
+        // private EmulationManager()
+        // {
+        //     stream = new MemoryStream();
+        // }
 
         [HideInMonitor]
         public static void RebuildInstance()
@@ -45,10 +54,12 @@ namespace Antmicro.Renode.Core
         { 
             get
             {
+                //Console.WriteLine("^^^^ Emulation Manager - Get Current Emulation");
                 return currentEmulation;
             }
             set
             {
+                //  Console.WriteLine("^^^^ Emulation manager - Set Current Emulation");
                 lock(currentEmulationLock)
                 {
                     currentEmulation.Dispose();
@@ -93,15 +104,28 @@ namespace Antmicro.Renode.Core
 
         public void Load(ReadFilePath path)
         {
+            // Console.WriteLine("^^^^^^^Load in EmulationManager def^^^^^^^");
             using(var stream = new FileStream(path, FileMode.Open, FileAccess.Read))
+            // using(var stream = new MemoryStream())
+             // Assuming globalMemoryStream is already populated with data
+            // stream.Seek(0, SeekOrigin.Begin);  // Reset position to the beginning of the stream
+    
             {
                 var deserializationResult = serializer.TryDeserialize<string>(stream, out var version);
+                Console.WriteLine("^^^^^^^Load in EmulationManager trydeserialize string ^^^^^^^");
                 if(deserializationResult != DeserializationResult.OK)
                 {
                     throw new RecoverableException($"There was an error when deserializing the emulation: {deserializationResult}\n Underlying exception: {serializer.LastException.Message}\n{serializer.LastException.StackTrace}");
                 }
 
-                deserializationResult = serializer.TryDeserialize<Emulation>(stream, out var emulation);
+                 // Start the stopwatch to measure the time
+                //Stopwatch stopwatch = new Stopwatch();
+                //stopwatch.Start();
+                deserializationResult = serializer.TryDeserialize<Emulation>(stream, out var emulation); //*****
+                // Stop the stopwatch
+                //stopwatch.Stop();
+                Console.WriteLine($"^^^^^^^Load in EmulationManager serilaize current Emulation : {stream.Length} bytes*, Serialization took {stopwatch.ElapsedMilliseconds} ms***^^^^^^^");
+            //    Console.WriteLine("^^^^^^^Load in EmulationManager trydeserialize emulation ^^^^^^^");
                 if(deserializationResult != DeserializationResult.OK)
                 {
                     throw new RecoverableException($"There was an error when deserializing the emulation: {deserializationResult}\n Underlying exception: {serializer.LastException.Message}\n{serializer.LastException.StackTrace}");
@@ -109,6 +133,7 @@ namespace Antmicro.Renode.Core
 
                 CurrentEmulation = emulation;
                 CurrentEmulation.BlobManager.Load(stream);
+                // Console.WriteLine("^^^^^^^Load in EmulationManager blob manager load doen ^^^^^^^");
 
                 if(version != VersionString)
                 {
@@ -119,17 +144,33 @@ namespace Antmicro.Renode.Core
 
         public void Save(string path)
         {
+            Console.WriteLine("^^^^^^^Save in EmulationManager def^^^^^^^");
             try
             {
                 using(var stream = new FileStream(path, FileMode.Create))
+                // using (var memoryStream = new MemoryStream())
+                // Reset the global memory stream (clear previous data)
+                // Console.WriteLine("####### EmulationManager memeoryStreamSave ");
+                // stream.SetLength(0);  // Clear the stream
+                // stream.Seek(0, SeekOrigin.Begin);  // Set position to the start
                 {
                     using(CurrentEmulation.ObtainPausedState())
                     {
+                        // Console.WriteLine("^^^^^^^Save in EmulationManager currentEmu Paused^^^^^^^");
                         try
                         {
                             serializer.Serialize(VersionString, stream);
+                           Console.WriteLine("^^^^^^^Save in EmulationManager serilaize version string^^^^^^^");
+                            // Start the stopwatch to measure the time
+                            // Stopwatch stopwatch = new Stopwatch();
+                            // stopwatch.Start();
                             serializer.Serialize(CurrentEmulation, stream);
+                            // Stop the stopwatch
+                            // stopwatch.Stop();
+                        //    Console.WriteLine($"^^^^^^^Save in EmulationManager serialize current Emulation : {stream.Length} bytes*, Serialization took {stopwatch.ElapsedMilliseconds} ms***^^^^^^^");
+                            Console.WriteLine($"^^^^^^^Save in EmulationManager serialize current Emulation : {stream.Length} bytes*, **^^^^^^^");
                             CurrentEmulation.BlobManager.Save(stream);
+                           Console.WriteLine("^^^^^^^Save in EmulationManager blobmanager save done^^^^^^^");
                         }
                         catch(InvalidOperationException e)
                         {
@@ -142,6 +183,7 @@ namespace Antmicro.Renode.Core
                         }
                     }
                 }
+                 Console.WriteLine("^^^^^^^Save in EmulationManager Done!!^^^^^^^");
             }
             catch(Exception)
             {
@@ -268,6 +310,7 @@ namespace Antmicro.Renode.Core
         private Emulation currentEmulation;
         private readonly object currentEmulationLock;
         private string profilerPathPrefix;
+        
 
         /// <summary>
         /// Represents external world time domain.
