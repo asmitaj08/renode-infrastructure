@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 // Copyright (c) 2020-2021 Microsoft
 //
@@ -23,7 +23,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 {
     public partial class CortexM : Arm
     {
-        public CortexM(string cpuType, IMachine machine, NVIC nvic, uint id = 0, Endianess endianness = Endianess.LittleEndian, uint? fpuInterruptNumber = null, uint? numberOfMPURegions = null) : base(cpuType, machine, id, endianness, numberOfMPURegions)
+        public CortexM(string cpuType, IMachine machine, NVIC nvic, [NameAlias("id")] uint cpuId = 0, Endianess endianness = Endianess.LittleEndian, uint? fpuInterruptNumber = null, uint? numberOfMPURegions = null) : base(cpuType, machine, cpuId, endianness, numberOfMPURegions)
         {
             if(nvic == null)
             {
@@ -40,7 +40,15 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
 
             this.nvic = nvic;
-            nvic.AttachCPU(this);
+            try
+            {
+                nvic.AttachCPU(this);
+            }
+            catch(RecoverableException e)
+            {
+                // Rethrow attachment error as ConstructionException, so the CreationDriver doesn't crash
+                throw new ConstructionException("Exception occurred when attaching NVIC: ", e);
+            }
         }
 
         public override void Reset()
@@ -52,7 +60,11 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected override void OnResume()
         {
-            InitPCAndSP();
+            // Suppress initialization when processor is turned off as binary may not even be loaded yet
+            if(!IsHalted)
+            {
+                InitPCAndSP();
+            }
             base.OnResume();
         }
 
@@ -88,6 +100,14 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
+        public override MemorySystemArchitectureType MemorySystemArchitecture => NumberOfMPURegions > 0 ? MemorySystemArchitectureType.Physical_PMSA : MemorySystemArchitectureType.None;
+
+        public override uint ExceptionVectorAddress
+        {
+            get => VectorTableOffset;
+            set => VectorTableOffset = value;
+        }
+
         public uint VectorTableOffset
         {
             get
@@ -97,7 +117,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             set
             {
                 vtorInitialized = true;
-                if(machine.SystemBus.FindMemory(value, this) == null)
+                if(!machine.SystemBus.IsMemory(value, this))
                 {
                     this.Log(LogLevel.Warning, "Tried to set VTOR address at 0x{0:X} which does not lay in memory. Aborted.", value);
                     return;
@@ -292,9 +312,18 @@ namespace Antmicro.Renode.Peripherals.CPU
             return base.BeforePCWrite(value);
         }
 
+        protected override void OnLeavingResetState()
+        {
+            if(State == CPUState.Running)
+            {
+                InitPCAndSP();
+            }
+            base.OnLeavingResetState();
+        }
+
         private void InitPCAndSP()
         {
-            var firstNotNullSection = machine.SystemBus.Lookup.FirstNotNullSectionAddress;
+            var firstNotNullSection = machine.SystemBus.GetLookup(this).FirstNotNullSectionAddress;
             if(!vtorInitialized && firstNotNullSection.HasValue)
             {
                 if((firstNotNullSection.Value & (2 << 6 - 1)) > 0)
@@ -305,21 +334,26 @@ namespace Antmicro.Renode.Peripherals.CPU
                 {
                     var value = firstNotNullSection.Value;
                     this.Log(LogLevel.Info, "Guessing VectorTableOffset value to be 0x{0:X}.", value);
+                    if(value > uint.MaxValue)
+                    {
+                        this.Log(LogLevel.Error, "Guessed VectorTableOffset doesn't fit in 32-bit address space: 0x{0:X}.", value);
+                        return; // Keep VectorTableOffset uninitialized in the case of error condition
+                    }
                     VectorTableOffset = checked((uint)value);
                 }
             }
             if(pcNotInitialized)
             {
-                pcNotInitialized = false;
                 // stack pointer and program counter are being sent according
                 // to VTOR (vector table offset register)
                 var sysbus = machine.SystemBus;
                 var pc = sysbus.ReadDoubleWord(VectorTableOffset + 4, this);
                 var sp = sysbus.ReadDoubleWord(VectorTableOffset, this);
-                if(sysbus.FindMemory(pc, this) == null || (pc == 0 && sp == 0))
+                if(!sysbus.IsMemory(pc, this) || (pc == 0 && sp == 0))
                 {
                     this.Log(LogLevel.Error, "PC does not lay in memory or PC and SP are equal to zero. CPU was halted.");
                     IsHalted = true;
+                    return; // Keep PC and SP uninitialized in the case of error condition
                 }
                 this.Log(LogLevel.Info, "Setting initial values: PC = 0x{0:X}, SP = 0x{1:X}.", pc, sp);
                 PC = pc;

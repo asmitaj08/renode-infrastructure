@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -9,6 +9,7 @@
 using System;
 using NUnit.Framework;
 using Antmicro.Renode.Core;
+using Antmicro.Renode.Exceptions;
 
 using Range = Antmicro.Renode.Core.Range;
 
@@ -17,6 +18,50 @@ namespace Antmicro.Renode.UnitTests
     [TestFixture]
     public class RangeTests
     {
+        [Test]
+        public void CreateRangeWithExtensions()
+        {
+            var rangeAt0x1000Size0x100 = new Range(0x1000, 0x100);
+            Assert.AreEqual(rangeAt0x1000Size0x100, 0x1000.By(0x100));
+            Assert.AreEqual(rangeAt0x1000Size0x100, 0x1000.To(0x10FF));
+
+            var oneByteRange = new Range(0x0, 1);
+            Assert.AreEqual(oneByteRange, 0x0.By(1));
+            Assert.AreEqual(oneByteRange, 0x0.To(0x0));
+        }
+
+        [Test]
+        public void ShouldHandleCreatingRangeFromZeroToUlongMaxValue()
+        {
+            // `Range.Size` is `ulong` so the full ulong range with size 2^64 simply isn't
+            // supported. Other constructors use `ulong` size so they have no problem with
+            // handling such a range. Let's make sure the exception occurs and isn't nasty.
+            Assert.Throws<RecoverableException>(
+                () => 0x0.To(ulong.MaxValue),
+                "<0, 2^64-1> ranges aren't currently supported"
+            );
+        }
+
+        [Test]
+        public void ShouldHandleCreatingRangeWithInvalidEndAddress()
+        {
+            Assert.Throws<RecoverableException>(
+                () => 0x1000.To(0x100),
+                "the start address can't be higher than the end address"
+            );
+        }
+
+        [Test]
+        public void ShouldHandleCreatingRangeWithInvalidSize()
+        {
+            var size = ulong.MaxValue;
+            var startAddress = (ulong)0x1000;
+
+            var expectedExceptionReason = $"size is too large: 0x{size:X}";
+            Assert.Throws<RecoverableException>(() => new Range(startAddress, size), expectedExceptionReason);
+            Assert.Throws<RecoverableException>(() => startAddress.By(size), expectedExceptionReason);
+        }
+
         [Test]
         public void ShouldIntersectRange()
         {
@@ -78,41 +123,11 @@ namespace Antmicro.Renode.UnitTests
         }
 
         [Test]
-        public void EmptyRangeShouldContainItself()
-        {
-            Assert.IsTrue(Range.Empty.Contains(Range.Empty));
-        }
-
-        [Test]
-        public void EmptyRangeShouldNotContainAnyAddress()
-        {
-            Assert.IsFalse(Range.Empty.Contains(0UL));
-            Assert.IsFalse(Range.Empty.Contains(0x80000000UL));
-            Assert.IsFalse(Range.Empty.Contains(0xFFFFFFFFUL));
-            Assert.IsFalse(Range.Empty.Contains(0x8000000000000000UL));
-            Assert.IsFalse(Range.Empty.Contains(0xFFFFFFFFFFFFFFFFUL));
-        }
-
-        [Test]
-        public void ShouldContainEmptyRange()
-        {
-            var range = new Range(0x1000, 0x1200);
-            Assert.IsTrue(range.Contains(Range.Empty));
-        }
-
-        [Test]
         public void SubtractNoIntersection()
         {
             var range = new Range(0x1600, 0xA00);
             var sub = new Range(0x1000, 0x200);
             CollectionAssert.AreEquivalent(new [] { range }, range.Subtract(sub));
-        }
-
-        [Test]
-        public void SubtractEmpty()
-        {
-            var range = new Range(0x0, 0xA00);
-            CollectionAssert.AreEquivalent(new [] { range }, range.Subtract(Range.Empty));
         }
 
         [Test]
@@ -156,6 +171,61 @@ namespace Antmicro.Renode.UnitTests
             var expected1 = new Range(0x1600, 0x200);
             var expected2 = new Range(0x1A00, 0x600);
             CollectionAssert.AreEquivalent(new [] { expected1, expected2 }, range.Subtract(sub));
+        }
+
+        [Test]
+        public void MinimalRangesCollectionAdd()
+        {
+            var ranges = new MinimalRangesCollection();
+            Assert.AreEqual(ranges.Count, 0);
+
+            ranges.Add(new Range(0x1000, 0x400));
+            ranges.Add(new Range(0x1800, 0x800));
+            Assert.AreEqual(ranges.Count, 2);
+
+            ranges.Add(new Range(0x0, 0x1000));
+            Assert.AreEqual(ranges.Count, 2);
+
+            ranges.Add(new Range(0x2000, 0x400));
+            Assert.AreEqual(ranges.Count, 2);
+
+            ranges.Add(new Range(0x1000, 0x1000));
+            Assert.AreEqual(ranges.Count, 1);
+
+            var expected = new Range(0x0, 0x2400);
+            CollectionAssert.AreEquivalent(new [] { expected }, ranges);
+        }
+
+        [Test]
+        public void MinimalRangesCollectionRemoveOutside()
+        {
+            var ranges = new MinimalRangesCollection();
+            var range = new Range(0x1000, 0x1000);
+            ranges.Add(range);
+
+            Assert.IsFalse(ranges.Remove(new Range(0x0, 0x1000)));
+            Assert.IsFalse(ranges.Remove(new Range(0x2000, 0x1000)));
+            Assert.IsFalse(ranges.Remove(new Range(0x8000, 0x1000)));
+
+            CollectionAssert.AreEquivalent(new [] { range }, ranges);
+        }
+
+        [Test]
+        public void MinimalRangesCollectionRemoveSubrange()
+        {
+            var ranges = new MinimalRangesCollection();
+            var modifiedRange = new Range(0x1000, 0x1000);
+            var untouchedRange = new Range(0x8000, 0x1000);
+            ranges.Add(modifiedRange);
+            ranges.Add(untouchedRange);
+
+            var sub = new Range(0x1400, 0x800);
+            var wasRemoved = ranges.Remove(sub);
+            Assert.IsTrue(wasRemoved);
+
+            var expected1 = new Range(0x1000, 0x400);
+            var expected2 = new Range(0x1C00, 0x400);
+            CollectionAssert.AreEquivalent(new [] { expected1, expected2, untouchedRange }, ranges);
         }
     }
 }

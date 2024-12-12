@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2022 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -151,11 +151,11 @@ namespace Antmicro.Renode.Peripherals.CPU
             {
                 throw new RecoverableException("This feature is not yet available on the X86 platforms.");
             }
-            AttachedCPU.SetHookAtMemoryAccess((pc, operation, address) =>
+            AttachedCPU.SetHookAtMemoryAccess((pc, operation, virtualAddress, physicalAddress, value) =>
             {
                 if(operation != MemoryOperation.InsnFetch)
                 {
-                    currentAdditionalData.Enqueue(new MemoryAccessAdditionalData(pc, operation, address));
+                    currentAdditionalData.Enqueue(new MemoryAccessAdditionalData(pc, operation, virtualAddress, physicalAddress, value));
                 }
             });
         }
@@ -171,8 +171,8 @@ namespace Antmicro.Renode.Peripherals.CPU
             // 0x7057 it the fixed part of the vcfg opcodes
             cpuWithPostOpcodeExecutionHooks.AddPostOpcodeExecutionHook(0x7057, 0x7057, (pc) =>
             {
-                var vl = AttachedCPU.GetRegisterUnsafe(RiscVVlRegisterIndex);
-                var vtype = AttachedCPU.GetRegisterUnsafe(RiscVVtypeRegisterIndex);
+                var vl = AttachedCPU.GetRegister(RiscVVlRegisterIndex);
+                var vtype = AttachedCPU.GetRegister(RiscVVtypeRegisterIndex);
                 currentAdditionalData.Enqueue(new RiscVVectorConfigurationData(pc, vl.RawValue, vtype.RawValue));
             });
         }
@@ -185,17 +185,15 @@ namespace Antmicro.Renode.Peripherals.CPU
                 return;
             }
 
-            var translatedAddress = AttachedCPU.TranslateAddress(pc, MpuAccess.InstructionFetch);
-            if(translatedAddress != ulong.MaxValue)
-            {
-                pc = translatedAddress;
-            }
+            // We don't care if translation fails here (the address is unchanged in this case)
+            AttachedCPU.TryTranslateAddress(pc, MpuAccess.InstructionFetch, out var pcPhysical);
 
             try
             {
                 blocks.Add(new Block
                 {
-                    FirstInstructionPC = pc,
+                    FirstInstructionPC = pcPhysical,
+                    FirstInstructionVirtualPC = pc,
                     InstructionsCount = instructionsInBlock,
                     DisassemblyFlags = AttachedCPU.CurrentBlockDisassemblyFlags,
                     AdditionalDataInTheBlock = currentAdditionalData,
@@ -226,6 +224,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         public struct Block
         {
             public ulong FirstInstructionPC;
+            public ulong FirstInstructionVirtualPC;
             public ulong InstructionsCount;
             public uint DisassemblyFlags;
             public Queue<AdditionalData> AdditionalDataInTheBlock;

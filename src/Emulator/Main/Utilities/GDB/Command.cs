@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -117,7 +117,11 @@ namespace Antmicro.Renode.Utilities.GDB
             var cpu = manager.Cpu as ICPUWithMMU;
             if(cpu == null)
             {
-                return null;
+                // NOTE: If given CPU doesn't support MMU, we just assume 1:1 translation
+                return new List<MemoryFragment>()
+                {
+                    new MemoryFragment(address, length)
+                };
             }
                 
             var pageSize = (ulong)cpu.PageSize;
@@ -234,6 +238,8 @@ namespace Antmicro.Renode.Utilities.GDB
                     return Encoding.UTF8.GetString(valueToParse.Split(2).Select(x => byte.Parse(x, NumberStyles.HexNumber)).ToArray());
                 case ArgumentAttribute.ArgumentEncoding.String:
                     return valueToParse;
+                case ArgumentAttribute.ArgumentEncoding.ThreadId:
+                    return new PacketThreadId(valueToParse);
                 default:
                     throw new ArgumentException(string.Format("Unsupported argument type: {0}", parameterInfo.ParameterType.Name));
             }

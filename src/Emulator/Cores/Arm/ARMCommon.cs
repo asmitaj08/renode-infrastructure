@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -13,16 +13,19 @@ namespace Antmicro.Renode.Peripherals.CPU
 {
     public interface IARMSingleSecurityStateCPU : ICPU
     {
+        ExceptionLevel ExceptionLevel { get; }
+
         Affinity Affinity { get; }
         // This kind of CPU is always in a specific Security State and it can't be changed
         SecurityState SecurityState { get; }
+
+        bool FIQMaskOverride { get; }
+        bool IRQMaskOverride { get; }
     }
 
     public interface IARMTwoSecurityStatesCPU : IARMSingleSecurityStateCPU
     {
         void GetAtomicExceptionLevelAndSecurityState(out ExceptionLevel exceptionLevel, out SecurityState securityState);
-
-        ExceptionLevel ExceptionLevel { get; }
 
         // This property should return false if CPU doesn't support EL3
         bool IsEL3UsingAArch32State { get; }
@@ -57,11 +60,13 @@ namespace Antmicro.Renode.Peripherals.CPU
     }
 
     // GIC should use GPIO#0 of an ARM CPU to signal IRQ and GPIO#1 to signal FIQ
-    // An ARM CPU should be connected to a GIC following the convention `[<N*2>-<N*2+1>] -> cpuN@[0-1]`";
+    // An ARM CPU should be connected to a GIC following the convention `[<N*4>-<N*4+3>] -> cpuN@[0-3]`";
     public enum InterruptSignalType
     {
-        IRQ = 0,
-        FIQ = 1,
+        IRQ  = 0,
+        FIQ  = 1,
+        vIRQ = 2,
+        vFIQ = 3,
     }
 
     public enum SecurityState
@@ -78,11 +83,13 @@ namespace Antmicro.Renode.Peripherals.CPU
             levels[1] = level1;
             levels[2] = level2;
             levels[3] = level3;
+            UpdateLevels();
         }
 
         public Affinity(uint allLevels)
         {
-            AllLevels = allLevels;
+            BitHelper.GetBytesFromValue(levels, 0, allLevels, levels.Length, reverse: true);
+            UpdateLevels();
         }
 
         public byte GetLevel(int levelIndex)
@@ -90,19 +97,23 @@ namespace Antmicro.Renode.Peripherals.CPU
             return levels[levelIndex];
         }
 
-        public uint AllLevels
-        {
-            get => BitHelper.ToUInt32(levels, 0, levels.Length, false);
-            protected set => BitHelper.GetBytesFromValue(levels, 0, value, levels.Length, false);
-        }
+        public uint AllLevels => allLevels;
 
         public override string ToString()
         {
-            return String.Join(".", levels.Reverse());
+            return String.Join(".", levels);
+        }
+
+        // NOTE: UpdateLevels needs to be called whenever any value inside of `levels` is updated.
+        protected void UpdateLevels()
+        {
+            allLevels = BitHelper.ToUInt32(levels, 0, levels.Length, reverse: true);
         }
 
         protected readonly byte[] levels = new byte[LevelsCount];
         protected const int LevelsCount = 4;
+
+        private uint allLevels;
     }
 
     public class MutableAffinity : Affinity
@@ -112,6 +123,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         public void SetLevel(int levelIndex, byte levelValue)
         {
             levels[levelIndex] = levelValue;
+            UpdateLevels();
         }
     }
 }

@@ -1,71 +1,92 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
 //
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
+using Antmicro.Renode.Exceptions;
 
 namespace Antmicro.Renode.Core
 {
     public struct Range
     {
-        public static bool TryCreate(ulong startAddress, ulong size, out Range range)
+        public Range(ulong startAddress, ulong size)
         {
-            range = default(Range);
-            range.StartAddress = startAddress;
-            range.EndAddress = startAddress + size - 1;
-            return true;
+            StartAddress = startAddress;
+            EndAddress = startAddress + size - 1;
+
+            // Check if overflow occurred.
+            CreationAssert(EndAddress >= StartAddress, startAddress, () => $"size is too large: 0x{size:X}");
         }
 
-        public Range(ulong startAddress, ulong size):this()
+        /// <summary>
+        /// Checks if this <c>Range</c> can be expanded by <c>range</c> so that
+        /// <c>this.Contains(address) || range.Contains(address)</c> equals
+        /// <c>this.Expand(range).Contains(address)</c> for any address.
+        /// </summary>
+        public bool CanBeExpandedBy(Range range)
         {
-            if(!TryCreate(startAddress, size, out this))
-            {
-                throw new ArgumentException("Size has to be positive or zero.", "size");
-            }
+            return Intersects(range) || IsAdjacentTo(range);
         }
 
         public bool Contains(ulong address)
         {
-            // The empty range does not contain any addresses.
-            // Unfortunately, the empty range is indistinguishable from a
-            // 1-byte-long range starting at address 0, so such a range
-            // will be said not to contain address 0.
-            if(this == Empty)
+            return address >= StartAddress && address <= EndAddress;
+        }
+
+        public bool Contains(long address)
+        {
+            // Range operates on positive numbers
+            // so it cannot contain a negative number.
+            if(address < 0)
             {
                 return false;
             }
 
-            return address >= StartAddress && address <= EndAddress;
+            return Contains((ulong)address);
         }
 
         public bool Contains(Range range)
         {
-            // Every range contains the empty range.
-            // See `Contains` for a caveat about 1-byte ranges starting at
-            // address 0 - here it means that every range will be said to
-            // contain a 1-byte-long range starting at address 0.
-
-            if(range == Empty)
-            {
-                return true;
-            }
-
             return range.StartAddress >= StartAddress && range.EndAddress <= EndAddress;
         }
 
-        public Range Intersect(Range range)
+        /// <param name="range">
+        /// <c>range</c> has to overlap or be adjacent to this <c>Range</c>
+        /// which can be tested with <c>CanBeExpandedBy(range)</c>.
+        /// An <c>ArgumentException</c> is thrown if the condition isn't satisfied.
+        /// </param>
+        public Range Expand(Range range)
+        {
+            if(!CanBeExpandedBy(range))
+            {
+                throw new ArgumentException($"{this} can't be expanded by {range}.");
+            }
+            var startAddress = Math.Min(StartAddress, range.StartAddress);
+            var endAddress = Math.Max(EndAddress, range.EndAddress);
+            return startAddress.To(endAddress);
+        }
+
+        /// <returns>Intersection if ranges overlap, <c>null</c> otherwise.</returns>
+        public Range? Intersect(Range range)
         {
             var startAddress = Math.Max(StartAddress, range.StartAddress);
             var endAddress = Math.Min(EndAddress, range.EndAddress);
             if(startAddress > endAddress)
             {
-                return Range.Empty;
+                return null;
             }
             return new Range(startAddress, endAddress - startAddress + 1);
+        }
+
+        public bool IsAdjacentTo(Range range)
+        {
+            return (StartAddress == range.EndAddress + 1) || (EndAddress == range.StartAddress - 1);
         }
 
         public List<Range> Subtract(Range sub)
@@ -114,7 +135,7 @@ namespace Antmicro.Renode.Core
 
         public bool Intersects(Range range)
         {
-            return Intersect(range) != Range.Empty;
+            return Intersect(range).HasValue;
         }
 
         public ulong StartAddress
@@ -194,11 +215,101 @@ namespace Antmicro.Renode.Core
             return range.ShiftBy(-minuend);
         }
 
-        public static Range Empty;
+        internal static void CreationAssert(bool condition, ulong startAddress, Func<string> reason)
+        {
+            if(!condition)
+            {
+                throw new RecoverableException($"Could not create range at 0x{startAddress:X}; {reason()}");
+            }
+        }
+    }
+
+    public class MinimalRangesCollection : IEnumerable<Range>
+    {
+        public MinimalRangesCollection(IEnumerable<Range> rangeEnumerable = null)
+        {
+            if(rangeEnumerable != null)
+            {
+                foreach(var range in rangeEnumerable)
+                {
+                    Add(range);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Adds a <c>range</c> expanding any elements, if possible. Therefore ranges overlapping,
+        /// and adjacent to the <c>range</c> are removed from the collection and re-added as a
+        /// single expanded <c>Range</c>.
+        /// </summary>
+        public void Add(Range range)
+        {
+            // ToArray is necessary because ranges gets modified in the code block.
+            foreach(var expandableRange in ranges.Where(collectionRange => collectionRange.CanBeExpandedBy(range)).ToArray())
+            {
+                ranges.Remove(expandableRange);
+                range = range.Expand(expandableRange);
+            }
+            ranges.Add(range);
+        }
+
+        public void Clear()
+        {
+            ranges.Clear();
+        }
+
+        public bool ContainsOverlappingRange(Range range)
+        {
+            return ranges.Any(existingRange => existingRange.Intersects(range));
+        }
+
+        public bool ContainsWholeRange(Range range)
+        {
+            // Ranges are merged when added to the collection which means it's only possible if one of elements contains this whole range.
+            return ranges.Any(existingRange => existingRange.Contains(range));
+        }
+
+        public IEnumerator GetEnumerator()
+        {
+            return ranges.GetEnumerator();
+        }
+
+        public bool Remove(Range range)
+        {
+            return ranges.SubtractAll(range);
+        }
+
+        IEnumerator<Range> IEnumerable<Range>.GetEnumerator()
+        {
+            return ((IEnumerable<Range>)ranges).GetEnumerator();
+        }
+
+        public int Count => ranges.Count;
+
+        private readonly HashSet<Range> ranges = new HashSet<Range>();
     }
 
     public static class RangeExtensions
     {
+        /// <summary>
+        /// Subtracts the given <c>range</c> from each overlapping element in <c>ranges</c>.
+        /// </summary>
+        /// <returns>True if <c>range</c> was subtracted from any element in <c>ranges</c>.</returns>
+        public static bool SubtractAll(this ICollection<Range> ranges, Range range)
+        {
+            // ToArray is necessary because ranges gets modified in the code block.
+            var overlappingRanges = ranges.Where(collectionRange => collectionRange.Intersects(range)).ToArray();
+            foreach(var overlappingRange in overlappingRanges)
+            {
+                ranges.Remove(overlappingRange);
+                foreach(var remainingRange in overlappingRange.Subtract(range))
+                {
+                    ranges.Add(remainingRange);
+                }
+            }
+            return overlappingRanges.Any();
+        }
+
         public static Range By(this ulong startAddress, ulong size)
         {
             return new Range(startAddress, size);
@@ -234,19 +345,35 @@ namespace Antmicro.Renode.Core
             return new Range(startAddress, checked((ulong)size));
         }
 
-        public static Range To(this int startAddress, long endAddress)
+        /// <remarks>The returned `Range` contains <c>endAddress</c>.</remarks>
+        public static Range To(this int startAddress, ulong endAddress)
         {
-            return new Range(checked((ulong)startAddress), checked((ulong)(endAddress - startAddress)));
+            return checked((ulong)startAddress).To(endAddress);
         }
 
-        public static Range To(this long startAddress, long endAddress)
+        /// <remarks>The returned `Range` contains <c>endAddress</c>.</remarks>
+        public static Range To(this long startAddress, ulong endAddress)
         {
-            return new Range(checked((ulong)startAddress), checked((ulong)(endAddress - startAddress)));
+            return checked((ulong)startAddress).To(endAddress);
         }
 
+        /// <remarks>The returned `Range` contains <c>endAddress</c>.</remarks>
         public static Range To(this ulong startAddress, ulong endAddress)
         {
-            return new Range(startAddress, checked(endAddress - startAddress));
+            // Moving these to a `Range` constructor would be much better but we can't have
+            // a second constructor with two `ulong` arguments.
+            Range.CreationAssert(
+                startAddress != 0 || endAddress != ulong.MaxValue,
+                startAddress, () => "<0, 2^64-1> ranges aren't currently supported"
+            );
+
+            // The constructor would also throw but the message would be that size is too large
+            // if `startAddress` is higher than `endAddress` which can be misleading.
+            Range.CreationAssert(
+                startAddress <= endAddress,
+                startAddress, () => "the start address can't be higher than the end address"
+            );
+            return new Range(startAddress, checked(endAddress - startAddress + 1));
         }
     }
 }

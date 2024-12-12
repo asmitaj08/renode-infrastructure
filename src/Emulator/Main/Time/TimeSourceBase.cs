@@ -13,6 +13,7 @@ using Antmicro.Renode.Core;
 using Antmicro.Renode.Debugging;
 using Antmicro.Renode.Logging;
 using Antmicro.Renode.Utilities;
+using Antmicro.Migrant;
 
 namespace Antmicro.Renode.Time
 {
@@ -27,7 +28,7 @@ namespace Antmicro.Renode.Time
         public TimeSourceBase()
         {
             virtualTimeSyncLock = new object();
-            isInSyncPhaseLock = new object();
+            isOnSyncPhaseThreadLock = new object();
 
             blockingEvent = new ManualResetEvent(true);
             delayedActions = new SortedSet<DelayedTask>();
@@ -185,7 +186,7 @@ namespace Antmicro.Renode.Time
         /// <param name="executeImmediately">Flag indicating if the action should be executed immediately when executed in already synced context or should it wait for the next synced state.</param>
         public void ExecuteInNearestSyncedState(Action<TimeStamp> what, bool executeImmediately = false)
         {
-            if(IsInSyncPhase && executeImmediately)
+            if(IsOnSyncPhaseThread && executeImmediately)
             {
                 what(new TimeStamp(ElapsedVirtualTime, Domain));
                 return;
@@ -202,11 +203,31 @@ namespace Antmicro.Renode.Time
         /// <remarks>
         /// If the <see cref="when"> time stamp comes from other time domain it will be executed in the nearest synced state.
         /// </remarks>
-        public void ExecuteInSyncedState(Action<TimeStamp> what, TimeStamp when)
+        /// <returns>
+        /// The ID of the action, which can be used to cancel it with <see cref="CancelActionToExecuteInSyncedState">.
+        /// </returns>
+        public ulong ExecuteInSyncedState(Action<TimeStamp> what, TimeStamp when)
         {
             lock(delayedActions)
             {
-                delayedActions.Add(new DelayedTask(what, when.Domain != Domain ? new TimeStamp() : when, ++delayedTaskId));
+                var id = ++delayedTaskId;
+                delayedActions.Add(new DelayedTask(what, when.Domain != Domain ? new TimeStamp() : when, id));
+                return id;
+            }
+        }
+
+        /// <summary>
+        /// Removes a queued action to execute in the synced state by ID.
+        /// </summary>
+        /// <param name="actionId">The ID of the action to remove.</param>
+        /// <returns>
+        /// True if the action was successfully removed, otherwise false.
+        /// </returns>
+        public bool CancelActionToExecuteInSyncedState(ulong actionId)
+        {
+            lock(delayedActions)
+            {
+                return delayedActions.RemoveWhere(action => action.Id == actionId) == 1;
             }
         }
 
@@ -295,7 +316,21 @@ namespace Antmicro.Renode.Time
 
         // TODO: do not allow to set Quantum of 0
         /// <see cref="ITimeSource.Quantum">
-        public TimeInterval Quantum { get; set; }
+        public TimeInterval Quantum
+        {
+            get => quantum;
+            set
+            {
+                if(quantum == value)
+                {
+                    return;
+                }
+
+                var oldQuantum = quantum;
+                quantum = value;
+                QuantumChanged?.Invoke(oldQuantum, quantum);
+            }
+        }
 
         /// <summary>
         /// Gets the value representing current load, i.e., value indicating how much time the emulation spends sleeping in order to match the expected <see cref="Performance">.
@@ -325,6 +360,27 @@ namespace Antmicro.Renode.Time
         public TimeInterval ElapsedHostTime { get { return TimeInterval.FromTicks(hostTicksElapsed.CumulativeValue); } }
 
         /// <summary>
+        /// Gets the amount that the virtual time is ahead of the host time from the perspective of this time source,
+        /// or 0 if the virtual time is behind the host time.
+        /// </summary>
+        public TimeInterval ElapsedVirtualHostTimeDifference
+        {
+            get
+            {
+                lock(hostTicksElapsed)
+                {
+                    var hostTicks = hostTicksElapsed.CumulativeValue;
+                    var virtualTicks = virtualTicksElapsed.CumulativeValue;
+                    if(virtualTicks <= hostTicks)
+                    {
+                        return TimeInterval.Empty;
+                    }
+                    return TimeInterval.FromTicks(virtualTicks - hostTicks);
+                }
+            }
+        }
+
+        /// <summary>
         /// Gets the virtual time point of the nearest synchronization of all associated <see cref="ITimeHandle">.
         /// </summary>
         public TimeInterval NearestSyncPoint { get; private set; }
@@ -333,6 +389,28 @@ namespace Antmicro.Renode.Time
         /// Gets the number of synchronizations points reached so far.
         /// </summary>
         public long NumberOfSyncPoints { get; private set; }
+
+        /// <summary>
+        /// Gets or sets the flag indicating if the current thread is a safe thread executing sync phase.
+        /// </summary>
+        public bool IsOnSyncPhaseThread
+        {
+            get
+            {
+                lock(isOnSyncPhaseThreadLock)
+                {
+                    return executeThreadId == Thread.CurrentThread.ManagedThreadId;
+                }
+            }
+
+            private set
+            {
+                lock(isOnSyncPhaseThreadLock)
+                {
+                    executeThreadId = value ? Thread.CurrentThread.ManagedThreadId : (int?)null;
+                }
+            }
+        }
 
         /// <summary>
         /// Forces the execution phase of time sinks to be done in serial.
@@ -363,6 +441,11 @@ namespace Antmicro.Renode.Time
         public event Action<TimeInterval> TimePassed;
 
         /// <summary>
+        /// An event called when the Quantum is changed.
+        /// </summary>
+        public event Action<TimeInterval, TimeInterval> QuantumChanged;
+
+        /// <summary>
         /// Execute one iteration of time-granting loop.
         /// </summary>
         /// <remarks>
@@ -371,9 +454,8 @@ namespace Antmicro.Renode.Time
         /// (2) check if there are any blocked slaves; if so DO NOT grant a time interval
         /// (2.1) if there are no blocked slaves grant a new time interval to every slave
         /// (3) wait for all slaves that are relevant in this execution (it can be either all slaves or just blocked ones) until they report back
-        /// (4) (optional) sleep if the virtual time passed faster than a real one; this step is executed if <see cref="AdvanceImmediately"> is not set and <see cref="Performance"> is low enough
-        /// (5) update elapsed virtual time
-        /// (6) execute sync hook and delayed actions if any
+        /// (4) update elapsed virtual time
+        /// (5) execute sync hook and delayed actions if any
         /// </remarks>
         /// <param name="virtualTimeElapsed">Contains the amount of virtual time that passed during execution of this method. It is the minimal value reported by a slave (i.e, some slaves can report higher/lower values).</param>
         /// <param name="timeLimit">Maximum amount of virtual time that can pass during the execution of this method. If not set, current <see cref="Quantum"> is used.</param>
@@ -471,13 +553,15 @@ namespace Antmicro.Renode.Time
         {
             lock(hostTicksElapsed)
             {
-                var currentTimestamp = stopwatch.Elapsed;
+                // Converting to TimeInterval truncates to whole microseconds. Convert before saving the value to
+                // elapsedAtLastUpdate, as otherwise we would lose this decimal part.
+                var currentTimestamp = TimeInterval.FromTimeSpan(stopwatch.Elapsed);
                 var elapsedThisTime = currentTimestamp - elapsedAtLastUpdate;
                 elapsedAtLastUpdate = currentTimestamp;
 
                 this.Trace($"Updating virtual time by {virtualTimeElapsed.TotalMicroseconds} us");
                 this.virtualTicksElapsed.Update(virtualTimeElapsed.Ticks);
-                this.hostTicksElapsed.Update(TimeInterval.FromTimeSpan(elapsedThisTime).Ticks);
+                this.hostTicksElapsed.Update(elapsedThisTime.Ticks);
             }
         }
 
@@ -636,7 +720,7 @@ namespace Antmicro.Renode.Time
             TimeStamp timeNow;
             lock(delayedActions)
             {
-                IsInSyncPhase = true;
+                IsOnSyncPhaseThread = true;
                 SyncHook?.Invoke(ElapsedVirtualTime);
 
                 State = TimeSourceState.ExecutingDelayedActions;
@@ -653,29 +737,14 @@ namespace Antmicro.Renode.Time
             {
                 task.What(timeNow);
             }
-            IsInSyncPhase = false;
+            IsOnSyncPhaseThread = false;
             NumberOfSyncPoints++;
         }
 
-        private bool IsInSyncPhase
-        {
-            get
-            {
-                lock(isInSyncPhaseLock)
-                {
-                    return executeThreadId == Thread.CurrentThread.ManagedThreadId;
-                }
-            }
-
-            set
-            {
-                lock(isInSyncPhaseLock)
-                {
-                    executeThreadId = value ? Thread.CurrentThread.ManagedThreadId : (int?)null;
-                }
-            }
-        }
-
+        // This value is dropped because it should always be false after deserialization in order to start the emulation properly,
+        // otherwise starting stopwatch is omitted in TimeSourceBase.Start() method.
+        // If it wasn't marked as transient it could be true when the emulation wasn't paused before serialization because it was already in a safe state.
+        [Transient]
         protected volatile bool isStarted;
         protected bool isPaused;
 
@@ -695,19 +764,20 @@ namespace Antmicro.Renode.Time
         [Antmicro.Migrant.Constructor(true)]
         private ManualResetEvent blockingEvent;
 
-        private TimeSpan elapsedAtLastUpdate;
+        private TimeInterval elapsedAtLastUpdate;
         private bool isBlocked;
         private bool updateNearestSyncPoint;
         private int? executeThreadId;
         private ulong delayedTaskId;
+        private TimeInterval quantum;
 
         private readonly TimeVariantValue virtualTicksElapsed;
         private readonly TimeVariantValue hostTicksElapsed;
         private readonly SortedSet<DelayedTask> delayedActions;
         private readonly object virtualTimeSyncLock;
-        private readonly object isInSyncPhaseLock;
+        private readonly object isOnSyncPhaseThreadLock;
 
-        private static readonly TimeInterval DefaultQuantum = TimeInterval.FromTicks(100);
+        private static readonly TimeInterval DefaultQuantum = TimeInterval.FromMicroseconds(100);
 
         /// <summary>
         /// Allows locking without starvation.
@@ -844,13 +914,13 @@ namespace Antmicro.Renode.Time
             {
                 What = what;
                 When = when;
-                this.id = id;
+                Id = id;
             }
 
             public int CompareTo(DelayedTask other)
             {
                 var result = When.TimeElapsed.CompareTo(other.When.TimeElapsed);
-                return result != 0 ? result : id.CompareTo(other.id);
+                return result != 0 ? result : Id.CompareTo(other.Id);
             }
 
             public Action<TimeStamp> What { get; private set; }
@@ -859,7 +929,7 @@ namespace Antmicro.Renode.Time
 
             public static DelayedTask Zero { get; private set; }
 
-            private readonly ulong id;
+            public ulong Id { get; }
         }
 
         /// <summary>

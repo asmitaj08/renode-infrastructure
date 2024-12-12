@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 //  This file is licensed under the MIT License.
 //  Full license text is available in 'licenses/MIT.txt'.
@@ -64,6 +64,16 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
                     .WithTag("MCO2PRE", 25, 4)
                     .WithTag("MCO2", 29, 3)
                 },
+                {(long)Registers.PLLClockSourceSelect, new DoubleWordRegister(this, 0x02020200)
+                    .WithValueField(0, 2, name: "PLLSRC")
+                    .WithReservedBits(2, 2)
+                    .WithValueField(4, 6, name: "DIVM1")
+                    .WithReservedBits(10, 2)
+                    .WithValueField(12, 6, name: "DIVM2")
+                    .WithReservedBits(18, 2)
+                    .WithValueField(20, 6, name: "DIVM3")
+                    .WithReservedBits(26, 6)
+                },
                 {(long)Registers.PLLConfigurationRegister, new DoubleWordRegister(this, 0x01FF0000)
                 },
                 {(long)Registers.BackupDomainControl, new DoubleWordRegister(this)
@@ -107,6 +117,15 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
                 }
             };
 
+            for(var i = 0; i < 3; ++i)
+            {
+                registersMap.Add((long)Registers.PLL1FractionalDivider + i * 0x8, new DoubleWordRegister(this, 0x0)
+                    .WithReservedBits(0, 3)
+                    .WithValueField(3, 13, name: $"FRACN{i + 1}")
+                    .WithReservedBits(16, 16)
+                );
+            }
+
             registers = new DoubleWordRegisterCollection(this, registersMap);
         }
 
@@ -134,7 +153,14 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
             ClockControl = 0x0,
             InternalClockSourceCalibration = 0x4,
             ClockConfiguration = 0x10,
+            PLLClockSourceSelect = 0x28,
             PLLConfigurationRegister = 0x2c,
+            PLL1DividersConfiguration = 0x30,
+            PLL1FractionalDivider = 0x34,
+            PLL2DividersConfiguration = 0x38,
+            PLL2FractionalDivider = 0x3C,
+            PLL3DividersConfiguration = 0x40,
+            PLL3FractionalDivider = 0x44,
             // ...
             BackupDomainControl = 0x70,
             ClockControlAndStatus = 0x74,

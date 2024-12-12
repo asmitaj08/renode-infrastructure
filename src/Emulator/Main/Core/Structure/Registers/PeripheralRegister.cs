@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -620,10 +620,17 @@ namespace Antmicro.Renode.Core.Structure.Registers
                 {
                     BitHelper.ClearBits(ref valueToRead, registerField.position, registerField.width);
                 }
+
                 if(registerField.fieldMode.IsFlagSet(FieldMode.ReadToClear)
                    && BitHelper.AreAnyBitsSet(UnderlyingValue, registerField.position, registerField.width))
                 {
                     BitHelper.ClearBits(ref UnderlyingValue, registerField.position, registerField.width);
+                    changedFields.Add(registerField);
+                }
+                if(registerField.fieldMode.IsFlagSet(FieldMode.ReadToSet)
+                   && !BitHelper.AreAllBitsSet(UnderlyingValue, registerField.position, registerField.width))
+                {
+                    BitHelper.SetBits(ref UnderlyingValue, registerField.position, registerField.width);
                     changedFields.Add(registerField);
                 }
             }
@@ -649,7 +656,6 @@ namespace Antmicro.Renode.Core.Structure.Registers
         {
             var baseValue = UnderlyingValue;
             var difference = UnderlyingValue ^ value;
-            var setRegisters = value & (~UnderlyingValue);
             var changedRegisters = new List<RegisterField>();
             foreach(var registerField in registerFields)
             {
@@ -664,6 +670,7 @@ namespace Antmicro.Renode.Core.Structure.Registers
                         }
                         break;
                     case FieldMode.Set:
+                        var setRegisters = value & (~UnderlyingValue);
                         if(BitHelper.AreAnyBitsSet(setRegisters, registerField.position, registerField.width))
                         {
                             BitHelper.OrWith(ref UnderlyingValue, setRegisters, registerField.position, registerField.width);
@@ -688,6 +695,21 @@ namespace Antmicro.Renode.Core.Structure.Registers
                         if(BitHelper.AreAnyBitsSet((difference & UnderlyingValue), registerField.position, registerField.width))
                         {
                             BitHelper.AndWithNot(ref UnderlyingValue, ~value, registerField.position, registerField.width);
+                            changedRegisters.Add(registerField);
+                        }
+                        break;
+                    case FieldMode.WriteZeroToSet:
+                        var negSetRegisters = ~value & (~UnderlyingValue);
+                        if(BitHelper.AreAnyBitsSet(negSetRegisters, registerField.position, registerField.width))
+                        {
+                            BitHelper.OrWith(ref UnderlyingValue, negSetRegisters, registerField.position, registerField.width);
+                            changedRegisters.Add(registerField);
+                        }
+                        break;
+                    case FieldMode.WriteZeroToToggle:
+                        if(BitHelper.AreAnyBitsSet(~value, registerField.position, registerField.width))
+                        {
+                            BitHelper.XorWith(ref UnderlyingValue, ~value, registerField.position, registerField.width);
                             changedRegisters.Add(registerField);
                         }
                         break;
@@ -739,16 +761,16 @@ namespace Antmicro.Renode.Core.Structure.Registers
         /// Returns information about tag writes. Extracted as a method to allow future lazy evaluation.
         /// </summary>
         /// <param name="offset">The offset of the affected register.</param>
-        /// <param name="value">Unhandled value.</param>
+        /// <param name="unhandledMask">Unhandled bits mask.</param>
         /// <param name="originalValue">The whole value written to the register.</param>
-        private string TagLogger(long offset, ulong value, ulong originalValue)
+        private string TagLogger(long offset, ulong unhandledMask, ulong originalValue)
         {
-            var tagsAffected = tags.Select(x => new { x.Name, Value = BitHelper.GetValue(value, x.Position, x.Width) })
-                .Where(x => x.Value != 0);
+            var tagsAffected = tags.Where(x => BitHelper.AreAnyBitsSet(unhandledMask, x.Position, x.Width))
+                .Select(x =>  new { x.Name, Value = BitHelper.GetValue(originalValue, x.Position, x.Width) });
             return "Unhandled write to offset 0x{2:X}. Unhandled bits: [{1}] when writing value 0x{3:X}.{0}"
                 .FormatWith(tagsAffected.Any() ? " Tags: {0}.".FormatWith(
                     tagsAffected.Select(x => "{0} (0x{1:X})".FormatWith(x.Name, x.Value)).Stringify(", ")) : String.Empty,
-                    BitHelper.GetSetBitsPretty(value),
+                    BitHelper.GetSetBitsPretty(unhandledMask),
                     offset,
                     originalValue);
         }

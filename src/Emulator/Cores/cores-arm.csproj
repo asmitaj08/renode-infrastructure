@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Project DefaultTargets="CompileTranslationLib;Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="14.0">
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="14.0">
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
@@ -52,6 +52,9 @@
     <Compile Include="Arm\Timers\ARM_GlobalTimer.cs" />
     <Compile Include="Arm\Timers\ARM_PrivateTimer.cs" />
     <Compile Include="Arm\ARM_GenericInterruptController.cs" />
+    <Compile Include="Arm\ARM_GenericInterruptController\Utils.cs" />
+    <Compile Include="Arm\ARM_GenericInterruptController\ArmGicRedistributorRegistration.cs" />
+    <Compile Include="Arm\ArmSignalsUnit.cs" />
     <Compile Include="Arm\ArmSnoopControlUnit.cs" />
     <Compile Include="Arm\ArmPerformanceMonitoringUnit.cs" />
     <Compile Include="Debug\CPUTracer.cs" />

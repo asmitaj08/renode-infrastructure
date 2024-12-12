@@ -11,6 +11,7 @@ using Antmicro.Renode.Core.Structure.Registers;
 using Antmicro.Renode.Core;
 using Antmicro.Renode.Utilities;
 using Antmicro.Renode.Utilities.Collections;
+using Antmicro.Renode.Logging;
 
 namespace Antmicro.Renode.Peripherals.UART
 {
@@ -38,9 +39,6 @@ namespace Antmicro.Renode.Peripherals.UART
             parityMode = ParityMode.Odd;
             divisor = 1;
             rxFullLevelSelect = 1;
-
-            rxNonEmptyInterruptEnable = false;
-            rxFullLevelInterruptEnable = false;
 
             base.Reset();
             RegistersCollection.Reset();
@@ -110,10 +108,12 @@ namespace Antmicro.Renode.Peripherals.UART
 
         private void UpdateInterrupts()
         {
-            var rxNonEmpty = rxNonEmptyInterruptEnable && Count != 0;
-            var rxFullLevel = rxFullLevelInterruptEnable && RxFullLevelStatus;
+            var rxNonEmpty = rxNonEmptyInterruptEnable.Value && Count != 0;
+            var rxFullLevel = rxFullLevelInterruptEnable.Value && RxFullLevelStatus;
 
-            IRQ.Set(rxNonEmpty || rxFullLevel);
+            var status = rxNonEmpty || rxFullLevel || transmitFifoEmptyInterruptEnable.Value || noTransmitInProgressInterruptEnable.Value;
+            this.Log(LogLevel.Noisy, "IRQ set to {0}", status);
+            IRQ.Set(status);
         }
 
         private Dictionary<long, ByteRegister> BuildRegisterMap()
@@ -124,6 +124,7 @@ namespace Antmicro.Renode.Peripherals.UART
                     .WithValueField(0, 8, FieldMode.Write, name: "UTBUF",
                         writeCallback: (_, value) => this.TransmitCharacter((byte)value)
                     )
+                    .WithWriteCallback((_, __) => UpdateInterrupts())
                 },
                 {(long)Registers.ReceiveBuffer, new ByteRegister(this)
                     .WithValueField(0, 8, FieldMode.Read, name: "URBUF",
@@ -211,21 +212,16 @@ namespace Antmicro.Renode.Peripherals.UART
                     )
                 },
                 {(long)Registers.TransmitControl, new ByteRegister(this)
-                    .WithTaggedFlag("XMIP_EN (No Transmit in Progress Interrupt Enable)", 7)
-                    .WithTaggedFlag("TFIFO_EMPTY_EN (Transmit FIFO Empty Interrupt Enable)", 6)
+                    .WithFlag(7, out noTransmitInProgressInterruptEnable, name: "XMIP_EN (No Transmit in Progress Interrupt Enable)")
+                    .WithFlag(6, out transmitFifoEmptyInterruptEnable, name: "TFIFO_EMPTY_EN (Transmit FIFO Empty Interrupt Enable)")
                     .WithTaggedFlag("TEMPTY_LEVEL_EN (Transmit FIFO Empty Level Interrupt Enable)", 5)
                     .WithTag("TEMPTY_LEVEL_SEL (Transmit FIFO Empty Level Select)", 0, 5)
+                    .WithWriteCallback((_, __) => UpdateInterrupts())
                 },
                 {(long)Registers.ReceiveControl, new ByteRegister(this)
                     .WithTaggedFlag("ERR_EN (Receive Error Interrupt Enable)", 7)
-                    .WithFlag(6, name: "RFIFO_NEMPTY_EN (Receive FIFO Not Empty Status Interrupt Enable)",
-                        valueProviderCallback: _ => rxNonEmptyInterruptEnable,
-                        writeCallback: (_, val) => rxNonEmptyInterruptEnable = val
-                    )
-                    .WithFlag(5, name: "RFULL_LEVEL_EN (Receive FIFO Full Level Status Interrupt Enable)",
-                        valueProviderCallback: _ => rxFullLevelInterruptEnable,
-                        writeCallback: (_, val) => rxFullLevelInterruptEnable = val
-                    )
+                    .WithFlag(6, out rxNonEmptyInterruptEnable, name: "RFIFO_NEMPTY_EN (Receive FIFO Not Empty Status Interrupt Enable)")
+                    .WithFlag(5, out rxFullLevelInterruptEnable, name: "RFULL_LEVEL_EN (Receive FIFO Full Level Status Interrupt Enable)")
                     .WithValueField(0, 5, name: "RFULL_LEVEL_SEL (Receive FIFO Full Level Select)",
                         valueProviderCallback: _ => (ulong)rxFullLevelSelect,
                         writeCallback: (_, val) => rxFullLevelSelect = (int)val
@@ -258,8 +254,10 @@ namespace Antmicro.Renode.Peripherals.UART
         private uint divisor;
         private int rxFullLevelSelect;
 
-        private bool rxNonEmptyInterruptEnable;
-        private bool rxFullLevelInterruptEnable;
+        private IFlagRegisterField rxNonEmptyInterruptEnable;
+        private IFlagRegisterField rxFullLevelInterruptEnable;
+        private IFlagRegisterField noTransmitInProgressInterruptEnable;
+        private IFlagRegisterField transmitFifoEmptyInterruptEnable;
 
         private const int MaxQueueCount = 16;
 

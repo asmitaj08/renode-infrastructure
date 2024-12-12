@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -11,7 +11,10 @@ using Antmicro.Renode.Core;
 
 namespace Antmicro.Renode.Peripherals.UART
 {
-    public class MiV_CoreUART : UARTBase, IBytePeripheral, IKnownSize
+    // This peripheral only has byte-wide registers, but we define it as a double-word peripheral and
+    // translate byte->dword instead of dword->byte to avoid unhandled read warnings on dword access.
+    [AllowedTranslations(AllowedTranslation.ByteToDoubleWord | AllowedTranslation.WordToDoubleWord)]
+    public class MiV_CoreUART : UARTBase, IDoubleWordPeripheral, IKnownSize
     {
         public MiV_CoreUART(IMachine machine, ulong clockFrequency) : base(machine)
         {
@@ -55,20 +58,20 @@ namespace Antmicro.Renode.Peripherals.UART
             registers = new ByteRegisterCollection(this, registersMap);
         }
 
-        public byte ReadByte(long offset)
-        {
-            return registers.Read(offset);
-        }
-
         public override void Reset()
         {
             base.Reset();
             registers.Reset();
         }
 
-        public void WriteByte(long offset, byte value)
+        public uint ReadDoubleWord(long offset)
         {
-            registers.Write(offset, value);
+            return registers.Read(offset);
+        }
+
+        public void WriteDoubleWord(long offset, uint value)
+        {
+            registers.Write(offset, (byte)value);
         }
 
         public long Size => 0x18;

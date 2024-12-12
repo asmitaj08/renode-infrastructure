@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -19,9 +19,10 @@ namespace Antmicro.Renode.Peripherals.Network
     //TODO: Might be Word/BytePeripheral as well
     public sealed class SynopsysEthernetMAC : NetworkWithPHY, IDoubleWordPeripheral, IMACInterface, IKnownSize
     {
-        public SynopsysEthernetMAC(IMachine machine) : base(machine)
+        public SynopsysEthernetMAC(IMachine machine, SynopsysEthernetVersion version = SynopsysEthernetVersion.STM32F4) : base(machine)
         {
             sysbus = machine.GetSystemBus(this);
+            this.version = version;
             MAC = EmulationManager.Instance.CurrentEmulation.MACRepository.GenerateUniqueMAC();
             IRQ = new GPIO();
             Reset();
@@ -238,23 +239,23 @@ namespace Antmicro.Renode.Peripherals.Network
                     }
                 }
 
-                var receiveDescriptor = new RxDescriptor(sysbus);
+                var receiveDescriptor = new RxDescriptor(this, sysbus, version);
                 receiveDescriptor.Fetch(dmaReceiveDescriptorListAddress);
-                if(receiveDescriptor.IsUsed)
+                if(receiveDescriptor.IsOwnedByDMA)
                 {
                     this.Log(LogLevel.Error, "DROPPING  - descriptor is used.");
                     return;
                 }
                 this.Log(LogLevel.Noisy, "DESCRIPTOR ADDR1={0:X}, ADDR2={1:X}", receiveDescriptor.Address1, receiveDescriptor.Address2);
-                while(!receiveDescriptor.IsUsed)
+                while(!receiveDescriptor.IsOwnedByDMA)
                 {
                     if(receiveDescriptor.Address1 < 0x20000000)
                     {
                         this.Log(LogLevel.Error, "Descriptor points outside of ram, aborting... This should not happen!");
                         break;
                     }
-                    receiveDescriptor.IsUsed = true;
-                    receiveDescriptor.IsFirst = first;
+                    receiveDescriptor.IsOwnedByDMA = true;
+                    receiveDescriptor.IsFirstSegment = first;
                     first = false;
                     var howManyBytes = Math.Min(receiveDescriptor.Buffer1Length, frame.Bytes.Length - written);
                     var toWriteArray = new byte[howManyBytes];
@@ -273,11 +274,11 @@ namespace Antmicro.Renode.Peripherals.Network
                     }
                     if(frame.Bytes.Length - written <= 0)
                     {
-                        receiveDescriptor.IsLast = true;
+                        receiveDescriptor.IsLastSegment = true;
                         this.NoisyLog("Setting descriptor length to {0}", (uint)frame.Bytes.Length);
                         receiveDescriptor.FrameLength = (uint)frame.Bytes.Length;
                     }
-                    this.NoisyLog("Writing descriptor at 0x{6:X}, first={0}, last={1}, written {2} of {3}. next_chained={4}, endofring={5}", receiveDescriptor.IsFirst, receiveDescriptor.IsLast, written, frame.Bytes.Length, receiveDescriptor.IsNextDescriptorChained, receiveDescriptor.IsEndOfRing, dmaReceiveDescriptorListAddress);
+                    this.NoisyLog("Writing descriptor at 0x{6:X}, first={0}, last={1}, written {2} of {3}. next_chained={4}, endofring={5}", receiveDescriptor.IsFirstSegment, receiveDescriptor.IsLastSegment, written, frame.Bytes.Length, receiveDescriptor.IsNextDescriptorChained, receiveDescriptor.IsEndOfRing, dmaReceiveDescriptorListAddress);
                     receiveDescriptor.WriteBack();
                     if(!receiveDescriptor.IsNextDescriptorChained)
                     {
@@ -331,13 +332,13 @@ namespace Antmicro.Renode.Peripherals.Network
         private void SendFrames()
         {
             this.Log(LogLevel.Noisy, "Sending frame");
-            var transmitDescriptor = new TxDescriptor(sysbus);
+            var transmitDescriptor = new TxDescriptor(this, sysbus, version);
             var packetData = new List<byte>();
 
             transmitDescriptor.Fetch(dmaTransmitDescriptorListAddress);
-            while(!transmitDescriptor.IsUsed)
+            while(!transmitDescriptor.IsOwnedByDMA)
             {
-                transmitDescriptor.IsUsed = true;
+                transmitDescriptor.IsOwnedByDMA = true;
                 this.Log(LogLevel.Noisy, "GOING TO READ FROM {0:X}, len={1}", transmitDescriptor.Address1, transmitDescriptor.Buffer1Length);
                 packetData.AddRange(sysbus.ReadBytes(transmitDescriptor.Address1, transmitDescriptor.Buffer1Length));
                 if(!transmitDescriptor.IsNextDescriptorChained)
@@ -359,7 +360,7 @@ namespace Antmicro.Renode.Peripherals.Network
                 {
                     dmaTransmitDescriptorListAddress += 8;
                 }
-                if(transmitDescriptor.IsLast)
+                if(transmitDescriptor.IsLastSegment)
                 {
                     this.Log(LogLevel.Noisy, "Sending frame of {0} bytes.", packetData.Count);
 
@@ -440,16 +441,25 @@ namespace Antmicro.Renode.Peripherals.Network
             IPProtocolType.UDP,
             IPProtocolType.ICMP
         };
+        private readonly SynopsysEthernetVersion version;
         private const uint StartStopTransmission = 1 << 13;
         private const uint TransmitBufferUnavailableStatus = 1 << 2;
         private const uint ReceiveStatus = 1 << 6;
         private const uint TransmitStatus = 1 << 0;
 
+        public enum SynopsysEthernetVersion
+        {
+            STM32F4,
+            BeagleV,
+        }
+
         private class Descriptor
         {
-            public Descriptor(IBusController sysbus)
+            public Descriptor(SynopsysEthernetMAC parent, IBusController sysbus, SynopsysEthernetVersion version)
             {
                 this.sysbus = sysbus;
+                this.version = version;
+                this.parent = parent;
             }
 
             public void Fetch(uint address)
@@ -470,36 +480,54 @@ namespace Antmicro.Renode.Peripherals.Network
                 sysbus.WriteDoubleWord(address + 12, word3);
             }
 
-            public bool IsUsed
+            public bool IsOwnedByDMA
             {
-                get
-                {
-                    return (word0 & UsedField) == 0;
-                }
-                set
-                {
-                    word0 = (word0 & ~UsedField) | (value ? 0u : UsedField);
-                }
+                get => !BitHelper.IsBitSet(word0, 31);
+                set => BitHelper.SetBit(ref word0, 31, !value);
             }
 
             public uint Address1
             {
-                get{ return word2; }
+                get => word2;
             }
 
             public uint Address2
             {
-                get{ return word3; }
+                get => word3;
             }
 
             public int Buffer1Length
             {
-                get{ return (int)(word1 & 0x1FFF); }
+                get
+                {
+                    switch(version)
+                    {
+                    case SynopsysEthernetVersion.BeagleV:
+                        return (int)BitHelper.GetValue(word1, 0, 10);
+                    case SynopsysEthernetVersion.STM32F4:
+                        return (int)BitHelper.GetValue(word1, 0, 13);
+                    default:
+                        parent.ErrorLog("Unsupported {0}: {1}, returning 0", nameof(SynopsysEthernetVersion), version);
+                        return 0;
+                    }
+                }
             }
 
             public int Buffer2Length
             {
-                get{ return (int)((word1 >> 16) & 0x1FFF); }
+                get
+                {
+                    switch(version)
+                    {
+                    case SynopsysEthernetVersion.BeagleV:
+                        return (int)BitHelper.GetValue(word1, 11, 10);
+                    case SynopsysEthernetVersion.STM32F4:
+                        return (int)BitHelper.GetValue(word1, 16, 13);
+                    default:
+                        parent.ErrorLog("Unsupported {0}: {1}, returning 0", nameof(SynopsysEthernetVersion), version);
+                        return 0;
+                    }
+                }
             }
 
             protected const uint UsedField = 1u << 31;
@@ -508,12 +536,14 @@ namespace Antmicro.Renode.Peripherals.Network
             protected uint word1;
             protected uint word2;
             protected uint word3;
+            protected readonly SynopsysEthernetVersion version;
+            protected readonly SynopsysEthernetMAC parent;
             private readonly IBusController sysbus;
         }
 
         private class TxDescriptor : Descriptor
         {
-            public TxDescriptor(IBusController sysbus) : base(sysbus)
+            public TxDescriptor(SynopsysEthernetMAC parent, IBusController sysbus, SynopsysEthernetVersion version) : base(parent, sysbus, version)
             {
             }
 
@@ -521,15 +551,33 @@ namespace Antmicro.Renode.Peripherals.Network
             {
                 get
                 {
-                    return ((word0 >> 22) & 3);
+                    switch(version)
+                    { 
+                    case SynopsysEthernetVersion.BeagleV:
+                        return BitHelper.GetValue(word1, 27, 2);
+                    case SynopsysEthernetVersion.STM32F4:
+                        return BitHelper.GetValue(word0, 22, 2);
+                    default:
+                        parent.ErrorLog("Unsupported {0}: {1}, returning 0", nameof(SynopsysEthernetVersion), version);
+                        return 0;
+                    }
                 }
             }
 
-            public bool IsLast
+            public bool IsLastSegment
             {
                 get
                 {
-                    return (word0 & LastField) != 0;
+                    switch(version)
+                    {
+                    case SynopsysEthernetVersion.BeagleV:
+                        return BitHelper.IsBitSet(word1, 30);
+                    case SynopsysEthernetVersion.STM32F4:
+                        return BitHelper.IsBitSet(word0, 29);
+                    default:
+                        parent.ErrorLog("Unsupported {0}: {1}, returning 0", nameof(SynopsysEthernetVersion), version);
+                        return false;
+                    }
                 }
             }
 
@@ -537,7 +585,16 @@ namespace Antmicro.Renode.Peripherals.Network
             {
                 get
                 {
-                    return (word0 & SecondDescriptorChainedField) != 0;
+                    switch(version)
+                    {
+                    case SynopsysEthernetVersion.BeagleV:
+                        return BitHelper.IsBitSet(word1, 24);
+                    case SynopsysEthernetVersion.STM32F4:
+                        return BitHelper.IsBitSet(word0, 20);
+                    default:
+                        parent.ErrorLog("Unsupported {0}: {1}, returning 0", nameof(SynopsysEthernetVersion), version);
+                        return false;
+                    }
                 }
             }
 
@@ -545,18 +602,23 @@ namespace Antmicro.Renode.Peripherals.Network
             {
                 get
                 {
-                    return (word0 & EndOfRingField) != 0;
+                    switch(version)
+                    {
+                    case SynopsysEthernetVersion.BeagleV:
+                        return BitHelper.IsBitSet(word1, 25);
+                    case SynopsysEthernetVersion.STM32F4:
+                        return BitHelper.IsBitSet(word0, 21);
+                    default:
+                        parent.ErrorLog("Unsupported {0}: {1}, returning 0", nameof(SynopsysEthernetVersion), version);
+                        return false;
+                    }
                 }
             }
-
-            private const uint LastField = 1u << 29;
-            private const uint SecondDescriptorChainedField = 1u << 20;
-            private const uint EndOfRingField = 1u << 21;
         }
 
         private class RxDescriptor : Descriptor
         {
-            public RxDescriptor(IBusController sysbus) : base(sysbus)
+            public RxDescriptor(SynopsysEthernetMAC parent, IBusController sysbus, SynopsysEthernetVersion version) : base(parent, sysbus, version)
             {
             }
 
@@ -564,7 +626,17 @@ namespace Antmicro.Renode.Peripherals.Network
             {
                 get
                 {
-                    return (word1 & SecondDescriptorChainedField) != 0;
+                    switch(version)
+                    {
+                    case SynopsysEthernetVersion.BeagleV:
+                        return BitHelper.IsBitSet(word1, 24);
+                    case SynopsysEthernetVersion.STM32F4:
+                        return BitHelper.IsBitSet(word1, 14);
+                    default:
+                        parent.ErrorLog("Unsupported {0}: {1}, returning 0", nameof(SynopsysEthernetVersion), version);
+                        return false;
+                    }
+
                 }
             }
 
@@ -572,31 +644,40 @@ namespace Antmicro.Renode.Peripherals.Network
             {
                 get
                 {
-                    return (word1 & EndOfRingField) != 0;
+                    switch(version)
+                    {
+                    case SynopsysEthernetVersion.BeagleV:
+                        return BitHelper.IsBitSet(word1, 25);
+                    case SynopsysEthernetVersion.STM32F4:
+                        return BitHelper.IsBitSet(word1, 15);
+                    default:
+                        parent.ErrorLog("Unsupported {0}: {1}, returning 0", nameof(SynopsysEthernetVersion), version);
+                        return false;
+                    }
                 }
             }
 
-            public bool IsLast
+            public bool IsLastSegment
             {
                 set
                 {
-                    word0 = (word0 & ~LastField) | (value ? LastField : 0u);
+                    BitHelper.SetBit(ref word0, 8, value);
                 }
                 get
                 {
-                    return (word0 & LastField) != 0;
+                    return BitHelper.IsBitSet(word0, 8);
                 }
             }
 
-            public bool IsFirst
+            public bool IsFirstSegment
             {
                 set
                 {
-                    word0 = (word0 & ~FirstField) | (value ? FirstField : 0u);
+                    BitHelper.SetBit(ref word0, 9, value);
                 }
                 get
                 {
-                    return (word0 & FirstField) != 0;
+                    return BitHelper.IsBitSet(word0, 9);
                 }
             }
 
@@ -604,16 +685,9 @@ namespace Antmicro.Renode.Peripherals.Network
             {
                 set
                 {
-                    word0 = (word0 & ~FrameLengthMask) | (value << FrameLengthShift);
+                    BitHelper.ReplaceBits(ref word0, value, width: 14, destinationPosition: 16);
                 }
             }
-
-            private const int FrameLengthShift = 16;
-            private const uint FrameLengthMask = 0x3FFF0000;
-            private const uint LastField = 1u << 8;
-            private const uint FirstField = 1u << 9;
-            private const uint EndOfRingField = 1u << 15;
-            private const uint SecondDescriptorChainedField = 1u << 14;
         }
 
         private enum Registers

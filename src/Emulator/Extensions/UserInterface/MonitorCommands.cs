@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using Antmicro.Renode.Core;
 using Antmicro.Renode.Exceptions;
 using Antmicro.Renode.Peripherals;
+using Antmicro.Renode.Peripherals.CPU;
 using Antmicro.Renode.Utilities;
 using Antmicro.Renode.Utilities.Collections;
 using System.Linq;
@@ -23,6 +24,7 @@ using Antmicro.Renode.UserInterface.Commands;
 using Antmicro.Renode.UserInterface.Exceptions;
 using System.Runtime.InteropServices;
 using System.Globalization;
+using System.Text;
 
 namespace Antmicro.Renode.UserInterface
 {
@@ -30,7 +32,7 @@ namespace Antmicro.Renode.UserInterface
     {
         public event Action Quitted;
 
-        private readonly List<string> usings = new List<string>();
+        private readonly List<string> usings = new List<string>() { "sysbus." };
 
         public enum NumberModes
         {
@@ -49,6 +51,32 @@ namespace Antmicro.Renode.UserInterface
                 sanitizedFile = sanitizedFile.Replace("/ ", "\\ ");
             }
             return sanitizedFile;
+        }
+
+        private static string GetPossibleEnumValues(Type type)
+        {
+            if(!type.IsEnum)
+            {
+                throw new ArgumentException("Type is not Enum!", nameof(type));
+            }
+
+            var builder = new StringBuilder();
+            builder.AppendLine("Possible values are:");
+            foreach(var name in Enum.GetNames(type))
+            {
+                builder.AppendLine($"\t{name}");
+            }
+            builder.AppendLine();
+
+            if(type == typeof(ExecutionMode))
+            {
+                var emulation = EmulationManager.Instance.CurrentEmulation;
+                var isBlocking = emulation.SingleStepBlocking;
+                var blockingString = isBlocking ? "blocking" : "non-blocking";
+                builder.AppendLine($"{nameof(ExecutionMode.SingleStep)} is {blockingString}. It can be changed with:");
+                builder.AppendLine($"\t{EmulationToken} {nameof(emulation.SingleStepBlocking)} {!isBlocking}");
+            }
+            return builder.ToString();
         }
 
         private bool RunCommand(ICommandInteraction writer, Command command, IList<Token> parameters)
@@ -411,12 +439,8 @@ namespace Antmicro.Renode.UserInterface
 
                     if(result.GetType().IsEnum)
                     {
-                        writer.WriteLine("\nPossible values are:");
-                        foreach(var entry in Enum.GetValues(result.GetType()))
-                        {
-                            writer.WriteLine(string.Format("\t{0} ({1})", entry, /*(int)*/entry));
-                        }
                         writer.WriteLine();
+                        writer.WriteLine(GetPossibleEnumValues(result.GetType()));
                     }
                 }
             }
@@ -859,22 +883,25 @@ namespace Antmicro.Renode.UserInterface
             }//intentionally no else (may be iconvertible or enum)
             if(type.IsEnum)
             {
-                var valueString = value as string;
-                if(valueString != null)
+                if(value is string valueString)
                 {
-                    if(!Enum.IsDefined(type, value))
+                    if(Enum.IsDefined(type, value))
                     {
-                        throw new FormatException(String.Format("Enum value {0} is not defined for {1}!", value, type.Name));
+                        return Enum.Parse(type, valueString);
                     }
-                    return Enum.Parse(type, valueString);
                 }
-                var val = Enum.ToObject(type, value);
-
-                if(!Enum.IsDefined(type, val) && !type.IsDefined(typeof(FlagsAttribute), false))
+                else
                 {
-                    throw new FormatException(String.Format("Enum value {0} is not defined for {1}!", value, type.Name));
+                    var enumValue = Enum.ToObject(type, value);
+                    if(Enum.IsDefined(type, enumValue) || type.IsDefined(typeof(FlagsAttribute), false))
+                    {
+                        return enumValue;
+                    }
                 }
-                return val;
+                throw new FormatException(String.Format(
+                    "Enum value {0} is not defined for {1}!\n\n{2}",
+                    value, type.Name, GetPossibleEnumValues(type)
+                ));
             }
             if(underlyingType != null)
             {
@@ -1194,7 +1221,7 @@ namespace Antmicro.Renode.UserInterface
             var foundField = fields.FirstOrDefault(x => x.Name == name);
             var foundProp = properties.FirstOrDefault(x => x.Name == name);
 
-            if(foundProp != null)
+            if(foundProp?.GetMethod != null)
             {
                 return InvokeGet(node, foundProp);
             }

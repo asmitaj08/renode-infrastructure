@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2022 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -15,7 +15,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 {
     public struct CPURegister
     {
-        public CPURegister(int index, int width, bool isGeneral, bool isReadonly)
+        public CPURegister(int index, int width, bool isGeneral, bool isReadonly, string[] aliases = null)
         {
             if(width % 8 != 0)
             {
@@ -26,6 +26,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             IsGeneral = isGeneral;
             Width = width;
             IsReadonly = isReadonly;
+            Aliases = aliases;
         }
 
         public RegisterValue ValueFromBytes(byte[] bytes, Endianess endianness)
@@ -66,15 +67,18 @@ namespace Antmicro.Renode.Peripherals.CPU
             return result;
         }
 
-        public int Index { get; private set; }
-        public bool IsGeneral { get; private set; }
-        public int Width { get; private set; }
-        public bool IsReadonly { get; private set; }
+        public int Index { get; }
+        public bool IsGeneral { get; }
+        public int Width { get; }
+        public bool IsReadonly { get; }
+        public string[] Aliases { get; }
 
         // this is to support monitor output
         public override string ToString()
         {
-            return Index.ToString();
+            return Aliases != null
+                ? String.Join(" / ", Aliases)
+                : $"#{Index}";
         }
     }
 }

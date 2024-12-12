@@ -85,9 +85,6 @@
     <Reference Include="Nini">
       <HintPath>..\..\..\..\..\lib\resources\libraries\Nini.dll</HintPath>
     </Reference>
-    <Reference Include="Lucene.Net">
-      <HintPath>..\..\..\..\..\lib\resources\libraries\Lucene.Net.dll</HintPath>
-    </Reference>
     <Reference Include="LZ4">
       <HintPath>..\..\..\..\..\lib\resources\libraries\LZ4.dll</HintPath>
     </Reference>
@@ -115,6 +112,9 @@
     <Compile Include="Storage\SCSI\Commands\SCSIResponses.cs" />
     <Compile Include="Storage\SCSI\SCSICommand.cs" />
     <Compile Include="Storage\SCSI\SCSICommandDescriptorBlock.cs" />
+    <Compile Include="Storage\VirtIO\Virtqueue.cs" />
+    <Compile Include="Storage\VirtIO\VirtIO.cs" />
+    <Compile Include="Storage\VirtIO\VirtIOMMIO.cs" />
     <Compile Include="Peripherals\USB\MSC\BOT\CommandStatusWrapper.cs" />
     <Compile Include="Peripherals\USB\MSC\BulkOnlyTransportCommandBlockWrapper.cs" />
     <Compile Include="Peripherals\USB\MSC\BOT\CommandStatus.cs" />
@@ -150,14 +150,21 @@
     <Compile Include="Peripherals\BasicWordPeripheral.cs" />
     <Compile Include="Peripherals\BasicDoubleWordPeripheral.cs" />
     <Compile Include="Peripherals\IPeripheral.cs" />
+    <Compile Include="Peripherals\ICluster.cs" />
     <Compile Include="Utilities\Misc.cs" />
     <Compile Include="Utilities\VideoCapturer.cs" />
     <Compile Include="Core\GPIOAttribute.cs" />
-    <Compile Include="Core\Extensions\ReadWriteExtensions.cs" />
+    <Compile Include="Core\Extensions\ReadWriteExtensions.cs">
+      <DependentUpon>ReadWriteExtensions.tt</DependentUpon>
+    </Compile>
     <Compile Include="Core\Extensions\FileLoaderExtensions.cs" />
     <Compile Include="Peripherals\IHasOwnLife.cs" />
     <Compile Include="Core\Range.cs" />
     <Compile Include="Peripherals\UART\IUART.cs" />
+    <Compile Include="Peripherals\SENT\ISENTPeripheral.cs" />
+    <Compile Include="Peripherals\SENT\Transmitter.cs" />
+    <Compile Include="Peripherals\SENT\SENTPeripheralBase.cs" />
+    <Compile Include="Peripherals\SENT\Messages.cs" />
     <Compile Include="Peripherals\CFU\ICFU.cs" />
     <Compile Include="Utilities\SharedLibraries.cs" />
     <Compile Include="Peripherals\Network\INetworkInterface.cs" />
@@ -185,8 +192,10 @@
     <Compile Include="Peripherals\Bus\PeripheralAccessMethods.cs" />
     <Compile Include="Peripherals\Bus\SymbolLookup.cs" />
     <Compile Include="Peripherals\IKnownSize.cs" />
+    <Compile Include="Peripherals\Bus\BusRegistration.cs" />
     <Compile Include="Peripherals\Bus\BusPointRegistration.cs" />
     <Compile Include="Peripherals\Bus\BusRangeRegistration.cs" />
+    <Compile Include="Peripherals\Bus\BusParametrizedRegistration.cs" />
     <Compile Include="Core\Machine.cs" />
     <Compile Include="Peripherals\Bus\IBusPeripheral.cs" />
     <Compile Include="Peripherals\PCI\IPCIPeripheral.cs" />
@@ -228,7 +237,6 @@
     <Compile Include="Peripherals\UART\UARTBase.cs" />
     <Compile Include="Utilities\Binding\ExportAttribute.cs" />
     <Compile Include="Peripherals\Bus\BusMultiRegistration.cs" />
-    <Compile Include="Peripherals\Bus\IPerCoreRegistration.cs" />
     <Compile Include="Peripherals\Bus\Wrappers\BytePeripheralWrapper.cs" />
     <Compile Include="Peripherals\Bus\Wrappers\WordPeripheralWrapper.cs" />
     <Compile Include="Peripherals\Bus\Wrappers\DoubleWordPeripheralWrapper.cs" />
@@ -297,15 +305,19 @@
     </Compile>
     <Compile Include="Utilities\IAutoLoadType.cs" />
     <Compile Include="Peripherals\CPU\ICPU.cs" />
+    <Compile Include="Peripherals\CPU\ICPUWithAArch64Support.cs" />
     <Compile Include="Peripherals\CPU\ICPUWithMetrics.cs" />
     <Compile Include="Peripherals\CPU\ICPUWithNMI.cs" />
     <Compile Include="Peripherals\CPU\ICPUWithExternalMmu.cs" />
+    <Compile Include="Peripherals\CPU\ICPUWithPSCI.cs" />
     <Compile Include="Peripherals\CPU\ICPUWithMappedMemory.cs" />
     <Compile Include="Peripherals\CPU\ICPUWithRegisters.cs" />
     <Compile Include="Peripherals\CPU\ICPUWithOpcodeHooks.cs" />
     <Compile Include="Peripherals\CPU\ICPUWithMemoryAccessHooks.cs" />
     <Compile Include="Peripherals\CPU\ICPUWithPostGprAccessHooks.cs" />
     <Compile Include="Peripherals\CPU\IInitableCPU.cs" />
+    <Compile Include="Peripherals\CPU\IControllableCPU.cs" />
+    <Compile Include="Peripherals\CPU\ISignalsUnit.cs" />
     <Compile Include="Peripherals\CPU\CPURegister.cs" />
     <Compile Include="Utilities\ConfigurationManager.cs" />
     <Compile Include="Testing\LEDTester.cs" />
@@ -325,6 +337,7 @@
     <Compile Include="Peripherals\CPU\HaltReason.cs" />
     <Compile Include="Peripherals\IMemory.cs" />
     <Compile Include="Utilities\CachingFileFetcher.cs" />
+    <Compile Include="Core\PeripheralsAddedEventArgs.cs" />
     <Compile Include="Core\PeripheralsChangedEventArgs.cs" />
     <Compile Include="Core\MachineStateChangedEventArgs.cs" />
     <Compile Include="Peripherals\Bus\IMultibyteWritePeripheral.cs" />
@@ -350,7 +363,6 @@
     <Compile Include="Peripherals\GPIOPort\BaseGPIOPort.cs" />
     <Compile Include="Peripherals\Bus\AllowedTranslation.cs" />
     <Compile Include="Peripherals\Bus\AllowedTranslationsAttribute.cs" />
-    <Compile Include="Peripherals\EndianessAttribute.cs" />
     <Compile Include="Core\GPIOConnection.cs" />
     <Compile Include="Peripherals\BackendManager.cs" />
     <Compile Include="Peripherals\Video\IVideo.cs" />
@@ -363,6 +375,7 @@
     <Compile Include="Backends\Terminals\BackendTerminal.cs" />
     <Compile Include="Peripherals\DMA\Place.cs" />
     <Compile Include="Plugins\PluginManager.cs" />
+    <Compile Include="Sockets\SocketsManager.cs" />
     <Compile Include="Peripherals\IAnalyzableBackend.cs" />
     <Compile Include="Peripherals\IAnalyzable.cs" />
     <Compile Include="Peripherals\IAnalyzableBackendAnalyzer.cs" />
@@ -424,14 +437,9 @@
     <Compile Include="Peripherals\IPhysicalLayer.cs" />
     <Compile Include="Logging\Backends\ConsoleBackend.cs" />
     <Compile Include="Logging\Backends\FileBackend.cs" />
+    <Compile Include="Logging\Backends\NetworkBackend.cs" />
     <Compile Include="Logging\Backends\LoggerBackend.cs" />
     <Compile Include="Logging\Backends\TextBackend.cs" />
-    <Compile Include="Logging\Lucene\Direction.cs" />
-    <Compile Include="Logging\Lucene\Range.cs" />
-    <Compile Include="Logging\Lucene\ViewFilter.cs" />
-    <Compile Include="Logging\Lucene\SearchResults.cs" />
-    <Compile Include="Logging\Lucene\SearchContext.cs" />
-    <Compile Include="Logging\Backends\LuceneLoggerBackend.cs" />
     <Compile Include="Logging\Backends\DummyLoggerBackend.cs" />
     <Compile Include="Peripherals\Timers\LimitTimer.cs" />
     <Compile Include="Peripherals\Bus\ConnectionRegionAttribute.cs" />
@@ -454,6 +462,7 @@
     <Compile Include="Peripherals\Video\AutoRepaintingVideo.cs" />
     <Compile Include="Peripherals\Python\PythonPeripheral.cs" />
     <Compile Include="Peripherals\Memory\MappedMemory.cs" />
+    <Compile Include="Peripherals\Memory\ArrayMemory.cs" />
     <Compile Include="Peripherals\Input\IPS2Peripheral.cs" />
     <Compile Include="Peripherals\Input\IPS2Controller.cs" />
     <Compile Include="Peripherals\Network\EthernetPhysicalLayer.cs" />
@@ -524,6 +533,7 @@
     <Compile Include="Utilities\GDB\Packet.cs" />
     <Compile Include="Utilities\GDB\PacketBuilder.cs" />
     <Compile Include="Utilities\GDB\PacketData.cs" />
+    <Compile Include="Utilities\GDB\PacketThreadId.cs" />
     <Compile Include="Utilities\GDB\GdbStub.cs" />
     <Compile Include="Peripherals\CPU\ICpuSupportingGdb.cs" />
     <Compile Include="Peripherals\CPU\ICPUWithMMU.cs" />
@@ -594,6 +604,8 @@
     <Compile Include="Utilities\ICanLoadFiles.cs" />
     <Compile Include="Peripherals\Network\Clause45Address.cs" />
     <Compile Include="Network\CRCMode.cs" />
+    <Compile Include="Network\BasicNetwork.cs" />
+    <Compile Include="Network\IBasicNetworkNode.cs" />
     <Compile Include="Utilities\IfWrapper.cs" />
     <Compile Include="Peripherals\IMachine.cs" />
     <Compile Include="Utilities\RESD\LowLevelRESDParser.cs" />
@@ -603,7 +615,21 @@
     <Compile Include="Peripherals\UART\VirtualConsole.cs" />
     <Compile Include="Utilities\SimpleInstructionDecoder.cs" />
     <Compile Include="Peripherals\DefaultInterruptAttribute.cs" />
+    <Compile Include="Peripherals\NameAliasAttribute.cs" />
     <Compile Include="Peripherals\CPU\CPUState.cs" />
+    <Compile Include="Peripherals\IEndiannessAware.cs" />
+    <Compile Include="Utilities\SnapshotTracker.cs" />
+    <Compile Include="Core\Structure\IBusRegistration.cs" />
+    <Compile Include="Peripherals\UART\ILIN.cs" />
+    <Compile Include="Peripherals\UART\LINHub.cs" />
+    <Compile Include="Utilities\LINDecoder.cs" />
+    <Compile Include="Peripherals\UART\LINBase.cs" />
+    <Compile Include="Peripherals\CAN\SocketCAN.cs" />
+    <Compile Include="Peripherals\Sensor\IMagneticSensor.cs" />
+    <Compile Include="Peripherals\Sensor\IADC.cs" />
+    <Compile Include="Peripherals\Bus\IIndirectCSRPeripheral.cs" />
+    <Compile Include="Utilities\Fraction.cs" />
+    <Compile Include="Utilities\ELFUtils.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
   <ItemGroup />

@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2021 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -12,11 +12,9 @@ using Antmicro.Renode.Peripherals.Bus;
 using Antmicro.Renode.Utilities;
 using System.Collections.Generic;
 using System.Linq;
-using Endianess = ELFSharp.ELF.Endianess;
 
 namespace Antmicro.Renode.Peripherals.IRQControllers
 {
-    [Endianess(Endianess.BigEndian)]
     public class GaislerMIC: IDoubleWordPeripheral, INumberedGPIOOutput, IIRQController, IGaislerAPB
     {
         public GaislerMIC(IMachine machine, uint totalNumberCPUs = 1)
@@ -180,7 +178,8 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                     }
                     break;
                 case registerOffset.InterruptClear:
-                    registers.InterruptPending &= ~(value);
+                    // Don't clear interrupts whose input is set
+                    registers.InterruptPending &= ~(value & ~pirqState);
                     break;
                 case registerOffset.MultiprocessorStatus:
                     // A halted processor can be reset and restarted by writing a ‘1’ to its status field. Bit field = [15:0]
@@ -269,6 +268,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 registers.ProcessorInterruptMask[i] = 0;
                 registers.ProcessorInterruptForce[i] = 0;
             }
+            pirqState = 0;
         }
         #endregion
 
@@ -281,6 +281,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 
             if(value)
             {
+                pirqState |= (1u << number);
                 pendingInterrupts |= (1u << number);
                 // If interrupt is enabled in Broadcast register use cpu Force registers instead of global Pending
                 if(isBroadcastEnabled() && ((registers.Broadcast & pendingInterrupts) != 0))
@@ -322,6 +323,10 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                     }
                 }
             }
+            else
+            {
+                pirqState &= ~(1u << number);
+            }
 
             this.forwardInterrupt();
         }
@@ -345,12 +350,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 
         public uint GetInterruptNumber()
         {
-            var irqEndpoints = irqs[0].Endpoints;
-            if(irqEndpoints.Count > 0)
-            {
-                return (uint)irqEndpoints[0].Number;
-            }
-            return 0;
+            return this.GetCpuInterruptNumber(irqs[0]);
         }
         #endregion
 
@@ -472,9 +472,10 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 }
 
                 // Check the irq is forced
-                if((registers.ProcessorInterruptForce[cpuid] & (1u << realInterruptNumber)) != 0)
+                var interruptMask = 1u << realInterruptNumber;
+                if((registers.ProcessorInterruptForce[cpuid] & interruptMask) != 0)
                 {
-                    registers.ProcessorInterruptForce[cpuid] &= ~(1u << realInterruptNumber);
+                    registers.ProcessorInterruptForce[cpuid] &= ~interruptMask;
                     interrupts[cpuid].Remove(realInterruptNumber);
                     if(irqs[cpuid].IsSet)
                     {
@@ -483,11 +484,11 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 }
                 else
                 {
-                    // Check if the interrupt is still pending and needs an ACK
-                    if((registers.InterruptPending & (1u << realInterruptNumber)) != 0)
+                    // Check if the interrupt is still pending, needs an ACK and the input is not set
+                    if((registers.InterruptPending & interruptMask) != 0 && (pirqState & interruptMask) == 0)
                     {
                         // Remove the global pending interrupt
-                        registers.InterruptPending &= ~(1u << realInterruptNumber);
+                        registers.InterruptPending &= ~interruptMask;
                         interrupts[cpuid].Remove(realInterruptNumber);
                         if(irqs[cpuid].IsSet)
                         {
@@ -516,13 +517,10 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 interruptPriority = number + (((registers.InterruptLevel & 1u<<number) != 0) ? 16 : 0);
             }
 
-            try
+            // Safe as this is only called under the interrupts[cpuid] lock
+            if(!interrupts[cpuid].ContainsKey(number))
             {
                 interrupts[cpuid].Add(number, interruptPriority);
-            }
-            catch(ArgumentException)
-            {
-
             }
         }
 
@@ -555,6 +553,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
         private static uint maxNumberOfProcessors = 16;
         private readonly GaislerAPBPlugAndPlayRecord.SpaceType spaceType = GaislerAPBPlugAndPlayRecord.SpaceType.APBIOSpace;
         private deviceRegisters registers;
+        private uint pirqState;
         private readonly GPIO[] irqs;
         private readonly GPIO[] resets;
         private readonly GPIO[] runs;

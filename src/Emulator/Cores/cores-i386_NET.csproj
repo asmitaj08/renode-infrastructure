@@ -1,32 +1,30 @@
-<Project DefaultTargets="CompileTranslationLib;Build" Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks Condition="$(OS) != 'Windows_NT'">net6.0</TargetFrameworks>
-    <TargetFrameworks Condition="$(OS) == 'Windows_NT'">net6.0-windows10.0.17763.0</TargetFrameworks>
-    <EnableDefaultItems>false</EnableDefaultItems>
-    <AssemblyName>cores-i386</AssemblyName>
-    <PropertiesLocation>..\..\..\..\..\output\properties.csproj</PropertiesLocation>
-    <LangVersion>7.2</LangVersion>
+    <Architecture>i386</Architecture>
+    <EmulatedTarget>$(Architecture)</EmulatedTarget>
+    <AssemblyName>cores-$(Architecture)</AssemblyName>
+    <TargetInsnStartExtraWords>1</TargetInsnStartExtraWords>
   </PropertyGroup>
-  <Import Project="$(PropertiesLocation)" />
-  <Target Name="SetEndianess" BeforeTargets="Build">
-    <!-- Endianess cannot be set directly in Project tag, as it would be visible in Monodevelop then -->
-    <PropertyGroup>
-      <Architecture>i386</Architecture>
-      <EmulatedTarget>i386</EmulatedTarget>
-      <TargetInsnStartExtraWords>1</TargetInsnStartExtraWords>
-    </PropertyGroup>
-    <ItemGroup>
-      <Endianess Include="le" />
-    </ItemGroup>
-  </Target>
-  <Import Project="./cores.template_NET.csproj" />
   <ItemGroup>
+    <Endianess Include="le" />
+  </ItemGroup>
+  <Import Project="./cores.template_NET.csproj" />
+
+  <ItemGroup>
+    <Compile Include="X86\BaseX86.cs" />
     <Compile Include="X86\X86.cs" />
     <Compile Include="X86\X86Registers.cs">
       <DependentUpon>X86Registers.tt</DependentUpon>
     </Compile>
     <Compile Include="X86\LAPIC.cs" />
     <Compile Include="X86\IOAPIC.cs" />
+    <Compile Include="X86\ACPI\ACPIExtensions.cs" />
+    <Compile Include="X86\ACPI\RootSystemDescriptionPointer.cs" />
+    <Compile Include="X86\ACPI\RootSystemDescriptionTable.cs" />
+    <Compile Include="X86\ACPI\SystemDescriptionTableHeader.cs" />
+    <Compile Include="X86\ACPI\FixedACPIDescriptionTable.cs" />
+    <Compile Include="X86\ACPI\ProcessorLocalAPICRecord.cs" />
+    <Compile Include="X86\ACPI\MultipleAPICDescriptionTable.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="X86\X86Registers.tt">

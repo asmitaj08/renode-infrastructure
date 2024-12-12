@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -28,6 +28,7 @@ using Antmicro.Renode.Exceptions;
 using Antmicro.Renode.Utilities.Collections;
 using System.Diagnostics;
 using System.Text;
+using System.Linq;
 using Antmicro.Renode.Debugging;
 
 namespace Antmicro.Renode.Logging
@@ -45,11 +46,22 @@ namespace Antmicro.Renode.Logging
                 value.Dispose();
                 return backend;
             });
+            levels[new BackendSourceIdPair(backend, -1)] = backend.GetLogLevel();
+            foreach(var level in backend.GetCustomLogLevels())
+            {
+                levels[new BackendSourceIdPair(backend, level.Key)] = level.Value;
+            }
+            UpdateMinimumLevel();
             backends.Add(backend);
         }
 
         public static void RemoveBackend(ILoggerBackend backend)
         {
+            foreach(var level in levels.Where(pair => pair.Key.backend == backend).ToList())
+            {
+                levels.TryRemove(level.Key, out var _);
+            }
+            UpdateMinimumLevel();
             backends.Remove(backend);
             backend.Dispose();
         }
@@ -61,6 +73,7 @@ namespace Antmicro.Renode.Logging
 
         public static void Dispose()
         {
+            Flush();
             foreach(var backend in backends.Items)
             {
                 backend.Dispose();
@@ -69,89 +82,185 @@ namespace Antmicro.Renode.Logging
             backendNames.Clear();
         }
 
+        public static void SetLogLevel(ILoggerBackend backend, LogLevel level, int sourceId)
+        {
+            levels[new BackendSourceIdPair(backend, sourceId)] = level;
+            UpdateMinimumLevel();
+        }
+
         public static void Log(LogLevel type, string message, params object[] args)
         {
-            Log(null, type, message, args);
+            LogAs(null, type, message, args);
+        }
+
+        public static void Log(LogLevel type, string message)
+        {
+            LogAs(null, type, message);
+        }
+
+        public static void Log(LogLevel type, string message, object arg1)
+        {
+            LogAs(null, type, message, arg1);
+        }
+
+        public static void Log(LogLevel type, string message, object arg1, object arg2)
+        {
+            LogAs(null, type, message, arg1, arg2);
+        }
+
+        public static void Log(LogLevel type, string message, object arg1, object arg2, object arg3)
+        {
+            LogAs(null, type, message, arg1, arg2, arg3);
         }
 
         public static void Error(string message)
         {
-            Log(LogLevel.Error, message);
+            LogAs(null, LogLevel.Error, message);
         }
 
         public static void Warning(string message)
         {
-            Log(LogLevel.Warning, message);
+            LogAs(null, LogLevel.Warning, message);
         }
 
         public static void Info(string message)
         {
-            Log(LogLevel.Info, message);
+            LogAs(null, LogLevel.Info, message);
         }
 
         public static void Debug(string message)
         {
-            Log(LogLevel.Debug, message);
+            LogAs(null, LogLevel.Debug, message);
         }
 
         public static void Noisy(string message)
         {
-            Log(LogLevel.Noisy, message);
-        }
-
-        public static void ErrorLog(this IEmulationElement e, string message)
-        {
-            Log(e, LogLevel.Error, message);
+            LogAs(null, LogLevel.Noisy, message);
         }
 
         public static void ErrorLog(this IEmulationElement e, string message, params object[] args)
         {
-            ErrorLog(e, string.Format(message, args));
+            LogAs(e, LogLevel.Error, message, args);
         }
 
-        public static void WarningLog(this IEmulationElement e, string message)
+        public static void ErrorLog(this IEmulationElement e, string message)
         {
-            Log(e, LogLevel.Warning, message);
+            LogAs(e, LogLevel.Error, message);
+        }
+
+        public static void ErrorLog(this IEmulationElement e, string message, object arg1)
+        {
+            LogAs(e, LogLevel.Error, message, arg1);
+        }
+
+        public static void ErrorLog(this IEmulationElement e, string message, object arg1, object arg2)
+        {
+            LogAs(e, LogLevel.Error, message, arg1, arg2);
+        }
+
+        public static void ErrorLog(this IEmulationElement e, string message, object arg1, object arg2, object arg3)
+        {
+            LogAs(e, LogLevel.Error, message, arg1, arg2, arg3);
         }
 
         public static void WarningLog(this IEmulationElement e, string message, params object[] args)
         {
-            WarningLog(e, string.Format(message, args));
+            LogAs(e, LogLevel.Warning, message, args);
         }
 
-        public static void InfoLog(this IEmulationElement e, string message)
+        public static void WarningLog(this IEmulationElement e, string message)
         {
-            Log(e, LogLevel.Info, message);
+            LogAs(e, LogLevel.Warning, message);
+        }
+
+        public static void WarningLog(this IEmulationElement e, string message, object arg1)
+        {
+            LogAs(e, LogLevel.Warning, message, arg1);
+        }
+
+        public static void WarningLog(this IEmulationElement e, string message, object arg1, object arg2)
+        {
+            LogAs(e, LogLevel.Warning, message, arg1, arg2);
+        }
+
+        public static void WarningLog(this IEmulationElement e, string message, object arg1, object arg2, object arg3)
+        {
+            LogAs(e, LogLevel.Warning, message, arg1, arg2, arg3);
         }
 
         public static void InfoLog(this IEmulationElement e, string message, params object[] args)
         {
-            InfoLog(e, string.Format(message, args));
+            LogAs(e, LogLevel.Info, message, args);
         }
 
-        public static void DebugLog(this IEmulationElement e, string message)
+        public static void InfoLog(this IEmulationElement e, string message)
         {
-            Log(e, LogLevel.Debug, message);
+            LogAs(e, LogLevel.Info, message);
+        }
+
+        public static void InfoLog(this IEmulationElement e, string message, object arg1)
+        {
+            LogAs(e, LogLevel.Info, message, arg1);
+        }
+
+        public static void InfoLog(this IEmulationElement e, string message, object arg1, object arg2)
+        {
+            LogAs(e, LogLevel.Info, message, arg1, arg2);
+        }
+
+        public static void InfoLog(this IEmulationElement e, string message, object arg1, object arg2, object arg3)
+        {
+            LogAs(e, LogLevel.Info, message, arg1, arg2, arg3);
         }
 
         public static void DebugLog(this IEmulationElement e, string message, params object[] args)
         {
-            DebugLog(e, string.Format(message, args));
+            LogAs(e, LogLevel.Debug, message, args);
         }
 
-        public static void NoisyLog(this IEmulationElement e, string message)
+        public static void DebugLog(this IEmulationElement e, string message)
         {
-            Log(e, LogLevel.Noisy, message);
+            LogAs(e, LogLevel.Debug, message);
+        }
+
+        public static void DebugLog(this IEmulationElement e, string message, object arg1)
+        {
+            LogAs(e, LogLevel.Debug, message, arg1);
+        }
+
+        public static void DebugLog(this IEmulationElement e, string message, object arg1, object arg2)
+        {
+            LogAs(e, LogLevel.Debug, message, arg1, arg2);
+        }
+
+        public static void DebugLog(this IEmulationElement e, string message, object arg1, object arg2, object arg3)
+        {
+            LogAs(e, LogLevel.Debug, message, arg1, arg2, arg3);
         }
 
         public static void NoisyLog(this IEmulationElement e, string message, params object[] args)
         {
-            NoisyLog(e, string.Format(message, args));
+            LogAs(e, LogLevel.Noisy, message, args);
         }
 
-        public static void Log(this IEmulationElement e, LogLevel type, string message)
+        public static void NoisyLog(this IEmulationElement e, string message)
         {
-            LogAs(e, type, message, null);
+            LogAs(e, LogLevel.Noisy, message);
+        }
+
+        public static void NoisyLog(this IEmulationElement e, string message, object arg1)
+        {
+            LogAs(e, LogLevel.Noisy, message, arg1);
+        }
+
+        public static void NoisyLog(this IEmulationElement e, string message, object arg1, object arg2)
+        {
+            LogAs(e, LogLevel.Noisy, message, arg1, arg2);
+        }
+
+        public static void NoisyLog(this IEmulationElement e, string message, object arg1, object arg2, object arg3)
+        {
+            LogAs(e, LogLevel.Noisy, message, arg1, arg2, arg3);
         }
 
         public static void Log(this IEmulationElement e, LogLevel type, string message, params object[] args)
@@ -159,12 +268,91 @@ namespace Antmicro.Renode.Logging
             LogAs(e, type, message, args);
         }
 
+        public static void Log(this IEmulationElement e, LogLevel type, string message)
+        {
+            LogAs(e, type, message);
+        }
+
+        public static void Log(this IEmulationElement e, LogLevel type, string message, object arg1)
+        {
+            LogAs(e, type, message, arg1);
+        }
+
+        public static void Log(this IEmulationElement e, LogLevel type, string message, object arg1, object arg2)
+        {
+            LogAs(e, type, message, arg1, arg2);
+        }
+
+        public static void Log(this IEmulationElement e, LogLevel type, string message, object arg1, object arg2, object arg3)
+        {
+            LogAs(e, type, message, arg1, arg2, arg3);
+        }
+
         public static void LogAs(object o, LogLevel type, string message, params object[] args)
         {
+            // The inner log method is only skipped if the level of this message is lower than the level set
+            // for any source on any backend. This means that setting any element's log level to Debug will
+            // make all Debug and higher logs get sent to the backends.
+            if(type < minLevel)
+            {
+                return;
+            }
             var emulationManager = EmulationManager.Instance;
             if(emulationManager != null)
             {
                 ((ActualLogger)emulationManager.CurrentEmulation.CurrentLogger).ObjectInnerLog(o, type, message, args);
+            }
+        }
+
+        public static void LogAs(object o, LogLevel type, string message)
+        {
+            if(type < minLevel)
+            {
+                return;
+            }
+            var emulationManager = EmulationManager.Instance;
+            if(emulationManager != null)
+            {
+                ((ActualLogger)emulationManager.CurrentEmulation.CurrentLogger).ObjectInnerLog(o, type, message);
+            }
+        }
+
+        public static void LogAs(object o, LogLevel type, string message, object arg1)
+        {
+            if(type < minLevel)
+            {
+                return;
+            }
+            var emulationManager = EmulationManager.Instance;
+            if(emulationManager != null)
+            {
+                ((ActualLogger)emulationManager.CurrentEmulation.CurrentLogger).ObjectInnerLog(o, type, message, arg1);
+            }
+        }
+
+        public static void LogAs(object o, LogLevel type, string message, object arg1, object arg2)
+        {
+            if(type < minLevel)
+            {
+                return;
+            }
+            var emulationManager = EmulationManager.Instance;
+            if(emulationManager != null)
+            {
+                ((ActualLogger)emulationManager.CurrentEmulation.CurrentLogger).ObjectInnerLog(o, type, message, arg1, arg2);
+            }
+        }
+
+        public static void LogAs(object o, LogLevel type, string message, object arg1, object arg2, object arg3)
+        {
+            if(type < minLevel)
+            {
+                return;
+            }
+            var emulationManager = EmulationManager.Instance;
+            if(emulationManager != null)
+            {
+                ((ActualLogger)emulationManager.CurrentEmulation.CurrentLogger).ObjectInnerLog(o, type, message, arg1, arg2, arg3);
             }
         }
 
@@ -233,6 +421,8 @@ namespace Antmicro.Renode.Logging
 
         public static bool PrintFullName { get; set; }
 
+        public static readonly LogLevel DefaultLogLevel = LogLevel.Info;
+
         internal static ILogger GetLogger()
         {
             var logger = new ActualLogger();
@@ -244,8 +434,11 @@ namespace Antmicro.Renode.Logging
         }
 
         private static ulong nextEntryId = 0;
+        private static LogLevel minLevel = DefaultLogLevel;
         private static readonly ConcurrentDictionary<string, ILoggerBackend> backendNames = new ConcurrentDictionary<string, ILoggerBackend>();
         private static readonly FastReadConcurrentCollection<ILoggerBackend> backends = new FastReadConcurrentCollection<ILoggerBackend>();
+        private static readonly ConcurrentDictionary<BackendSourceIdPair, LogLevel> levels = new ConcurrentDictionary<BackendSourceIdPair, LogLevel>();
+
 
         private static string GetGenericName(object o)
         {
@@ -255,6 +448,11 @@ namespace Antmicro.Renode.Logging
             }
             var type = o.GetType();
             return PrintFullName ? type.FullName : type.Name;
+        }
+
+        private static void UpdateMinimumLevel()
+        {
+            minLevel = levels.Min(l => l.Value);
         }
 
         internal class ActualLogger : ILogger
@@ -543,6 +741,18 @@ namespace Antmicro.Renode.Logging
                 private readonly ConcurrentDictionary<int, WeakWrapper<object>> idToObjectMap;
                 private readonly ConcurrentDictionary<WeakWrapper<object>, int> objectToIdMap;
             }
+        }
+
+        internal struct BackendSourceIdPair
+        {
+            public BackendSourceIdPair(ILoggerBackend backend, int sourceId)
+            {
+                this.backend = backend;
+                this.sourceId = sourceId;
+            }
+
+            public readonly ILoggerBackend backend;
+            public readonly int sourceId;
         }
     }
 }

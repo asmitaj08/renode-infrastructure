@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -606,7 +606,7 @@ namespace Antmicro.Renode.Utilities
                 }
                 if(assemblyFromTypeName.ContainsKey(fullName))
                 {
-                    throw new InvalidOperationException("Tried to load assembly that has been already loaded. Aborting operation.");
+                    throw new InvalidOperationException($"Tried to load assembly '{fullName}' that has been already loaded. Aborting operation.");
                 }
                 assemblyFromTypeName.Add(fullName, newAssemblyDescription);
                 if(extractedMethods != null)
@@ -664,7 +664,7 @@ namespace Antmicro.Renode.Utilities
 
         private bool IsInterestingType(TypeReference type)
         {
-            return type.Namespace.StartsWith("Antmicro.Renode");
+            return interestingNamespacePrefixes.Any(x => type.Namespace.StartsWith(x));
         }
 
         private AssemblyDescription GetAssemblyDescription(string fullName, string path)
@@ -727,6 +727,12 @@ namespace Antmicro.Renode.Utilities
 
         private readonly bool isBundled;
 
+        private static string[] interestingNamespacePrefixes = new []
+        {
+            "Antmicro.Renode",
+            "NetMQ",
+        };
+
         // This list filters out assemblies that are known not to be interesting for TypeManager.
         // It has to be manualy catered for, but it shaves about 400ms from the startup time on mono and 2s on NET.
         private static string[] assemblyBlacklist = new []
@@ -752,7 +758,6 @@ namespace Antmicro.Renode.Utilities
             "IronPython.StdLib.dll",
             "IronPython.Wpf.dll",
             "libtftp.dll",
-            "Lucene.Net.dll",
             "LZ4.dll",
             "mcs.dll",
             "Microsoft.Dynamic.dll",
@@ -763,6 +768,7 @@ namespace Antmicro.Renode.Utilities
             "Mono.Cecil.Mdb.dll",
             "Mono.Cecil.Pdb.dll",
             "Mono.Cecil.Rocks.dll",
+            "NaCl.dll",
             "Newtonsoft.Json.dll",
             "Nini.dll",
             "NuGet.Frameworks.dll",

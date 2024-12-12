@@ -1,6 +1,6 @@
 ﻿<#
 //
-// Copyright (c) 2010-2022 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -8,6 +8,7 @@
 //
 #>
 <#@ template language="C#" hostspecific="true" #>
+<#@ parameter type="System.String" name="BASE_PATH" #>
 <#@ assembly name="System.Core" #>
 <#@ import namespace="System.IO" #>
 <#@ import namespace="System.Linq" #>
@@ -23,9 +24,14 @@
     {
         throw new ArgumentException("HEADER_FILE variable not set");
     }
+    if(ACCESSOR_PREFIX == null)
+    {
+        // Assume tlibs by default
+        ACCESSOR_PREFIX = "tlib_";
+    }
 
     RegistersEnumParser parser;
-    var baseDirectoryPath = Directory.GetParent(Path.GetDirectoryName(((ITextTemplatingEngineHost)this.Host).TemplateFile)).Parent.Parent.FullName;
+    var baseDirectoryPath = Directory.GetParent(BASE_PATH).Parent.Parent.Parent.FullName;
     var fullPath = Path.Combine(baseDirectoryPath, HEADER_FILE);
     using(var stream = File.OpenRead(fullPath))
     {
@@ -43,6 +49,13 @@
     }
 
     var virtualRegisters = new HashSet<string> { "PC" };
+
+    var OVERRIDE = "";
+
+    if(OVERRIDE_DEFINITIONS)
+    {
+        OVERRIDE = "override ";
+    }
 #>
 /********************************************************
 *
@@ -71,7 +84,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         .Distinct()
         .ToArray();
 #>
-        public override void SetRegisterUnsafe(int register, RegisterValue value)
+        public <#=OVERRIDE#>void SetRegister(int register, RegisterValue value)
         {
             if(!mapping.TryGetValue((<#=CLASS_NAME#>Registers)register, out var r))
             {
@@ -130,7 +143,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 #>
         }
 
-        public override RegisterValue GetRegisterUnsafe(int register)
+        public <#=OVERRIDE#>RegisterValue GetRegister(int register)
         {
             if(!mapping.TryGetValue((<#=CLASS_NAME#>Registers)register, out var r))
             {
@@ -176,7 +189,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 #>
         }
 
-        public override IEnumerable<CPURegister> GetRegisters()
+        public <#=OVERRIDE#>IEnumerable<CPURegister> GetRegisters()
         {
 <#
     if(FALLBACK_REGISTERS != null)
@@ -245,7 +258,7 @@ namespace Antmicro.Renode.Peripherals.CPU
     }
 #>
 
-        protected override void InitializeRegisters()
+        protected <#=OVERRIDE#>void InitializeRegisters()
         {
 <#
     if(REGISTERS_FROM_BASE_CLASS.Count > 0)
@@ -269,8 +282,8 @@ namespace Antmicro.Renode.Peripherals.CPU
             };
             <#=registerGroup.Name#> = new RegistersGroup(
                 indexValueMap<#=registerGroup.Name#>.Keys,
-                i => GetRegisterUnsafe((int)indexValueMap<#=registerGroup.Name#>[i]),
-                (i, v) => SetRegisterUnsafe((int)indexValueMap<#=registerGroup.Name#>[i], v));
+                i => GetRegister((int)indexValueMap<#=registerGroup.Name#>[i]),
+                (i, v) => SetRegister((int)indexValueMap<#=registerGroup.Name#>[i], v));
 
 <#
     }
@@ -285,9 +298,9 @@ namespace Antmicro.Renode.Peripherals.CPU
         // 649:  Field '...' is never assigned to, and will always have its default value null
         #pragma warning disable 649
 
-        [Import(Name = "tlib_set_register_value_<#=width#>")]
+        [Import(Name = "<#=ACCESSOR_PREFIX#>set_register_value_<#=width#>")]
         protected ActionInt32<#=RegisterTypeHelper.GetTypeName(width)#> SetRegisterValue<#=width#>;
-        [Import(Name = "tlib_get_register_value_<#=width#>")]
+        [Import(Name = "<#=ACCESSOR_PREFIX#>get_register_value_<#=width#>")]
         protected Func<#=RegisterTypeHelper.GetTypeName(width)#>Int32 GetRegisterValue<#=width#>;
 
         #pragma warning restore 649
@@ -304,8 +317,15 @@ namespace Antmicro.Renode.Peripherals.CPU
         .GroupBy(x => x.Value)
         .OrderBy(x => x.Key))
     {
+        var firstName = register.First().Name;
+        var id = register.Key;
+        var width = register.Select(x => x.Width).First();
+        var isGeneral = register.Any(x => GENERAL_REGISTERS.Contains(x.Name)) ? "true" : "false";
+        var isReadonly = register.Any(x => UNSETTABLE_REGISTERS.Contains(x.Name)) ? "true" : "false";
+        var names = String.Join(", ", register.Select(x => $"\"{x.Name}\""));
+        var aliases = $"new [] {{ {names} }}";
 #>
-            { <#=CLASS_NAME#>Registers.<#=register.First().Name#>,  new CPURegister(<#=register.Key#>, <#=register.Select(x => x.Width).First()#>, isGeneral: <#= register.Any(x => GENERAL_REGISTERS.Contains(x.Name)) ? "true" : "false" #>, isReadonly: <#= register.Any(x => UNSETTABLE_REGISTERS.Contains(x.Name)) ? "true" : "false" #>) },
+            { <#=CLASS_NAME#>Registers.<#=firstName#>,  new CPURegister(<#=id#>, <#=width#>, isGeneral: <#=isGeneral#>, isReadonly: <#=isReadonly#>, aliases: <#=aliases#>) },
 <#
     }
 #>

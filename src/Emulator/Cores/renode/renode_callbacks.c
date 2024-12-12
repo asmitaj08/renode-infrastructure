@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2022 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under MIT License.
@@ -7,11 +7,8 @@
 //
 
 #include <stdlib.h>
-#include "cpu.h"
 #include "renode_imports.h"
 #include "../tlib/include/unwind.h"
-
-extern CPUState *cpu;
 
 typedef void (*translation_block_find_slow_handler)(uint64_t pc);
 translation_block_find_slow_handler on_translation_block_find_slow;
@@ -67,11 +64,11 @@ void tlib_invalidate_tb_in_other_cpus(uintptr_t start, uintptr_t end)
   invalidate_tb_in_other_cpus((void*)start, (void*)end);
 }
 
-EXTERNAL_AS(func_int32, GetCpuIndex, tlib_get_cpu_index)
+EXTERNAL_AS(func_uint32, GetMpIndex, tlib_get_mp_index)
 EXTERNAL_AS(action_uint64_uint32_uint32, LogDisassembly, tlib_on_block_translation)
 EXTERNAL_AS(action_uint64, OnInterruptBegin, tlib_on_interrupt_begin)
 EXTERNAL_AS(action_uint64, OnInterruptEnd, tlib_on_interrupt_end)
-EXTERNAL_AS(action_uint64_uint32_uint64, OnMemoryAccess, tlib_on_memory_access)
+EXTERNAL_AS(action_uint64_uint32_uint64_uint64, OnMemoryAccess, tlib_on_memory_access)
 EXTERNAL_AS(func_uint32, IsInDebugMode, tlib_is_in_debug_mode)
 EXTERNAL_AS(action_uint64_int32_int32, MmuFaultExternalHandler, tlib_mmu_fault_external_handler)
 EXTERNAL_AS(action_uint64_uint64_uint64_int32, OnStackChange, tlib_profiler_announce_stack_change)
@@ -79,3 +76,4 @@ EXTERNAL_AS(action_uint64, OnContextChange, tlib_profiler_announce_context_chang
 EXTERNAL_AS(action_intptr_int32, OnMassBroadcastDirty, tlib_mass_broadcast_dirty)
 EXTERNAL_AS(func_intptr_intptr, GetDirty, tlib_get_dirty_addresses_list)
 EXTERNAL_AS(action_int32, OnWfiStateChange, tlib_on_wfi_state_change)
+EXTERNAL_AS(func_uint32_uint64_uint64, IsMemoryDisabled, tlib_is_memory_disabled)

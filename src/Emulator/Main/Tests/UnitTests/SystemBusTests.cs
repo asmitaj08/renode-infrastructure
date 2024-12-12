@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -17,6 +17,8 @@ using Moq;
 using System.Linq;
 using System.Collections.Generic;
 using Antmicro.Renode.Peripherals.Memory;
+using Antmicro.Renode.Core.Structure.Registers;
+using Antmicro.Renode.Peripherals.Mocks;
 
 namespace Antmicro.Renode.UnitTests
 {
@@ -189,7 +191,7 @@ namespace Antmicro.Renode.UnitTests
             Assert.AreEqual(false, peripheral.DoubleWordRead);
             Assert.AreEqual(false, peripheral.DoubleWordWritten);
 
-            sysbus.ReadDoubleWord(210);
+            sysbus.ReadDoubleWord(310);
 
             Assert.AreEqual(true, peripheral.ByteRead1);
             Assert.AreEqual(true, peripheral.ByteRead2);
@@ -198,7 +200,7 @@ namespace Antmicro.Renode.UnitTests
             Assert.AreEqual(true, peripheral.DoubleWordRead);
             Assert.AreEqual(false, peripheral.DoubleWordWritten);
 
-            sysbus.WriteDoubleWord(210, 0);
+            sysbus.WriteDoubleWord(310, 0);
 
             Assert.AreEqual(true, peripheral.ByteRead1);
             Assert.AreEqual(true, peripheral.ByteRead2);
@@ -206,6 +208,78 @@ namespace Antmicro.Renode.UnitTests
             Assert.AreEqual(true, peripheral.ByteWritten2);
             Assert.AreEqual(true, peripheral.DoubleWordRead);
             Assert.AreEqual(true, peripheral.DoubleWordWritten);
+        }
+
+        [Test]
+        public void ShouldRegisterParametrizedPeripheral()
+        {
+            var parametrizedRegistration = new ParametrizedRegistrationPeripheral.Registration(0, 100);
+            var peripheral = new ParametrizedRegistrationPeripheral();
+            sysbus.Register(peripheral, parametrizedRegistration);
+            sysbus.Register(peripheral, new BusRangeRegistration(200, 100));
+
+            Assert.AreEqual(false, peripheral.ByteRead);
+            Assert.AreEqual(false, peripheral.ByteWritten);
+            Assert.AreEqual(false, peripheral.DoubleWordRead);
+            Assert.AreEqual(false, peripheral.DoubleWordWritten);
+
+            sysbus.ReadByte(10);
+
+            Assert.AreEqual(true, peripheral.ByteRead);
+            Assert.AreEqual(false, peripheral.ByteWritten);
+            Assert.AreEqual(false, peripheral.DoubleWordRead);
+            Assert.AreEqual(false, peripheral.DoubleWordWritten);
+
+            sysbus.WriteByte(10, 0);
+
+            Assert.AreEqual(true, peripheral.ByteRead);
+            Assert.AreEqual(true, peripheral.ByteWritten);
+            Assert.AreEqual(false, peripheral.DoubleWordRead);
+            Assert.AreEqual(false, peripheral.DoubleWordWritten);
+
+            sysbus.ReadDoubleWord(10);
+
+            Assert.AreEqual(true, peripheral.ByteRead);
+            Assert.AreEqual(true, peripheral.ByteWritten);
+            Assert.AreEqual(true, peripheral.DoubleWordRead);
+            Assert.AreEqual(false, peripheral.DoubleWordWritten);
+
+            sysbus.WriteDoubleWord(10, 0);
+
+            Assert.AreEqual(true, peripheral.ByteRead);
+            Assert.AreEqual(true, peripheral.ByteWritten);
+            Assert.AreEqual(true, peripheral.DoubleWordRead);
+            Assert.AreEqual(true, peripheral.DoubleWordWritten);
+        }
+
+        [Test]
+        public void ShouldTestEnableAllTranslations()
+        {
+            var testData = new Tuple<int, IBusPeripheral> []
+            {
+                Tuple.Create(64, (IBusPeripheral)new MockQuadWordPeripheralWithoutTranslations()),
+                Tuple.Create(32, (IBusPeripheral)new MockDoubleWordPeripheralWithoutTranslations()),
+                Tuple.Create(16, (IBusPeripheral)new MockWordPeripheralWithoutTranslations()),
+                Tuple.Create(8, (IBusPeripheral)new MockBytePeripheralWithoutTranslations())
+            };
+
+            ulong address = 0;
+            foreach(var data in testData)
+            {
+                var implementedWidth = data.Item1;
+                var peripheral = data.Item2;
+                sysbus.Register(peripheral, new BusRangeRegistration(address, 8));
+                sysbus.Register(peripheral, new BusMultiRegistration(address + 8, 8, "region"));
+                address += 16;
+            }
+            
+            var testValue = 0xdeadc0de12345678;
+            for(var i = 0; i < testData.Length; i += 1)
+            {
+                var implementedWidth = testData[i].Item1;
+                testAllTranslatedAccesses((ulong)i * 16, testValue, implementedWidth);
+                testAllTranslatedAccesses((ulong)i * 16 + 8, testValue, implementedWidth);
+            }
         }
 
         [Test]
@@ -332,6 +406,57 @@ namespace Antmicro.Renode.UnitTests
             }
         }
 
+        private void testAllTranslatedAccesses(ulong address, ulong testValue, int implementedWidth)
+        {
+            var widths = new int [] { 8, 16, 32, 64 };
+            var types = new dynamic []
+            {
+                (Func<ulong, byte>)Convert.ToByte,
+                (Func<ulong, ushort>)Convert.ToUInt16,
+                (Func<ulong, uint>)Convert.ToUInt32,
+                (Func<ulong, ulong>)Convert.ToUInt64,
+            };
+
+            var accessMethods = new dynamic []
+            {
+                Tuple.Create((Func<ulong, ICPU, byte>)sysbus.ReadByte, (Action<ulong, byte, ICPU>)sysbus.WriteByte),
+                Tuple.Create((Func<ulong, ICPU, ushort>)sysbus.ReadWord, (Action<ulong, ushort, ICPU>)sysbus.WriteWord),
+                Tuple.Create((Func<ulong, ICPU, uint>)sysbus.ReadDoubleWord, (Action<ulong, uint, ICPU>)sysbus.WriteDoubleWord),
+                Tuple.Create((Func<ulong, ICPU, ulong>)sysbus.ReadQuadWord, (Action<ulong, ulong, ICPU>)sysbus.WriteQuadWord),
+            };
+
+            for(var i = 0; i < accessMethods.Length; i++)
+            {
+                var width = widths[i];
+                var type = types[i];
+                var read = accessMethods[i].Item1;
+                var write = accessMethods[i].Item2;
+
+                if(width == implementedWidth)
+                    continue;
+
+                sysbus.EnableAllTranslations();
+
+                for(var offset = 0; offset < 64; offset += width)
+                {
+                    var value = type(BitHelper.GetValue(testValue, offset, width));
+                    write(address + (ulong)offset / 8, value, null);
+                    Assert.AreEqual(value, read(address + (ulong)offset / 8, null));
+                }
+
+                sysbus.EnableAllTranslations(false);
+
+                for(var offset = 0; offset < 64; offset += width)
+                {
+                    Assert.AreEqual(0x0, read(address + (ulong)offset / 8, null));
+                }
+
+                sysbus.EnableAllTranslations();
+                sysbus.WriteQuadWord(address, 0x0);
+                Assert.AreEqual(0x0, sysbus.ReadQuadWord(address));
+            }
+        }
+
         private IBusController sysbus;
         private byte[] bytes;
         private const int PauseResumeRetries = 5;
@@ -390,6 +515,64 @@ namespace Antmicro.Renode.UnitTests
             public void WriteByte2(long offset, byte value)
             {
                 ByteWritten2 = true;
+            }
+        }
+
+        private class ParametrizedRegistrationPeripheral : IBusPeripheral, IDoubleWordPeripheral
+        {
+            public void Reset()
+            {
+                throw new NotImplementedException();
+            }
+
+            public bool ByteRead { get; private set; }
+
+            public bool ByteWritten { get; private set; }
+
+            public bool DoubleWordRead { get; private set; }
+
+            public bool DoubleWordWritten { get; private set; }
+
+            public uint ReadDoubleWord(long offset)
+            {
+                DoubleWordRead = true;
+                return 0;
+            }
+
+            public void WriteDoubleWord(long offset, uint value)
+            {
+                DoubleWordWritten = true;
+            }
+
+            public class Registration : BusParametrizedRegistration
+            {
+                public Registration(ulong address, ulong size) : base(address, size, null)
+                {
+                }
+
+                public override Func<long, byte> GetReadByteMethod(IBusPeripheral peripheral)
+                {
+                    var parent = peripheral as ParametrizedRegistrationPeripheral;
+                    return (offset) =>
+                    {
+                        parent.ByteRead = true;
+                        return 0;
+                    };
+                }
+
+                public override Action<long, byte> GetWriteByteMethod(IBusPeripheral peripheral)
+                {
+                    var parent = peripheral as ParametrizedRegistrationPeripheral;
+                    return (offset, value) =>
+                    {
+                        parent.ByteWritten = true;
+                    };
+                }
+
+                public override void RegisterForEachContext(Action<BusParametrizedRegistration> register)
+                {
+                    RegisterForEachContextInner(register, _ => new Registration(Range.StartAddress, Range.Size));
+                }
             }
         }
     }

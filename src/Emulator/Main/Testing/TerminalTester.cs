@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -18,6 +18,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using Antmicro.Renode.Backends.Terminals;
 using Antmicro.Renode.Core;
+using Antmicro.Renode.Debugging;
 using Antmicro.Renode.Peripherals;
 using Antmicro.Renode.Peripherals.UART;
 using Antmicro.Renode.Time;
@@ -57,18 +58,33 @@ namespace Antmicro.Renode.Testing
 
         public void Write(string text)
         {
-            foreach(var chr in text)
+            if(WriteCharDelay != TimeSpan.Zero)
             {
-                CallCharReceived((byte)chr);
-                WaitBeforeNextChar();
+                lock(delayedChars)
+                {
+                    foreach(var character in text)
+                    {
+                        delayedChars.Enqueue(Tuple.Create(WriteCharDelay, character));
+                    }
+
+                    if(!delayedCharInProgress)
+                    {
+                        HandleDelayedChars();
+                    }
+                }
+            }
+            else
+            {
+                foreach(var chr in text)
+                {
+                    CallCharReceived((byte)chr);
+                }
             }
         }
 
         public void WriteLine(string line = "")
         {
-            Write(line);
-            CallCharReceived(CarriageReturn);
-            WaitBeforeNextChar();
+            Write(line + CarriageReturn);
         }
 
         public override void WriteChar(byte value)
@@ -127,16 +143,17 @@ namespace Antmicro.Renode.Testing
             matchEvent.Set();
         }
 
-        public TerminalTesterResult WaitFor(string pattern, TimeInterval? timeout = null, bool treatAsRegex = false, bool includeUnfinishedLine = false, bool pauseEmulation = false)
+        public TerminalTesterResult WaitFor(string pattern, TimeInterval? timeout = null, bool treatAsRegex = false, bool includeUnfinishedLine = false, bool pauseEmulation = false, bool matchNextLine = false)
         {
             var eventName = "Line containing{1} >>{0}<<".FormatWith(pattern, treatAsRegex ? " regex" : string.Empty);
 #if DEBUG_EVENTS
-            this.Log(LogLevel.Noisy, "Waiting for a line containing >>{0}<< (include unfinished line: {1}, with timeout {2}, regex {3}, pause on match {4}) ", pattern, includeUnfinishedLine, timeout ?? GlobalTimeout, treatAsRegex, pauseEmulation);
+            this.Log(LogLevel.Noisy, "Waiting for a line containing >>{0}<< (include unfinished line: {1}, with timeout {2}, regex {3}, pause on match {4}, match next line {5}) ",
+                pattern, includeUnfinishedLine, timeout ?? GlobalTimeout, treatAsRegex, pauseEmulation, matchNextLine);
 #endif
 
             var result = WaitForMatch(() =>
             {
-                var lineMatch = CheckFinishedLines(pattern, treatAsRegex, eventName);
+                var lineMatch = CheckFinishedLines(pattern, treatAsRegex, eventName, matchNextLine);
                 if(lineMatch != null)
                 {
                     return lineMatch;
@@ -154,6 +171,39 @@ namespace Antmicro.Renode.Testing
             if(result == null)
             {
                 HandleFailure(eventName);
+            }
+            return result;
+        }
+
+        public TerminalTesterResult WaitFor(string[] patterns, TimeInterval? timeout = null, bool treatAsRegex = false, bool includeUnfinishedLine = false, bool pauseEmulation = false, bool matchFromNextLine = false)
+        {
+            if(patterns.Length == 0)
+            {
+                return HandleSuccess("Empty match", matchingLineId: NoLine);
+            }
+#if DEBUG_EVENTS
+            this.Log(LogLevel.Noisy, "Waiting for a multi-line match starting with >>{0}<< (include unfinished line: {1}, with timeout {2}, regex {3}, pause on match {4}, match from next line {5}) ",
+                patterns[0], includeUnfinishedLine, timeout ?? GlobalTimeout, treatAsRegex, pauseEmulation, matchFromNextLine);
+#endif
+            if(!matchFromNextLine)
+            {
+                if(includeUnfinishedLine && patterns.Length == 1)
+                {
+                    return WaitFor(patterns[0], timeout, treatAsRegex, true, pauseEmulation);
+                }
+                return WaitForMultilineMatch(patterns, timeout, treatAsRegex, includeUnfinishedLine, pauseEmulation);
+            }
+
+            TerminalTesterResult result = null;
+            for(var i = 0; i < patterns.Length; ++i)
+            {
+                result = WaitFor(patterns[i], timeout, treatAsRegex, includeUnfinishedLine && (i == patterns.Length - 1),
+                    pauseEmulation, true);
+
+                if(result == null)
+                {
+                   return null;
+                }
             }
             return result;
         }
@@ -242,6 +292,27 @@ namespace Antmicro.Renode.Testing
         public TimeInterval GlobalTimeout { get; set; }
         public TimeSpan WriteCharDelay { get; set; }
 
+        private void HandleDelayedChars()
+        {
+            lock(delayedChars)
+            {
+                if(!delayedChars.TryDequeue(out var delayed))
+                {
+                    delayedCharInProgress = false;
+                    return;
+                }
+
+                delayedCharInProgress = true;
+
+                var delay = TimeInterval.FromSeconds(delayed.Item1.TotalSeconds);
+                machine.ScheduleAction(delay, _ =>
+                {
+                    CallCharReceived((byte)delayed.Item2);
+                    HandleDelayedChars();
+                });
+            }
+        }
+
         private TerminalTesterResult WaitForMatch(Func<TerminalTesterResult> resultMatcher, TimeInterval timeout, bool pauseEmulation = false)
         {
             var emulation = EmulationManager.Instance.CurrentEmulation;
@@ -320,23 +391,79 @@ namespace Antmicro.Renode.Testing
             return null;
         }
 
-        private TerminalTesterResult CheckFinishedLines(string pattern, bool regex, string eventName)
+        private TerminalTesterResult WaitForMultilineMatch(string[] patterns, TimeInterval? timeout = null, bool treatAsRegex = false, bool includeUnfinishedLine = false, bool pauseEmulation = false)
+        {
+            DebugHelper.Assert(patterns.Length > (includeUnfinishedLine ? 1 : 0));
+            var eventName = "Lines starting with{1} >>{0}<<".FormatWith(patterns[0], treatAsRegex ? " regex" : string.Empty);
+
+            var matcher = new MultilineMatcher(patterns, treatAsRegex, includeUnfinishedLine);
+            var onCandidate = false;
+            var lineIndexOffset = 0;
+
+            var result = WaitForMatch(() =>
+            {
+                for(var i = lineIndexOffset; i < lines.Count; ++i)
+                {
+                    onCandidate = false;
+                    if(matcher.FeedLine(lines[i]))
+                    {
+                        if(includeUnfinishedLine)
+                        {
+                            onCandidate = true;
+                            break;
+                        }
+                        return HandleSuccess(eventName, i);
+                    }
+                    lineIndexOffset += 1;
+                }
+
+                if(onCandidate && includeUnfinishedLine && matcher.CheckUnfinishedLine(currentLineBuffer.ToString()))
+                {
+                    return HandleSuccess(eventName, CurrentLine);
+                }
+
+                return null;
+            }, timeout ?? GlobalTimeout, pauseEmulation);
+
+            if(result == null)
+            {
+                HandleFailure(eventName);
+            }
+            return result;
+        }
+
+        private TerminalTesterResult CheckFinishedLines(string pattern, bool regex, string eventName, bool matchFirstLine)
         {
             lock(lines)
             {
                 string[] matchGroups = null;
-                var index = regex
-                    ? lines.FindIndex(x =>
-                        {
-                            var match = Regex.Match(x.Content, pattern);
-                            if(match.Success)
-                            {
-                                matchGroups = GetMatchGroups(match);
-                            }
-                            return match.Success;
-                        })
-                    : lines.FindIndex(x => x.Content.Contains(pattern));
 
+                var matcher = !regex
+                    ? (Predicate<Line>)(x => x.Content.Contains(pattern))
+                    : (Predicate<Line>)(x =>
+                {
+                    var match = Regex.Match(x.Content, pattern);
+                    if(match.Success)
+                    {
+                        matchGroups = GetMatchGroups(match);
+                    }
+                    return match.Success;
+                });
+
+                if(matchFirstLine)
+                {
+                    if(lines.Count == 0)
+                    {
+                        return null;
+                    }
+                    if(matcher(lines.First()))
+                    {
+                        return HandleSuccess(eventName, matchingLineId: 0);
+                    }
+                    return null;
+                }
+
+                var index = lines.FindIndex(matcher);
                 if(index != -1)
                 {
                     return HandleSuccess(eventName, matchingLineId: index, matchGroups: matchGroups);
@@ -374,14 +501,6 @@ namespace Antmicro.Renode.Testing
             }
 
             return null;
-        }
-
-        private void WaitBeforeNextChar()
-        {
-            if(WriteCharDelay != TimeSpan.Zero)
-            {
-                Thread.Sleep(WriteCharDelay);
-            }
         }
 
         private string[] GetMatchGroups(Match match)
@@ -544,8 +663,9 @@ namespace Antmicro.Renode.Testing
         private Func<TerminalTesterResult> resultMatcher;
         private TerminalTesterResult testerResult;
         private bool pauseEmulation;
+        private bool delayedCharInProgress;
 
-        // Similarly how it is handled for FrameBufferTester is shouldn't matter if we unset the charEvent during deserialization 
+        // Similarly how it is handled for FrameBufferTester it shouldn't matter if we unset the charEvent during deserialization
         // as we check for char match on load in `WaitForMatch` either way
         // Additionally in `IsIdle` the timeout would long since expire so it doesn't matter there either.
         [Constructor(false)]
@@ -559,9 +679,10 @@ namespace Antmicro.Renode.Testing
         private readonly bool removeColors;
         private readonly List<Line> lines;
         private readonly SafeStringBuilder report;
+        private readonly Queue<Tuple<TimeSpan, char>> delayedChars = new Queue<Tuple<TimeSpan, char>>();
 
-        private const byte LineFeed = 0xA;
-        private const byte CarriageReturn = 0xD;
+        private const char LineFeed = '\x0A';
+        private const char CarriageReturn = '\x0D';
         private const char EscapeChar = '\x1B';
 
         private class Line
@@ -581,6 +702,65 @@ namespace Antmicro.Renode.Testing
             public string Content { get; }
             public double VirtualTimestamp { get; }
             public DateTime HostTimestamp { get; }
+        }
+
+        private class MultilineMatcher
+        {
+            public MultilineMatcher(string[] patterns, bool regex, bool lastUnfinished)
+            {
+                if(regex)
+                {
+                    matchLine = patterns.Select(pattern =>
+                    {
+                        var matcher = new Regex(pattern);
+                        return (Predicate<string>)(x => matcher.Match(x).Success);
+                    }).ToArray();
+                }
+                else
+                {
+                    matchLine = patterns
+                        .Select(pattern => (Predicate<string>)(x => x.Contains(pattern)))
+                        .ToArray()
+                    ;
+                }
+
+                length = patterns.Length - (lastUnfinished ? 2 : 1);
+                candidates = new bool[length];
+            }
+
+            public bool FeedLine(Line line)
+            {
+                // Let lines[0] be the current `line` and lines[-n] be nth previous line.
+                // The value of candidates[(last + n) % length] is a conjunction for k=1..n of line[-k] matching pattern[k - 1]
+                if(candidates[last] && matchLine[length](line.Content))
+                {
+                    return true;
+                }
+
+                last = (last + 1) % length;
+                var l = last;
+                for(var i = 0; i < length; i++)
+                {
+                    var patternIndex = length - 1 - i;
+                    if(candidates[l] || patternIndex == 0)
+                    {
+                        candidates[l] = matchLine[patternIndex](line.Content);
+                    }
+                    l = (l + 1) % length;
+                }
+
+                return false;
+            }
+
+            public bool CheckUnfinishedLine(string line)
+            {
+                return matchLine[matchLine.Length - 1](line);
+            }
+
+            private int last;
+            private readonly Predicate<string>[] matchLine;
+            private readonly bool[] candidates;
+            private readonly int length;
         }
 
         private enum SGRDecodingState

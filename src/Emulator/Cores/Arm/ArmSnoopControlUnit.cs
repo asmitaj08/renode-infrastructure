@@ -1,33 +1,60 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
 //
 using System;
 using System.Linq;
+using System.Collections.Generic;
 using Antmicro.Renode.Core;
 using Antmicro.Renode.Core.Structure.Registers;
 using Antmicro.Renode.Logging;
+using Antmicro.Renode.Peripherals.CPU;
 using Antmicro.Renode.Utilities;
+using Antmicro.Renode.Exceptions;
 
 namespace Antmicro.Renode.Peripherals.Miscellaneous
 {
     // Implementation based on: https://developer.arm.com/documentation/ddi0458/c/Multiprocessing/About-multiprocessing-and-the-SCU
-    public class ArmSnoopControlUnit : BasicDoubleWordPeripheral, IKnownSize
+    public class ArmSnoopControlUnit : BasicDoubleWordPeripheral, IHasOwnLife, IKnownSize
     {
-        public ArmSnoopControlUnit(IMachine machine, byte smpMask = 0xFF) : base(machine)
+        public ArmSnoopControlUnit(IMachine machine, byte smpMask = 0xFF, ArmSignalsUnit signalsUnit = null) : base(machine)
         {
+            this.signalsUnit = signalsUnit;
             this.smpMask = smpMask;
+            registeredCPUs = new List<ICPU>();
 
             DefineRegisters();
             Reset();
         }
 
+        public void RegisterCPU(ICPU cpu)
+        {
+            if(registeredCPUs.Contains(cpu))
+            {
+                throw new RecoverableException($"CPU: {cpu.GetName()} was already registered");
+            }
+            else if(registeredCPUs.Count >= MaximumCPUs)
+            {
+                throw new RecoverableException($"Number of registered CPUs cannot be greater than {MaximumCPUs}");
+            }
+            else
+            {
+                Logger.Log(LogLevel.Debug, "Registered CPU {0} at index {1}", cpu.GetName(), registeredCPUs.Count);
+                registeredCPUs.Add(cpu);
+            }
+        }
+
+        public void Pause()
+        {
+            // Intentionally left blank.
+        }
+
         public override void Reset()
         {
             lockedCPUs = new bool[MaximumCPUs];
-            numberOfCPUs = -1;
+            started = false;
 
             /* Do not reset FilteringStart/End properties - this is intentional
             /* they are SoC-specific and once set should not change on Reset
@@ -36,17 +63,34 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
             base.Reset();
         }
 
+        public void Resume()
+        {
+            // Intentionally left blank.
+        }
+
+        public void Start()
+        {
+            if(started)
+            {
+                return;
+            }
+            started = true;
+            ApplyConfigurationSignals();
+        }
+
         public override void WriteDoubleWord(long offset, uint value)
         {
             if(machine.GetSystemBus(this).TryGetCurrentCPU(out var cpu))
             {
-                if(cpu.Id >= MaximumCPUs)
+                CheckRegisteredCPUs();
+                var idx = registeredCPUs.IndexOf(cpu);
+                if(idx == -1)
                 {
-                    Logger.Log(LogLevel.Error, "Locking access for CPU {0} is not supported: up to {1} CPUs are supported", cpu.Id, MaximumCPUs);
+                    Logger.Log(LogLevel.Error, "CPU {0} is not registered in Snoop Control Unit", cpu.GetName());
                 }
-                else if(lockedCPUs[cpu.Id])
+                else if(lockedCPUs[idx])
                 {
-                    Logger.Log(LogLevel.Warning, "Tried to write value {0} at offset {1}, but access for CPU {2} has been locked", value, offset, cpu.Id);
+                    Logger.Log(LogLevel.Warning, "Tried to write value {0} at offset {1}, but access for CPU {2} has been locked", value, offset, cpu.GetName());
                     return;
                 }
             }
@@ -57,12 +101,7 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
         {
             Registers.Control.Define(this)
                 .WithFlag(0, out enabled, name: "SCU Enable")
-                // We return 0 here to signify that these are not supported
-                .WithFlag(1, FieldMode.Read, valueProviderCallback: (_) =>
-                    {
-                        return MasterFilteringStartRange != 0 && MasterFilteringEndRange != 0;
-                    }, 
-                    name: "Address Filtering Enable")
+                .WithFlag(1, out addressFilteringEnabled, FieldMode.Read, name: "Address Filtering Enable")
                 .WithFlag(2, FieldMode.Read, valueProviderCallback: (_) => false, name: "ECC/Parity Enable") // Parity for Cortex-A9, otherwise ECC
                 .WithTaggedFlag("Speculative linefills enable", 3)
                 .WithTaggedFlag("Force all Device to port0 enable", 4) // Cortex-A9 only
@@ -134,34 +173,62 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
                 .WithValueField(0, 32, FieldMode.Read, valueProviderCallback: _ => MasterFilteringEndRange & ~0xFFFFFUL);
         }
 
-        public long Size => 0x100;
+        public bool IsPaused => false;
 
-        private int CountCPUs()
-        {
-            if(numberOfCPUs == -1)
-            {
-                numberOfCPUs = sysbus.GetCPUs().Count();
-
-                // Cap Number of CPUs
-                if(numberOfCPUs > MaximumCPUs)
-                {
-                    Logger.Log(LogLevel.Error, "Number of CPUs: {0} is more than the maximum supported. Capping CPUs number to: {1}.", numberOfCPUs, MaximumCPUs);
-                    numberOfCPUs = MaximumCPUs;
-                }
-            }
-            return numberOfCPUs;
-        }
-
-        private IFlagRegisterField enabled;
-        private bool[] lockedCPUs;
-        private readonly byte smpMask;
-        private int numberOfCPUs;
+        public ulong MasterFilteringStartRange { get; set; }
+        public ulong MasterFilteringEndRange { get; set; }
 
         public ulong PeripheralsFilteringStartRange { get; set; }
         public ulong PeripheralsFilteringEndRange { get; set; }
 
-        public ulong MasterFilteringStartRange { get; set; }
-        public ulong MasterFilteringEndRange { get; set; }
+        public long Size => 0x100;
+
+        private void ApplyConfigurationSignals()
+        {
+            if(signalsUnit == null)
+            {
+                return;
+            }
+
+            addressFilteringEnabled.Value = signalsUnit.IsSignalEnabled(ArmSignals.MasterFilterEnable);
+            MasterFilteringEndRange = signalsUnit.GetAddress(ArmSignals.MasterFilterEnd);
+            MasterFilteringStartRange = signalsUnit.GetAddress(ArmSignals.MasterFilterStart);
+            PeripheralsFilteringEndRange = signalsUnit.GetAddress(ArmSignals.PeripheralFilterEnd);
+            PeripheralsFilteringStartRange = signalsUnit.GetAddress(ArmSignals.PeripheralFilterStart);
+        }
+
+        private int CountCPUs()
+        {
+            CheckRegisteredCPUs();
+            return registeredCPUs.Count;
+        }
+
+        private void CheckRegisteredCPUs()
+        {
+            if(registeredCPUs.Count == 0)
+            {
+                var cpus = sysbus.GetCPUs();
+                var numberOfCPUs = cpus.Count();
+
+                // Cap Number of CPUs
+                if(numberOfCPUs > MaximumCPUs)
+                {
+                    Logger.Log(LogLevel.Error, "Number of CPUs: {0} is more than the maximum supported. Capping CPUs number to: {1}. CPUs can be registered manually to overcome this warning.", numberOfCPUs, MaximumCPUs);
+                    numberOfCPUs = MaximumCPUs;
+                }
+
+                registeredCPUs = cpus.OrderBy(x => x.MultiprocessingId).Take(numberOfCPUs).ToList();
+            }
+        }
+
+        private IFlagRegisterField addressFilteringEnabled;
+        private IFlagRegisterField enabled;
+        private List<ICPU> registeredCPUs;
+        private bool[] lockedCPUs;
+        private bool started;
+
+        private readonly ArmSignalsUnit signalsUnit;
+        private readonly byte smpMask;
 
         // Should not be more than 4, but could be less
         private const int MaximumCPUs = 4;

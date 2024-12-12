@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 //  This file is licensed under the MIT License.
 //  Full license text is available in 'licenses/MIT.txt'.
@@ -34,6 +34,15 @@ namespace Antmicro.Renode.Peripherals.CPU
             // stub CSRs to make software happy
             cpu.RegisterCSR((ulong)CustomCSR.MachineExtendedStatus, () => 0x0, value => { cpu.Log(LogLevel.Warning, "Writing to the Machine Extended Status CSR (0x7c4) is currently not supported"); });
             cpu.RegisterCSR((ulong)CustomCSR.MachineCacheControl, () => 0xffffffff, value => { cpu.Log(LogLevel.Warning, "Writing to the Machine Cache Control CSR (0x7ca) is currently not supported"); });
+            cpu.RegisterCSR((ulong)CustomCSR.InstructionCacheAndMemoryConfiguration, () => 0x0, value => { cpu.Log(LogLevel.Warning, "Writing to the Machine Custom read-only CSR (0xfc0) is not supported"); });
+            cpu.RegisterCSR((ulong)CustomCSR.DataCacheAndMemoryConfiguration, () => 0x0, value => { cpu.Log(LogLevel.Warning, "Writing to the Machine Custom read-only CSR (0xfc1) is not supported"); });
+            cpu.RegisterCSR((ulong)CustomCSR.MachineMiscellaneousConfiguration, () => 0x0, value => { cpu.Log(LogLevel.Warning, "Writing to the Machine Custom read-only CSR (0xfc2) is not supported"); });
+            cpu.RegisterCSR((ulong)CustomCSR.MachineMiscellaneousConfigurationRV32, () => 0x0, value => { cpu.Log(LogLevel.Warning, "Writing to the Machine Custom read-only CSR (0xfc3) is not supported"); });
+            cpu.RegisterCSR((ulong)CustomCSR.VectorProcessorConfiguration, () => 0x0, value => { cpu.Log(LogLevel.Warning, "Writing to the Machine Custom read-only CSR (0xfc7) is not supported"); });
+            cpu.RegisterCSR((ulong)CustomCSR.ClusterCacheControlBaseAddress, () => 0x0, value => { cpu.Log(LogLevel.Warning, "Writing to the Machine Custom read-only CSR (0xfcf) is not supported"); });
+            cpu.RegisterCSR((ulong)CustomCSR.Architecture, () => 0x0, value => { cpu.Log(LogLevel.Warning, "Writing to the Machine Custom read-only CSR (0xfca) is not supported"); });
+            cpu.RegisterCSR((ulong)CustomCSR.CurrentStateSaveForCrashDebugging, () => 0x0, value => { cpu.Log(LogLevel.Warning, "Writing to the Machine Custom read-only CSR (0xfc8) is not supported"); });
+            cpu.RegisterCSR((ulong)CustomCSR.MstatusStateSaveForCrashDebugging, () => 0x0, value => { cpu.Log(LogLevel.Warning, "Writing to the Machine Custom read-only CSR (0xfc9) is not supported"); });
 
             // Custom0
             cpu.InstallCustomInstruction("iiiiiiiiiiiiiiiiii00ddddd0001011", opc => ReadFromMemoryToRegister(opc, AccessWidth.Byte, LoadExtractorByte), "LBGP");
@@ -53,7 +62,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         {
             var rd = (int)BitHelper.GetValue(opcode, 7, 5);
             var imm = GetImmediate(opcode, extractor, immediateBits);
-            var memoryOffset = imm + cpu.GetRegisterUnsafe(MemoryOperationsImpliedRegister).RawValue;
+            var memoryOffset = imm + cpu.GetRegister(MemoryOperationsImpliedRegister).RawValue;
 
             int valueBits;
             ulong data;
@@ -78,11 +87,11 @@ namespace Antmicro.Renode.Peripherals.CPU
 
             if(extendSign)
             {
-                cpu.SetRegisterUnsafe(rd, BitHelper.SignExtend(data, valueBits));
+                cpu.SetRegister(rd, BitHelper.SignExtend(data, valueBits));
             }
             else
             {
-                cpu.SetRegisterUnsafe(rd, data);
+                cpu.SetRegister(rd, data);
             }
         }
 
@@ -90,9 +99,9 @@ namespace Antmicro.Renode.Peripherals.CPU
         {
             var rs2 = (int)BitHelper.GetValue(opcode, 20, 5);
             var imm = GetImmediate(opcode, extractor, immediateBits);
-            var memoryOffset = imm + cpu.GetRegisterUnsafe(MemoryOperationsImpliedRegister).RawValue;
+            var memoryOffset = imm + cpu.GetRegister(MemoryOperationsImpliedRegister).RawValue;
 
-            var regValue = cpu.GetRegisterUnsafe(rs2).RawValue;
+            var regValue = cpu.GetRegister(rs2).RawValue;
 
             switch(width)
             {
@@ -115,9 +124,9 @@ namespace Antmicro.Renode.Peripherals.CPU
         {
             var rd = (int)BitHelper.GetValue(opcode, 7, 5);
             var imm = GetImmediate(opcode, LoadExtractorByte, 18);
-            var value = imm + cpu.GetRegisterUnsafe(MemoryOperationsImpliedRegister).RawValue;
+            var value = imm + cpu.GetRegister(MemoryOperationsImpliedRegister).RawValue;
 
-            cpu.SetRegisterUnsafe(rd, value);
+            cpu.SetRegister(rd, value);
         }
 
         private ulong LoadExtractorByte(ulong opcode)
@@ -197,6 +206,15 @@ namespace Antmicro.Renode.Peripherals.CPU
             MachineCacheControl = 0x7ca,
             MachineExtendedStatus = 0x7c4,
             MachineMiscellaneousControl = 0x7d0,
+            InstructionCacheAndMemoryConfiguration = 0xfc0,
+            DataCacheAndMemoryConfiguration = 0xfc1,
+            MachineMiscellaneousConfiguration = 0xfc2,
+            MachineMiscellaneousConfigurationRV32 = 0xfc3,
+            VectorProcessorConfiguration = 0xfc7,
+            ClusterCacheControlBaseAddress = 0xfcf,
+            Architecture = 0xfca,
+            CurrentStateSaveForCrashDebugging = 0xfc8,
+            MstatusStateSaveForCrashDebugging = 0xfc9
         }
     }
 }

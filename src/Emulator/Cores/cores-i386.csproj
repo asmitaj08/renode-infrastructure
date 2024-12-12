@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Project DefaultTargets="CompileTranslationLib;Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="14.0">
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="14.0">
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
@@ -40,12 +40,20 @@
   </Target>
   <Import Project="./cores.template.csproj" />
   <ItemGroup>
+    <Compile Include="X86\BaseX86.cs" />
     <Compile Include="X86\X86.cs" />
     <Compile Include="X86\X86Registers.cs">
       <DependentUpon>X86Registers.tt</DependentUpon>
     </Compile>
     <Compile Include="X86\LAPIC.cs" />
     <Compile Include="X86\IOAPIC.cs" />
+    <Compile Include="X86\ACPI\ACPIExtensions.cs" />
+    <Compile Include="X86\ACPI\RootSystemDescriptionPointer.cs" />
+    <Compile Include="X86\ACPI\RootSystemDescriptionTable.cs" />
+    <Compile Include="X86\ACPI\SystemDescriptionTableHeader.cs" />
+    <Compile Include="X86\ACPI\FixedACPIDescriptionTable.cs" />
+    <Compile Include="X86\ACPI\ProcessorLocalAPICRecord.cs" />
+    <Compile Include="X86\ACPI\MultipleAPICDescriptionTable.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="X86\X86Registers.tt">

@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 // Copyright (c) 2022 SICK AG
 //
 // This file is licensed under the MIT License.
@@ -32,7 +32,7 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
                 .WithTaggedFlag("CSBF", 3)
                 .WithTaggedFlag("PVDE", 4)
                 .WithEnumField<DoubleWordRegister, PvdLevelSelection>(5, 3, name: "PLS")
-                .WithTaggedFlag("DBP", 8)
+                .WithFlag(8, name: "DBP")
                 .WithTaggedFlag("FPDS", 9)
                 .WithTaggedFlag("LPUDS", 10)
                 .WithTaggedFlag("MRUDS", 11)
@@ -44,6 +44,7 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
                         {
                             vosValue.Value = RegulatorVoltageScalingOutputSelection.ScaleMode3;
                         }
+                        vosrdyValue.Value = true;
                     })
                 .WithFlag(16, name: "ODEN", writeCallback: (_, value) =>
                     {
@@ -67,7 +68,7 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
                 .WithTaggedFlag("EWUP", 8)
                 .WithTaggedFlag("BER", 9)
                 .WithReservedBits(10, 4)
-                .WithTaggedFlag("VOSRDY", 14)
+                .WithFlag(14, out vosrdyValue, FieldMode.Read, name: "VOSRDY")
                 .WithReservedBits(15, 1)
                 .WithFlag(16, out odrdyValue, FieldMode.Read, name: "ODRDY")
                 .WithFlag(17, out odswrdyValue, FieldMode.Read, name: "ODSWRDY")
@@ -79,6 +80,7 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
 
         private IEnumRegisterField<RegulatorVoltageScalingOutputSelection> vosValue;
         private IFlagRegisterField odswenValue;
+        private IFlagRegisterField vosrdyValue;
         private IFlagRegisterField odrdyValue;
         private IFlagRegisterField odswrdyValue;
 

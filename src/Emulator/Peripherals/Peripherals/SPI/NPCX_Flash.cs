@@ -1,23 +1,26 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
 //
 using System;
 using System.Collections.Generic;
+
+using Antmicro.Renode.Core;
 using Antmicro.Renode.Core.Structure.Registers;
 using Antmicro.Renode.Logging;
-using Antmicro.Renode.Utilities;
 using Antmicro.Renode.Peripherals.Memory;
+using Antmicro.Renode.Utilities;
+
+using Range = Antmicro.Renode.Core.Range;
 
 namespace Antmicro.Renode.Peripherals.SPI
 {
-    public class NPCX_Flash : ISPIPeripheral, IProvidesRegisterCollection<ByteRegisterCollection>
+    public class NPCX_Flash : ISPIPeripheral, IGPIOReceiver, IProvidesRegisterCollection<ByteRegisterCollection>
     {
-        public NPCX_Flash(NPCX_FIU fiu, MappedMemory memory)
+        public NPCX_Flash(MappedMemory memory)
         {
-            this.owner = fiu;
             this.memory = memory;
 
             addressBuffer = new List<byte>();
@@ -30,6 +33,7 @@ namespace Antmicro.Renode.Peripherals.SPI
         {
             writeEnabled = false;
             resetWriteEnable = false;
+            WriteProtect.Set();
             FinishTransmission();
         }
 
@@ -43,89 +47,126 @@ namespace Antmicro.Renode.Peripherals.SPI
                 // explicitly handled with the command latching logic
                 switch(currentCommand.Value)
                 {
-                case Commands.WriteEnable:
-                    WriteEnabled = true;
-                    break;
-                case Commands.WriteDisable:
-                    WriteEnabled = false;
-                    break;
+                    case Commands.WriteEnable:
+                        writeEnabled = true;
+                        break;
+                    case Commands.WriteDisable:
+                        writeEnabled = false;
+                        break;
                 }
                 return returnValue;
             }
 
             switch(currentCommand.Value)
             {
-            case Commands.ReadStatusRegister1:
-                returnValue = RegistersCollection.Read((long)Registers.StatusRegister1);
-                break;
-            case Commands.ReadStatusRegister2:
-                returnValue = RegistersCollection.Read((long)Registers.StatusRegister2);
-                break;
-            case Commands.BlockErase64:
-                if(addressBuffer.Count < AddressByteCount)
+                case Commands.ReadStatusRegister1:
+                    returnValue = RegistersCollection.Read((long)Registers.StatusRegister1);
+                    break;
+                case Commands.ReadStatusRegister2:
+                    returnValue = RegistersCollection.Read((long)Registers.StatusRegister2);
+                    break;
+                case Commands.BlockErase64:
                 {
-                    addressBuffer.Add(data);
+                    if(addressBuffer.Count < AddressByteCount)
+                    {
+                        addressBuffer.Add(data);
+                    }
+
                     if(addressBuffer.Count != AddressByteCount)
                     {
                         break;
                     }
 
-                    if(WriteEnabled)
-                    {
-                        var address = BitHelper.ToUInt32(addressBuffer.ToArray(), 0, AddressByteCount, true);
-                        memory.SetRange(address, 64.KB(), 0xFF);
-                        WriteEnabled = false;
-                    }
-                    else
+                    if(!writeEnabled)
                     {
                         this.ErrorLog("Attempted to perform a Block Erase operation while flash is in write-disabled state. Operation will be ignored");
+                        break;
                     }
-                }
-                break;
-            case Commands.PageProgram:
-                if(addressBuffer.Count == AddressByteCount)
-                {
-                    if(WriteEnabled)
+
+                    var address = BitHelper.ToUInt32(addressBuffer.ToArray(), 0, AddressByteCount, true);
+                    var protectedRange = ProtectedRange;
+                    if(protectedRange.HasValue && protectedRange.Value.Contains(address))
                     {
-                        memory.WriteByte(temporaryAddress, data);
-                        var currentPage = temporaryAddress / PageProgramSize;
-                        var nextPage = (temporaryAddress + 1) / PageProgramSize;
-                        if(nextPage == currentPage)
+                        this.ErrorLog("Attempted to perform a Block Erase operation on a protected block. Operation will be ignored");
+                        break;
+                    }
+
+                    memory.SetRange(address, 64.KB(), 0xFF);
+                    writeEnabled = false;
+                    break;
+                }
+                case Commands.PageProgram:
+                {
+                    if(addressBuffer.Count < AddressByteCount)
+                    {
+                        addressBuffer.Add(data);
+                        if(addressBuffer.Count == AddressByteCount)
                         {
-                            temporaryAddress++;
+                            temporaryAddress = BitHelper.ToUInt32(addressBuffer.ToArray(), 0, AddressByteCount, true);
                         }
-                        else
-                        {
-                            // Address should wrap around to the start of the page
-                            // when attempting to cross the page boundry
-                            temporaryAddress = currentPage * PageProgramSize;
-                        }
-                        resetWriteEnable = true;
+                        break;
+                    }
+
+                    if(!writeEnabled)
+                    {
+                        this.ErrorLog("Attempted to perform a Page Program operation while flash is in write-disabled state. Operation will be ignored");
+                        break;
+                    }
+
+                    var protectedRange = ProtectedRange;
+                    if(protectedRange.HasValue && protectedRange.Value.Contains(temporaryAddress))
+                    {
+                        this.ErrorLog("Attempted to perform a Page Program operation on a protected block. Operation will be ignored");
+                        break;
+                    }
+
+                    memory.WriteByte(temporaryAddress, data);
+                    var currentPage = temporaryAddress / PageProgramSize;
+                    var nextPage = (temporaryAddress + 1) / PageProgramSize;
+                    if(nextPage == currentPage)
+                    {
+                        temporaryAddress++;
                     }
                     else
                     {
-                        this.ErrorLog("Attempted to perform a Page Program operation while flash is in write-disabled state. Operation will be ignored");
+                        // Address should wrap around to the start of the page
+                        // when attempting to cross the page boundary
+                        temporaryAddress = currentPage * PageProgramSize;
                     }
+                    resetWriteEnable = true;
+                    break;
                 }
-                else
-                {
-                    addressBuffer.Add(data);
-                    if(addressBuffer.Count == AddressByteCount)
+                case Commands.WriteStatusRegister:
+                    if(statusRegisterProtect.Value && !WriteProtect.IsSet)
                     {
-                        temporaryAddress = BitHelper.ToUInt32(addressBuffer.ToArray(), 0, AddressByteCount, true);
+                        this.Log(LogLevel.Warning, "Trying to write status register while SRP is enabled and WP signal is low; ignoring");
+                        break;
                     }
-                }
-                break;
-            default:
-                if(Enum.IsDefined(typeof(Commands), currentCommand.Value))
-                {
-                    this.WarningLog("Unsupported command: {0}", currentCommand.Value);
-                }
-                else
-                {
-                    this.ErrorLog("Invalid command: {0}", currentCommand.Value);
-                }
-                break;
+
+                    if(temporaryAddress > (uint)Registers.StatusRegister2)
+                    {
+                        writeEnabled = false;
+                    }
+
+                    if(!writeEnabled)
+                    {
+                        this.ErrorLog("Attempted to perform a Write Status operation while flash is in write-disabled state. Operation will be ignored");
+                        break;
+                    }
+
+                    RegistersCollection.Write(temporaryAddress, data);
+                    temporaryAddress++;
+                    break;
+                default:
+                    if(Enum.IsDefined(typeof(Commands), currentCommand.Value))
+                    {
+                        this.WarningLog("Unsupported command: {0}", currentCommand.Value);
+                    }
+                    else
+                    {
+                        this.ErrorLog("Invalid command: {0}", currentCommand.Value);
+                    }
+                    break;
             }
             return returnValue;
         }
@@ -137,27 +178,72 @@ namespace Antmicro.Renode.Peripherals.SPI
             temporaryAddress = 0x0;
             if(resetWriteEnable)
             {
-                WriteEnabled = false;
+                writeEnabled = false;
             }
             resetWriteEnable = false;
         }
 
+        public void OnGPIO(int number, bool value)
+        {
+            if(number != 0)
+            {
+                this.Log(LogLevel.Error, "This peripheral supports gpio input only on index 0, but {0} was called.", number);
+                return;
+            }
+            WriteProtect.Set(value);
+        }
+
         public ByteRegisterCollection RegistersCollection { get; }
+        public GPIO WriteProtect { get; } = new GPIO();
+
+        public BlockProtect BlockProtectBits
+        {
+            get => blockProtectBits.Value;
+            set
+            {
+                blockProtectBitsMSB.Value = value != BlockProtect.None;
+                blockProtectBits.Value = value;
+            }
+        }
+
+        public Range? ProtectedRange
+        {
+            get
+            {
+                switch(BlockProtectBits)
+                {
+                    case BlockProtect._64KB:
+                        return new Range(0x0, (ulong)64.KB());
+                    case BlockProtect._128KB:
+                        return new Range(0x0, (ulong)128.KB());
+                    case BlockProtect._256KB:
+                        return new Range(0x0, (ulong)256.KB());
+                    case BlockProtect._512KB:
+                        return new Range(0x0, (ulong)512.KB());
+                    case BlockProtect.Everything:
+                        return new Range(0x0, (ulong)memory.Size);
+                    case BlockProtect.None:
+                    case BlockProtect.Reserved1:
+                    case BlockProtect.Reserved2:
+                        return null;
+                    default:
+                        throw new Exception("unreachable");
+                }
+            }
+        }
 
         private void DefineRegisters()
         {
             Registers.StatusRegister1.Define(this)
                 .WithTaggedFlag("BUSY", 0)
                 .WithFlag(1, name: "WEL (Write Enable Latch)",
-                    valueProviderCallback: _ => WriteEnabled,
-                    writeCallback: (_, value) => WriteEnabled = value)
-                .WithTaggedFlag("BP0 (Block Protect Bits)", 2)
-                .WithTaggedFlag("BP1 (Block Protect Bits)", 3)
-                .WithTaggedFlag("BP2 (Block Protect Bits)", 4)
-                .WithTaggedFlag("BP3 (Block Protect Bits)", 5)
+                    valueProviderCallback: _ => writeEnabled,
+                    writeCallback: (_, value) => writeEnabled = value)
+                .WithEnumField(2, 3, out blockProtectBits, name: "BP0-BP2 (Block Protect Bits)")
+                .WithFlag(5, out blockProtectBitsMSB, name: "BP3 (Block Protect Bits)")
                 .WithReservedBits(6, 1)
-                .WithTaggedFlag("SRP (Status Register Protect)", 7);
-            
+                .WithFlag(7, out statusRegisterProtect, name: "SRP (Status Register Protect)");
+
             Registers.StatusRegister2.Define(this)
                 .WithReservedBits(0, 1)
                 .WithTaggedFlag("QE (Quad Enable)", 1)
@@ -168,21 +254,6 @@ namespace Antmicro.Renode.Peripherals.SPI
                 .WithReservedBits(6, 2);
         }
 
-        private bool WriteEnabled
-        {
-            get => writeEnabled;
-            set
-            {
-                if(owner.IsLocked)
-                {
-                    // Locking FIU disables the ability to enable writing to flash
-                    writeEnabled = false;
-                    return;
-                }
-                writeEnabled = value;
-            }
-        }
-
         private Commands? currentCommand;
 
         private bool writeEnabled;
@@ -190,11 +261,26 @@ namespace Antmicro.Renode.Peripherals.SPI
         private bool resetWriteEnable;
 
         private readonly List<byte> addressBuffer;
-        private readonly NPCX_FIU owner;
         private readonly MappedMemory memory;
 
         private const int PageProgramSize = 256;
         private const int AddressByteCount = 3;
+
+        private IEnumRegisterField<BlockProtect> blockProtectBits;
+        private IFlagRegisterField blockProtectBitsMSB;
+        private IFlagRegisterField statusRegisterProtect;
+
+        public enum BlockProtect
+        {
+            None,
+            _64KB,
+            _128KB,
+            _256KB,
+            _512KB,
+            Reserved1,
+            Reserved2,
+            Everything,
+        }
 
         private enum Registers
         {

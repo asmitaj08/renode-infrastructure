@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -10,6 +10,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using Antmicro.Renode.Core;
 using Antmicro.Renode.Core.Structure;
+using Antmicro.Renode.Debugging;
 using Antmicro.Renode.Exceptions;
 using Antmicro.Renode.Logging;
 using Antmicro.Renode.Peripherals.Timers;
@@ -20,10 +21,10 @@ using Endianess = ELFSharp.ELF.Endianess;
 
 namespace Antmicro.Renode.Peripherals.CPU
 {
-    public partial class ARMv8A : TranslationCPU, IARMTwoSecurityStatesCPU, IPeripheralRegister<ARM_GenericTimer, NullRegistrationPoint>
+    public partial class ARMv8A : BaseARMv8, IARMTwoSecurityStatesCPU, IPeripheralRegister<ARM_GenericTimer, NullRegistrationPoint>, ICPUWithAArch64Support
     {
         public ARMv8A(IMachine machine, string cpuType, ARM_GenericInterruptController genericInterruptController, uint cpuId = 0, Endianess endianness = Endianess.LittleEndian)
-                : base(cpuId, cpuType, machine, endianness, CpuBitness.Bits64)
+                : base(cpuId, cpuType, machine, endianness)
         {
             Affinity = new Affinity(cpuId);
             gic = genericInterruptController;
@@ -42,11 +43,11 @@ namespace Antmicro.Renode.Peripherals.CPU
         public string[,] GetAllSystemRegisterValues()
         {
             var table = new Renode.Utilities.Table().AddRow("Name", "Value");
-            foreach(var indexNamePair in SystemRegistersDictionary)
+            foreach(var indexSystemRegisterPair in SystemRegistersDictionary)
             {
                 // Value is 0 if the attempt is unsuccessful so we don't need to care about the result.
-                _ = TryGetSystemRegisterValue(indexNamePair.Key, out var value, logUnhandledAccess: false);
-                table.AddRow(indexNamePair.Value, $"0x{value:X}");
+                _ = TryGetSystemRegisterValue(indexSystemRegisterPair.Key, out var value, logUnhandledAccess: false);
+                table.AddRow(indexSystemRegisterPair.Value.Name, $"0x{value:X}");
             }
             return table.ToArray();
         }
@@ -106,6 +107,19 @@ namespace Antmicro.Renode.Peripherals.CPU
             machine.RegisterAsAChildOf(this, peripheral, registrationPoint);
         }
 
+        public bool TryGetSystemRegisterValue(AArch64SystemRegisterEncoding encoding, out ulong value)
+        {
+            value = 0;
+            return TryGetSystemRegisterIndex(encoding, out var systemRegisterIndex)
+                && TryGetSystemRegisterValue(systemRegisterIndex, out value, logUnhandledAccess: false);
+        }
+
+        public bool TrySetSystemRegisterValue(AArch64SystemRegisterEncoding encoding, ulong value)
+        {
+            return TryGetSystemRegisterIndex(encoding, out var systemRegisterIndex)
+                && TrySetSystemRegisterValue(systemRegisterIndex, value);
+        }
+
         public void Unregister(ARM_GenericTimer peripheral)
         {
             timer = null;
@@ -134,9 +148,9 @@ namespace Antmicro.Renode.Peripherals.CPU
                 features.Add(coreFeature);
 
                 var systemRegistersFeature = new GDBFeatureDescriptor("org.renode.gdb.aarch64.sysregs");
-                foreach(var indexNamePair in SystemRegistersDictionary)
+                foreach(var indexSystemRegisterPair in SystemRegistersDictionary)
                 {
-                    systemRegistersFeature.Registers.Add(new GDBRegisterDescriptor(indexNamePair.Key, SystemRegistersWidth, indexNamePair.Value, "uint64"));
+                    systemRegistersFeature.Registers.Add(new GDBRegisterDescriptor(indexSystemRegisterPair.Key, SystemRegistersWidth, indexSystemRegisterPair.Value.Name, "uint64"));
                 }
                 features.Add(systemRegistersFeature);
 
@@ -174,6 +188,9 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
+        public bool FIQMaskOverride => (GetSystemRegisterValue("hcr_el2") & 0b01000) != 0;
+        public bool IRQMaskOverride => (GetSystemRegisterValue("hcr_el2") & 0b10000) != 0;
+
         public Affinity Affinity { get; }
         public bool IsEL3UsingAArch32State => false; // ARM8vA currently supports only AArch64 execution
         public bool HasSingleSecurityState { get; private set; }
@@ -188,6 +205,10 @@ namespace Antmicro.Renode.Peripherals.CPU
                     return Interrupt.Hard;
                 case InterruptSignalType.FIQ:
                     return Interrupt.TargetExternal1;
+                case InterruptSignalType.vIRQ:
+                    return Interrupt.TargetExternal2;
+                case InterruptSignalType.vFIQ:
+                    return Interrupt.TargetExternal3;
                 default:
                     throw InvalidInterruptNumberException;
             }
@@ -260,20 +281,12 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected bool TrySetNonMappedRegister(int index, RegisterValue value)
         {
-            if(SystemRegistersDictionary.TryGetValue((uint)index, out var name))
-            {
-                // ValidateSystemRegisterAccess isn't used because most of it's checks aren't needed.
-                // The register must exist at this point cause it's in the dictionary built based on tlib
-                // and we don't really care about the invalid access type error for unwritable registers.
-                TlibSetSystemRegister(name, value, 1u /* log_unhandled_access: true */);
-                return true;
-            }
-            return false;
+            return TrySetSystemRegisterValue((uint)index, value);
         }
 
-        private bool IsGICOrGenericTimerSystemRegister(string name)
+        private bool IsGICOrGenericTimerSystemRegister(SystemRegister systemRegister)
         {
-            return TlibIsGicOrGenericTimerSystemRegister(name) == 1u;
+            return TlibIsGicOrGenericTimerSystemRegister(systemRegister.Name) == 1u;
         }
 
         [Export]
@@ -287,17 +300,43 @@ namespace Antmicro.Renode.Peripherals.CPU
             ExecutionModeChanged?.Invoke(ExceptionLevel, SecurityState);
         }
 
+        private bool TryGetSystemRegisterIndex(AArch64SystemRegisterEncoding encoding, out uint index)
+        {
+            index = uint.MaxValue;
+            var matchingEntries = SystemRegistersDictionary.Where(entry => encoding.Equals(entry.Value.Encoding));
+            DebugHelper.Assert(matchingEntries.Count() <= 1);
+
+            if(!matchingEntries.Any())
+            {
+                this.Log(LogLevel.Warning, "Unknown AArch64 system register encoding: {0}", encoding);
+                return false;
+            }
+            index = matchingEntries.Single().Key;
+            return true;
+        }
+
         private bool TryGetSystemRegisterValue(uint index, out ulong value, bool logUnhandledAccess)
         {
-            if(SystemRegistersDictionary.TryGetValue(index, out var name))
+            if(SystemRegistersDictionary.TryGetValue(index, out var systemRegister))
             {
-                // ValidateSystemRegisterAccess isn't used because most of it's checks aren't needed.
+                // ValidateSystemRegisterAccess isn't used because most of its checks aren't needed.
                 // The register must exist at this point cause it's in the dictionary built based on tlib
                 // and we don't really care about the invalid access type error for unreadable registers.
-                value = TlibGetSystemRegister(name, logUnhandledAccess ? 1u : 0u);
+                value = TlibGetSystemRegister(systemRegister.Name, logUnhandledAccess ? 1u : 0u);
                 return true;
             }
             value = 0;
+            return false;
+        }
+
+        private bool TrySetSystemRegisterValue(uint index, ulong value)
+        {
+            if(SystemRegistersDictionary.TryGetValue(index, out var systemRegister))
+            {
+                ValidateSystemRegisterAccess(systemRegister.Name, isWrite: true);
+                TlibSetSystemRegister(systemRegister.Name, value, 1u /* log_unhandled_access: true */);
+                return true;
+            }
             return false;
         }
 
@@ -317,34 +356,35 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
-        private Dictionary<uint, string> SystemRegistersDictionary
+        private Dictionary<uint, SystemRegister> SystemRegistersDictionary
         {
             get
             {
                 if(systemRegisters == null)
                 {
-                    systemRegisters = new Dictionary<uint, string>();
+                    systemRegisters = new Dictionary<uint, SystemRegister>();
 
                     var array = IntPtr.Zero;
                     var arrayPointer = Marshal.AllocHGlobal(IntPtr.Size);
                     try
                     {
-                        var count = TlibCreateSystemRegisterNamesArray(arrayPointer);
+                        var count = TlibCreateSystemRegistersArray(arrayPointer);
                         if(count == 0)
                         {
                             return systemRegisters;
                         }
                         array = Marshal.ReadIntPtr(arrayPointer);
 
-                        var namePointersArray = new IntPtr[count];
-                        Marshal.Copy(array, namePointersArray, 0, (int)count);
+                        var ArmCpRegInfoPointersArray = new IntPtr[count];
+                        Marshal.Copy(array, ArmCpRegInfoPointersArray, 0, (int)count);
 
                         var lastRegisterIndex = Enum.GetValues(typeof(ARMv8ARegisters)).Cast<uint>().Max();
-                        systemRegisters = namePointersArray.Select(namePointer => Marshal.PtrToStringAnsi(namePointer))
+                        systemRegisters = ArmCpRegInfoPointersArray
+                            .Select(armCpRegInfoPointer => ARMCPRegInfo.FromIntPtr(armCpRegInfoPointer).ToSystemRegister())
                             // Currently, GIC and Generic Timer system registers can only be accessed by software.
                             // Let's not add them to the dictionary so that GDB won't fail on read until it's fixed.
-                            .Where(name => !IsGICOrGenericTimerSystemRegister(name))
-                            .OrderBy(name => name)
+                            .Where(systemRegister => !IsGICOrGenericTimerSystemRegister(systemRegister))
+                            .OrderBy(systemRegister => systemRegister.Name)
                             .ToDictionary(_ => ++lastRegisterIndex);
                     }
                     finally
@@ -362,13 +402,59 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private ExceptionLevel exceptionLevel;
         private SecurityState securityState;
-        private Dictionary<uint, string> systemRegisters;
+        private Dictionary<uint, SystemRegister> systemRegisters;
         private ARM_GenericTimer timer;
 
         private readonly object elAndSecurityLock = new object();
         private readonly ARM_GenericInterruptController gic;
 
         private const int SystemRegistersWidth = 64;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ARMCPRegInfo
+        {
+            public static ARMCPRegInfo FromIntPtr(IntPtr pointer)
+            {
+                return (ARMCPRegInfo)Marshal.PtrToStructure(pointer, typeof(ARMCPRegInfo));
+            }
+
+            public SystemRegister ToSystemRegister()
+            {
+                return new SystemRegister
+                {
+                    Name = Marshal.PtrToStringAnsi(Name),
+                    Coprocessor = Coprocessor,
+                    Type = Type,
+                    Encoding = new AArch64SystemRegisterEncoding { Op0 = Op0, Op1 = Op1, Crn = Crn, Crm = Crm, Op2 = Op2 },
+                };
+            }
+
+            // These have to be in line with tlib/arch/arm_common/system_registers_common.h
+            public IntPtr Name;
+            public uint Coprocessor;
+            public uint Type;
+
+            public byte Op0;
+            public byte Op1;
+            public byte Crn;
+            public byte Crm;
+            public byte Op2;
+
+            public uint FieldOffset;
+            public ulong ResetValue;
+            public IntPtr AccessFunction;
+            public IntPtr ReadFunction;
+            public IntPtr WriteFunction;
+            public bool IsDynamic;
+        };
+
+        private struct SystemRegister
+        {
+            public string Name;
+            public uint Coprocessor;
+            public AArch64SystemRegisterEncoding Encoding;
+            public uint Type;
+        }
 
         // These '*ReturnValue' enums have to be in sync with their counterparts in 'tlib/arch/arm64/arch_exports.c'.
         private enum SetAvailableElsReturnValue
@@ -390,7 +476,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         private FuncUInt32StringUInt32 TlibCheckSystemRegisterAccess;
 
         [Import]
-        private FuncUInt32IntPtr TlibCreateSystemRegisterNamesArray;
+        private FuncUInt32IntPtr TlibCreateSystemRegistersArray;
 
         [Import]
         private FuncUInt32String TlibIsGicOrGenericTimerSystemRegister;

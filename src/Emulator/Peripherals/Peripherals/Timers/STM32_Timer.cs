@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2024 Antmicro
 //
 // This file is licensed under the MIT License.
 // Full license text is available in 'licenses/MIT.txt'.
@@ -13,19 +13,33 @@ using Antmicro.Renode.Core.Structure.Registers;
 using Antmicro.Renode.Peripherals.Bus;
 using Antmicro.Renode.Time;
 using Antmicro.Renode.Logging;
+using Antmicro.Renode.Exceptions;
 
 namespace Antmicro.Renode.Peripherals.Timers
 {
     // This class does not implement advanced-control timers interrupts
     [AllowedTranslations(AllowedTranslation.ByteToDoubleWord | AllowedTranslation.WordToDoubleWord)]
-    public class STM32_Timer : LimitTimer, IDoubleWordPeripheral, INumberedGPIOOutput, IPeripheralRegister<IGPIOReceiver, NumberRegistrationPoint<int>>, IPeripheralRegister<IGPIOReceiver, NullRegistrationPoint>
+    public class STM32_Timer : LimitTimer, IDoubleWordPeripheral, IKnownSize, INumberedGPIOOutput, IPeripheralRegister<IGPIOReceiver, NumberRegistrationPoint<int>>, IPeripheralRegister<IGPIOReceiver, NullRegistrationPoint>
     {
-        public STM32_Timer(IMachine machine, long frequency, uint initialLimit) : base(machine.ClockSource, frequency, limit: initialLimit,  direction: Direction.Ascending, enabled: false, autoUpdate: false)
+        public STM32_Timer(IMachine machine, long frequency, uint initialLimit) : base(machine.ClockSource, frequency, limit: initialLimit, direction: Direction.Ascending, enabled: false, autoUpdate: false)
         {
             this.machine = machine;
+            sysbus = machine.GetSystemBus(this);
             IRQ = new GPIO();
             connections = Enumerable.Range(0, NumberOfCCChannels).ToDictionary(i => i, _ => (IGPIO)new GPIO());
             this.initialLimit = initialLimit;
+            // If initialLimit is 0, throw an error - this is an invalid state for us, since we would not be able to infer the counter's width
+            if(initialLimit == 0)
+            {
+                throw new ConstructionException($"{nameof(initialLimit)} has to be greater than zero");
+            }
+            // We need to ensure that the counter is at least as wide as the position of MSB in initialLimit
+            // but since we count from 0 (log_2 (1) = 0 ) - add 1
+            this.timerCounterLengthInBits = (int)Math.Floor(Math.Log(initialLimit, 2)) + 1;
+            if(this.timerCounterLengthInBits > 32)
+            {
+                throw new ConstructionException($"Timer's width cannot be more than 32 bits - requested {this.timerCounterLengthInBits} bits (inferred from {nameof(initialLimit)})");
+            }
 
             LimitReached += delegate
             {
@@ -310,7 +324,17 @@ namespace Antmicro.Renode.Peripherals.Timers
                 },
                 
                 {(long)Registers.Counter, new DoubleWordRegister(this)
-                    .WithValueField(0, 32, writeCallback: (_, val) => Value = val, valueProviderCallback: _ => (uint)Value, name: "Counter value (CNT)")
+                    .WithValueField(0, timerCounterLengthInBits,
+                        writeCallback: (_, val) => Value = val,
+                        valueProviderCallback: _ =>
+                        {
+                            if(sysbus.TryGetCurrentCPU(out var cpu))
+                            {
+                                cpu.SyncTime();
+                            }
+                            return (uint)Value;
+                        }, name: "Counter value (CNT)")
+                    .WithReservedBits(timerCounterLengthInBits, 32 - timerCounterLengthInBits)
                     .WithWriteCallback((_, val) =>
                     {
                         for(var i = 0; i < NumberOfCCChannels; ++i)
@@ -325,7 +349,8 @@ namespace Antmicro.Renode.Peripherals.Timers
                 },
 
                 {(long)Registers.Prescaler, new DoubleWordRegister(this)
-                    .WithValueField(0, 32, writeCallback: (_, val) => Divider = (int)val + 1, valueProviderCallback: _ => (uint)Divider - 1, name: "Prescaler value (PSC)")
+                    .WithValueField(0, 16, writeCallback: (_, val) => Divider = (int)val + 1, valueProviderCallback: _ => (uint)Divider - 1, name: "Prescaler value (PSC)")
+                    .WithReservedBits(16, 16)
                     .WithWriteCallback((_, __) =>
                     {
                         for(var i = 0; i < NumberOfCCChannels; ++i)
@@ -337,7 +362,7 @@ namespace Antmicro.Renode.Peripherals.Timers
                 },
 
                 {(long)Registers.AutoReload, new DoubleWordRegister(this)
-                    .WithValueField(0, 32, writeCallback: (_, val) =>
+                    .WithValueField(0, timerCounterLengthInBits, writeCallback: (_, val) =>
                     {
                         autoReloadValue = (uint)val;
                         Enabled = enableRequested && autoReloadValue > 0;
@@ -346,6 +371,7 @@ namespace Antmicro.Renode.Peripherals.Timers
                             Limit = autoReloadValue;
                         }
                     }, valueProviderCallback: _ => autoReloadValue, name: "Auto-reload value (ARR)")
+                    .WithReservedBits(timerCounterLengthInBits, 32 - timerCounterLengthInBits)
                     .WithWriteCallback((_, __) => UpdateInterrupts())
                 },
                 {(long)Registers.RepetitionCounter, new DoubleWordRegister(this)
@@ -369,7 +395,7 @@ namespace Antmicro.Renode.Peripherals.Timers
             {
                 var j = i;
                 registersMap.Add((long)Registers.CaptureOrCompare1 + (j * 0x4), new DoubleWordRegister(this)
-                    .WithValueField(0, 32, valueProviderCallback: _ => (uint)ccTimers[j].Limit, writeCallback: (_, val) =>
+                    .WithValueField(0, timerCounterLengthInBits, valueProviderCallback: _ => (uint)ccTimers[j].Limit, writeCallback: (_, val) =>
                     {
                         if(val == 0)
                         {
@@ -377,6 +403,7 @@ namespace Antmicro.Renode.Peripherals.Timers
                         }
                         ccTimers[j].Limit = val;
                     }, name: String.Format("Capture/compare value {0} (CCR{0})", j + 1))
+                    .WithReservedBits(timerCounterLengthInBits, 32 - timerCounterLengthInBits)
                     .WithWriteCallback((_, __) => { UpdateCaptureCompareTimer(j); UpdateInterrupts(); })
                 );
             }
@@ -523,7 +550,8 @@ namespace Antmicro.Renode.Peripherals.Timers
             IRQ.Set(value);
         }
 
-        private uint initialLimit;
+        private readonly uint initialLimit;
+        private readonly int timerCounterLengthInBits;
         private uint autoReloadValue;
         private uint repetitionsLeft;
         private bool updateInterruptFlag;
@@ -541,6 +569,7 @@ namespace Antmicro.Renode.Peripherals.Timers
         private readonly IEnumRegisterField<OutputCompareMode>[] outputCompareModes = new IEnumRegisterField<OutputCompareMode>[NumberOfCCChannels];
         private readonly LimitTimer[] ccTimers = new LimitTimer[NumberOfCCChannels];
         private readonly IMachine machine;
+        private readonly IBusController sysbus;
         private readonly Dictionary<int, IGPIO> connections;
 
         private const int NumberOfCCChannels = 4;
