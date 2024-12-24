@@ -76,7 +76,7 @@ namespace Antmicro.Renode.Hooks
         [PostDeserialization]
         private void InnerInit()
         {
-            Console.WriteLine("^^^^ SBlockPythonEngine.cs  InnerInit --- postDeserialization");
+            // Console.WriteLine("^^^^ SBlockPythonEngine.cs  InnerInit --- postDeserialization");
             Scope.SetVariable(Core.Machine.MachineKeyword, Machine);
             Scope.SetVariable("cpu", CPU);
             Scope.SetVariable("self", CPU);

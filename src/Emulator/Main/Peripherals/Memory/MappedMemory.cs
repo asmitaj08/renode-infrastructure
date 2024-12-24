@@ -28,6 +28,7 @@ using System.Reflection;
 #endif
 using Antmicro.Renode.Exceptions;
 using Endianess = ELFSharp.ELF.Endianess;
+using System.IO;
 
 namespace Antmicro.Renode.Peripherals.Memory
 {
@@ -53,6 +54,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public MappedMemory(IMachine machine, long size, int? segmentSize = null)
         {
+            
             if(size == 0)
             {
                 throw new ConstructionException("Memory size cannot be 0");
@@ -68,6 +70,7 @@ namespace Antmicro.Renode.Peripherals.Memory
             this.machine = machine;
             this.size = size;
             SegmentSize = segmentSize.Value;
+            // Console.WriteLine($"*****MappedMeory********** : machine : {machine}, size : {size}, segmentSize : {SegmentSize}");
             Init();
         }
 
@@ -459,7 +462,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public void Save(PrimitiveWriter writer)
         {
-            Console.WriteLine("^^^^^^^^^^^ Save - mappedMemeory ^^^^^^^^^^^^^^");
+            // Console.WriteLine("^^^^^^^^^^^ Save - mappedMemeory ^^^^^^^^^^^^^^");
             var globalStopwatch = Stopwatch.StartNew();
             var realSegmentsCount = 0;
 
@@ -493,6 +496,110 @@ namespace Antmicro.Renode.Peripherals.Memory
             this.NoisyLog(string.Format("{0} segments saved to stream, of which {1} had contents.", segments.Length, realSegmentsCount));
             globalStopwatch.Stop();
             this.NoisyLog("Memory serialization ended in {0}s.", Misc.NormalizeDecimal(globalStopwatch.Elapsed.TotalSeconds));
+        }
+
+
+        //modified
+
+
+         public void Fuzz_Mem_Load()
+        {
+            // int position = 0;
+            // Console.WriteLine("^^^^^^^^^^^ Test Load - mappedMemory ^^^^^^^^^^^^^^");
+
+             // If the buffer has been modified, reset it to the default state
+            if (isBufferModified)
+            {
+                globalBuffer = (byte[])defaultBuffer.Clone(); // Reset buffer to default state
+                isBufferModified = false;
+            }
+
+            using (var ms = new MemoryStream(globalBuffer))
+            using (var reader = new BinaryReader(ms))
+            {
+                // checking magic
+                var magic = reader.ReadUInt32();
+                if(magic != Magic)
+                {
+                    throw new InvalidOperationException("Memory: Cannot resume state from stream: Invalid magic.");
+                }
+                SegmentSize = reader.ReadInt32();
+                size = reader.ReadInt64();
+                ResetByte = reader.ReadByte();
+                if(emptyCtorUsed)
+                {
+                    Init();
+                }
+                var realSegmentsCount = 0;
+                for(var i = 0; i < segments.Length; i++)
+                {
+                    var isTouched = reader.ReadBoolean();
+                    if(!isTouched)
+                    {
+                        continue;
+                    }
+                    var compressedSegmentSize = reader.ReadInt32();
+                    var compressedBuffer = reader.ReadBytes(compressedSegmentSize);
+                    TouchSegment(i);
+                    realSegmentsCount++;
+                    var decodedBuffer = LZ4Codec.Decode(compressedBuffer, 0, compressedBuffer.Length, SegmentSize);
+                    Marshal.Copy(decodedBuffer, 0, segments[i], decodedBuffer.Length);
+                }
+            this.NoisyLog(string.Format("{0} segments loaded from stream, of which {1} had content.", segments.Length, realSegmentsCount));
+        }
+        }
+
+        public void Fuzz_Mem_Save()
+        {
+            // Console.WriteLine("^^^^^^^^^^^ test Save - mappedMemeory ^^^^^^^^^^^^^^");
+            // If the buffer has been modified, reset it to the default state
+            if (isBufferModified)
+            {
+                globalBuffer = (byte[])defaultBuffer.Clone(); // Reset buffer to default state
+                isBufferModified = false;
+            }
+            var globalStopwatch = Stopwatch.StartNew();
+            var realSegmentsCount = 0;
+
+            using (var ms = new MemoryStream())
+            using (var writer = new BinaryWriter(ms))
+            {
+                writer.Write(Magic);
+                writer.Write(SegmentSize);
+                writer.Write(size);
+                writer.Write(ResetByte);
+                byte[][] outputBuffers = new byte[segments.Length][];
+                Parallel.For(0, segments.Length, i =>
+                {
+                    if(segments[i] == IntPtr.Zero)
+                    {   
+                        return;
+                    }
+                    Interlocked.Increment(ref realSegmentsCount);
+                    var localBuffer = new byte[SegmentSize];
+                    Marshal.Copy(segments[i], localBuffer, 0, localBuffer.Length);
+                    outputBuffers[i] = LZ4Codec.Encode(localBuffer, 0, localBuffer.Length);
+                });
+                for(var i = 0; i < segments.Length; i++)
+                {
+                    if(segments[i] == IntPtr.Zero)
+                    {
+                        writer.Write(false);
+                        continue;
+                    }
+                    writer.Write(true);
+                    writer.Write(outputBuffers[i].Length);
+                    writer.Write(outputBuffers[i], 0, outputBuffers[i].Length);
+                }
+                this.NoisyLog(string.Format("{0} segments saved to stream, of which {1} had contents.", segments.Length, realSegmentsCount));
+                globalStopwatch.Stop();
+                this.NoisyLog("Memory serialization ended in {0}s.", Misc.NormalizeDecimal(globalStopwatch.Elapsed.TotalSeconds));
+            
+                // Update global buffer with the serialized data
+                globalBuffer = ms.ToArray();
+                defaultBuffer = (byte[])globalBuffer.Clone(); // Save the default state of the buffer
+            
+            }
         }
 
         /// <summary>
@@ -666,6 +773,10 @@ namespace Antmicro.Renode.Peripherals.Memory
         private const int MinimalSegmentSize = 64 * 1024;
         private const int MaximalSegmentSize = 16 * 1024 * 1024;
         private const int RecommendedNumberOfSegments = 16;
+
+        private byte[] globalBuffer; // Global buffer to hold serialized data  // for test load save operations
+        private byte[] defaultBuffer; // To store the default state of the buffer // for test load save operations
+        private bool isBufferModified = false; // Flag to track buffer modification // for test load save operations
 
         private class MappedSegment : IMappedSegment
         {

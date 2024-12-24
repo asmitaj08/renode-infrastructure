@@ -53,19 +53,57 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public override void Reset()
         {
+            //Console.WriteLine("^^^Reset() in CortexM.cs");
             pcNotInitialized = true;
             vtorInitialized = false;
             base.Reset();
         }
 
+        public override void Fuzz_Reset()
+        {
+            //Console.WriteLine("^^^Fuzz_Reset() in CortexM.cs");
+            // fuzz_flag_pc = true;
+            // fuzz_flag_leave_restart = true;
+            pcNotInitialized = true;
+            vtorInitialized = true;
+            base.Fuzz_Reset();
+        }
+
         protected override void OnResume()
         {
+            // Console.WriteLine($"^^^^^^^CortexM.cs ---OnResume(), IsHalted : {IsHalted}");
             // Suppress initialization when processor is turned off as binary may not even be loaded yet
             if(!IsHalted)
             {
                 InitPCAndSP();
             }
             base.OnResume();
+        }
+
+        // protected override void OnResume() // modified, as called withing machine.Resume()
+        // {
+        //     //Console.WriteLine($"^^^^^^^CortexM.cs ---OnResume(), IsHalted : {IsHalted}");
+        //     // Suppress initialization when processor is turned off as binary may not even be loaded yet
+        //     if(fuzz_flag_pc==true){
+        //         fuzz_flag_pc = false;
+        //         Fuzz_InitPCAndSP();
+        //     }
+        //     else if(!IsHalted)
+        //     {
+        //         InitPCAndSP();
+        //     }
+        //     base.OnResume();
+        // }
+
+        protected override void Fuzz_OnResume()
+        {
+            //Console.WriteLine($"^^^^^^^CortexM.cs ---Fuzz_OnResume(), IsHalted : {IsHalted}");
+            // Suppress initialization when processor is turned off as binary may not even be loaded yet
+            // if(!IsHalted)
+            {
+                Fuzz_InitPCAndSP();
+            }
+            base.Fuzz_OnResume();
         }
 
         public override string Architecture { get { return "arm-m"; } }
@@ -112,6 +150,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         {
             get
             {
+                // Console.WriteLine($"^^^^^^^^^^Get VectorTableOffset: CortexM.cs : {tlibGetInterruptVectorBase():X}");
                 return tlibGetInterruptVectorBase();
             }
             set
@@ -123,6 +162,7 @@ namespace Antmicro.Renode.Peripherals.CPU
                     return;
                 }
                 this.NoisyLog("VectorTableOffset set to 0x{0:X}.", value);
+                // Console.WriteLine($"^^^^^^^^^^Set VectorTableOffset : CortexM.cs : {value:X}");
                 tlibSetInterruptVectorBase(value);
             }
         }
@@ -303,6 +343,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected override UInt32 BeforePCWrite(UInt32 value)
         {
+            // Console.WriteLine($"^^^^^Before PC write() in CortexM.cs : {value:X}");
             if(value % 2 == 0)
             {
                 this.Log(LogLevel.Warning, "Patching PC 0x{0:X} for Thumb mode.", value);
@@ -314,6 +355,12 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected override void OnLeavingResetState()
         {
+            //Console.WriteLine($"^^^^^OnLeavingResetState() in CortexM.cs : State {State}");
+            // if(fuzz_flag_leave_restart==true && State == CPUState.Running){
+            //     fuzz_flag_leave_restart = false;
+            //     Fuzz_InitPCAndSP();
+
+            // }
             if(State == CPUState.Running)
             {
                 InitPCAndSP();
@@ -321,8 +368,24 @@ namespace Antmicro.Renode.Peripherals.CPU
             base.OnLeavingResetState();
         }
 
+        //  protected override void Fuzz_OnLeavingResetState()
+        // {
+        //     //Console.WriteLine($"^^^^^OnLeavingResetState() in CortexM.cs : State {State}");
+        //     // if(fuzz_flag_leave_restart==true && State == CPUState.Running){
+        //     //     fuzz_flag_leave_restart = false;
+        //     //     Fuzz_InitPCAndSP();
+
+        //     // }
+        //     if(State == CPUState.Running)
+        //     {
+        //         Fuzz_InitPCAndSP();
+        //     }
+        //     base.Fuzz_OnLeavingResetState();
+        // }
+
         private void InitPCAndSP()
         {
+            //Console.WriteLine("^^^^^^^CortexM.cs ---InitPCAndSP()");
             var firstNotNullSection = machine.SystemBus.GetLookup(this).FirstNotNullSectionAddress;
             if(!vtorInitialized && firstNotNullSection.HasValue)
             {
@@ -340,6 +403,7 @@ namespace Antmicro.Renode.Peripherals.CPU
                         return; // Keep VectorTableOffset uninitialized in the case of error condition
                     }
                     VectorTableOffset = checked((uint)value);
+                    //Console.WriteLine($"^^^^^^^CortexM.cs ---InitPCAndSP() : VectorTableOffset = {VectorTableOffset}");
                 }
             }
             if(pcNotInitialized)
@@ -358,7 +422,38 @@ namespace Antmicro.Renode.Peripherals.CPU
                 this.Log(LogLevel.Info, "Setting initial values: PC = 0x{0:X}, SP = 0x{1:X}.", pc, sp);
                 PC = pc;
                 SP = sp;
+                //Console.WriteLine($"^^^^^^^CortexM.cs ---InitPCAndSP() : pcNotInitialized is true: PC : {PC}, SP : {SP}");
             }
+            else{
+             //Console.WriteLine($"^^^^^^^CortexM.cs ---InitPCAndSP() : pcNotInitialized is false: PC : {PC}, SP : {SP}");
+            }
+        }
+
+
+        private void Fuzz_InitPCAndSP()
+        {
+            //Console.WriteLine("^^^^^^^CortexM.cs ---Fuzz_InitPCAndSP()");
+            // if(pcNotInitialized)
+            {
+                // stack pointer and program counter are being sent according
+                // to VTOR (vector table offset register)
+                var sysbus = machine.SystemBus;
+                var pc = sysbus.ReadDoubleWord(VectorTableOffset + 4, this);
+                var sp = sysbus.ReadDoubleWord(VectorTableOffset, this);
+                // if(!sysbus.IsMemory(pc, this) || (pc == 0 && sp == 0))
+                // {
+                //     this.Log(LogLevel.Error, "PC does not lay in memory or PC and SP are equal to zero. CPU was halted.");
+                //     IsHalted = true;
+                //     return; // Keep PC and SP uninitialized in the case of error condition
+                // }
+                // this.Log(LogLevel.Info, "Setting initial values: PC = 0x{0:X}, SP = 0x{1:X}.", pc, sp);
+                PC = pc;
+                SP = sp;
+               // Console.WriteLine($"^^^^^^^CortexM.cs ---Fuzz_InitPCAndSP() : : PC : {PC}, SP : {SP}");
+            }
+            // else{
+            //  Console.WriteLine($"^^^^^^^CortexM.cs ---InitPCAndSP() : pcNotInitialized is false: PC : {PC}, SP : {SP}");
+            // }
         }
 
         [Export]
@@ -487,6 +582,8 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         [Import]
         private FuncUInt32UInt32 tlibGetPmsav8Mair;
+        private bool fuzz_flag_pc = false;
+        private bool fuzz_flag_leave_restart = false;
 
         #pragma warning restore 649
     }

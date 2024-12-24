@@ -21,11 +21,13 @@ namespace Antmicro.Renode.Peripherals.CPU
         
         public virtual void Start()
         {
+            // Console.WriteLine("Starting CPU : Start() : CPUCore.cs");
             Resume();
         }
         
         public void Resume()
         {
+            // Console.WriteLine($"Starting CPU : Resume() : CPUCore.cs, isAborted val : {isAborted}, isPaused : {isPaused}");
             lock(pauseLock)
             {
                 if(isAborted || !isPaused)
@@ -39,8 +41,25 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
+        public void Fuzz_Resume()
+        {
+           // Console.WriteLine($"Starting CPU : Fuzz_Resume() : CPUCore.cs, isAborted val : {isAborted}, isPaused : {isPaused}");
+            lock(pauseLock)
+            {
+                if(isAborted || !isPaused)
+                {
+                    return;
+                }
+                started = true;
+                isPaused = false;
+                Fuzz_OnResume();
+                //this.NoisyLog("Resumed.");
+            }
+        }
+
         public void Pause()
         {
+           // Console.WriteLine($"Starting CPU : Pause() : CPUCore.cs : isAborted : {isAborted} , isPaused : {isPaused}");
             if(isAborted || isPaused)
             {
                 // cpu is already paused or aborted
@@ -77,6 +96,10 @@ namespace Antmicro.Renode.Peripherals.CPU
             // by default do nothing
         }
         
+        protected virtual void Fuzz_OnResume()
+        {
+            // by default do nothing
+        }
         protected virtual void OnPause()
         {
             // by default do nothing

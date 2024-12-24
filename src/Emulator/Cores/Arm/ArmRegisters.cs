@@ -24,6 +24,7 @@ namespace Antmicro.Renode.Peripherals.CPU
                 throw new RecoverableException($"Wrong register index: {register}");
             }
 
+            // Console.WriteLine($"^^^^^^^^Setting register ARM : {(ArmRegisters)register} : {r.Index} with {value:X}");
             SetRegisterValue32(r.Index, checked((UInt32)value));
         }
 
@@ -33,6 +34,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             {
                 throw new RecoverableException($"Wrong register index: {register}");
             }
+            // Console.WriteLine($"^^^^^^^^Reading register ARM : {(ArmRegisters)register} :: {r.Index}, ret val :{GetRegisterValue32(r.Index):X}");
             return GetRegisterValue32(r.Index);
         }
 

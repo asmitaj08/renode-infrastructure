@@ -155,8 +155,18 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public virtual void Reset()
         {
+            //Console.WriteLine("^^^^^^ BaseCPU.cs Reset()");
             isAborted = false;
             Pause();
+            State = CPUState.InReset;
+        }
+
+        public virtual void Fuzz_Reset()
+        {
+           // Console.WriteLine("^^^^^^ BaseCPU.cs Fuzz_Reset()");
+           fuzz_flag = true;
+            isAborted = false;
+            // Pause();
             State = CPUState.InReset;
         }
 
@@ -252,19 +262,49 @@ namespace Antmicro.Renode.Peripherals.CPU
         }
 
         /// <remarks><c>StateChanged</c> is invoked when the value gets changed.</remarks>
-        public CPUState State
+        // public CPUState State
+        // {
+        //     get => state;
+
+        //     private set
+        //     {
+        //         Console.WriteLine($"Set CPU state : state : {state}, to set to : {value}");
+        //         var oldState = state;
+        //         if(oldState == value)
+        //         {
+        //             return;
+        //         }
+        //         state = value;
+        //         if(oldState == CPUState.InReset)
+        //         {
+        //             OnLeavingResetState();
+        //         }
+        //         StateChanged?.Invoke(this, oldState, value);
+        //     }
+        // }
+
+
+        //modified 
+
+         public CPUState State
         {
             get => state;
 
             private set
             {
+                //Console.WriteLine($"Set CPU state : state : {state}, to set to : {value}");
                 var oldState = state;
                 if(oldState == value)
                 {
                     return;
                 }
                 state = value;
-                if(oldState == CPUState.InReset)
+                if(fuzz_flag==true && oldState == CPUState.InReset)
+                {
+                    fuzz_flag=false;
+                    Fuzz_OnLeavingResetState();
+                }
+                else if(oldState == CPUState.InReset)
                 {
                     OnLeavingResetState();
                 }
@@ -330,6 +370,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected virtual void InnerPause(bool onCpuThread, bool checkPauseGuard)
         {
+            //Console.WriteLine("^^^^^^ BaseCPU.cs InnerPause()");
             RequestPause();
 
             if(onCpuThread)
@@ -340,6 +381,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected virtual void Pause(HaltArguments haltArgs, bool checkPauseGuard)
         {
+           // Console.WriteLine($"^^^^^^ BaseCPU.cs Pause() : isAborted : {isAborted}, isPaused : {isPaused}");
             if(isAborted || isPaused)
             {
                 // cpu is already paused or aborted
@@ -383,27 +425,67 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected virtual void OnLeavingResetState()
         {
+            //Console.WriteLine($"^^^^^^ basecpu.cs, OnLeavingResetState()");
+            // Intentionally left blank.
+        }
+
+        protected virtual void Fuzz_OnLeavingResetState()
+        {
+            //Console.WriteLine($"^^^^^^ basecpu.cs, Fuzz_OnLeavingResetState()");
             // Intentionally left blank.
         }
 
         protected override void OnResume()
         {
+            // Console.WriteLine($"^^^^^^ OnResume : basecpu.cs, state : {State}, currentHaltedState : {currentHaltedState}");
             if(State == CPUState.InReset && !currentHaltedState)
             {
                 State = CPUState.Running;
+                // Console.WriteLine($"^^^^^^ OnResume : basecpu.cs . cpu state : {State}");
             }
+            singleStepSynchronizer.Enabled = IsSingleStepMode;
+            StartCPUThread();
+        }
+
+
+        // protected override void OnResume()
+        // {
+        //     //Console.WriteLine($"^^^^^^ OnResume : basecpu.cs, state : {State}, currentHaltedState : {currentHaltedState}");
+            
+        //     // if(fuzz_flag==true){
+        //     //     State = CPUState.Running;
+        //     // }
+        //     if(State == CPUState.InReset && !currentHaltedState)
+        //     {
+        //         State = CPUState.Running;
+        //         // Console.WriteLine($"^^^^^^ OnResume : basecpu.cs . cpu state : {State}");
+        //     }
+        //     singleStepSynchronizer.Enabled = IsSingleStepMode;
+        //     StartCPUThread();
+        // }
+
+        protected override void Fuzz_OnResume()
+        {
+            //Console.WriteLine($"^^^^^^ Fuzz_OnResume : basecpu.cs, state : {State}, currentHaltedState : {currentHaltedState}");
+            // if(State == CPUState.InReset && !currentHaltedState)
+            // {
+                //fuzz_flag = true;
+                State = CPUState.Running;
+                // Console.WriteLine($"^^^^^^ OnResume : basecpu.cs . cpu state : {State}");
+            // }
             singleStepSynchronizer.Enabled = IsSingleStepMode;
             StartCPUThread();
         }
 
         protected override void OnPause()
         {
+            //Console.WriteLine("^^^^^^ OnPause : basecpu.cs");
             Pause(new HaltArguments(HaltReason.Pause, this), checkPauseGuard: true);
         }
 
         protected virtual void RequestPause()
         {
-            // Console.WriteLine("\n^^^^^^^^^^^^^^PAUSE baseCPU.cs^^^^^^^^^^^^\n");
+            //Console.WriteLine("\n^^^^^^^^^^^^^^request PAUSE baseCPU.cs^^^^^^^^^^^^\n");
             lock(pauseLock)
             {
                 isPaused = true;
@@ -713,6 +795,7 @@ restart:
 
         protected void StartCPUThread()
         {
+        //    Console.WriteLine("^^^^Starting CPU : StartCPUThread() : BaseCPU.cs");
             this.Trace();
             lock(pauseLock)
             lock(cpuThreadBodyLock)
@@ -843,6 +926,7 @@ restart:
 
         private void SetPCFromEntryPoint(ulong entryPoint)
         {
+            // Console.WriteLine($"^^^ SetPCFromEntryPoint : BaseCPU.cs : entryPoint : {entryPoint}");
             var what = machine.SystemBus.WhatIsAt(entryPoint, this);
             if(what != null)
             {
@@ -855,6 +939,7 @@ restart:
                 }
             }
             PC = entryPoint;
+            // Console.WriteLine($"^^^ SetPCFromEntryPoint : BaseCPU.cs : PC : {PC}");
         }
 
         [Transient]
@@ -868,6 +953,7 @@ restart:
         private ulong instructionsLeftThisRound;
         private ulong instructionsExecutedThisRound;
         private ulong skipInstructions;
+        private bool fuzz_flag = false;
 
         private readonly object cpuThreadBodyLock = new object();
     }

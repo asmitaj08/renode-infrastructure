@@ -221,15 +221,70 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
+    //     private byte[] cpuState_test;
+    //     public void testStatePtr(){
+    //         Console.WriteLine($"**** Inside testStatePtr : [CPU: {this.GetCPUThreadName(machine)}]");
+    //         var statePtr = TlibExportState();
+    //         Console.WriteLine($"\n*****statePtr : {statePtr}");
+    //         Console.WriteLine($"\n*****TlibGetStateSize : {TlibGetStateSize()}");
+
+    //         cpuState_test = new byte[TlibGetStateSize()];
+    //         Marshal.Copy(statePtr, cpuState_test, 0, cpuState_test.Length);
+    //         Console.WriteLine($"\n*****cpuState_test length : {cpuState_test.Length}");
+
+    // //          // Print the contents of cpuState_test (byte array)
+    // // Console.WriteLine($"\n*****cpuState_test (byte array) : [{string.Join(", ", cpuState_test)}]");
+
+    // // // Optionally, if the state is an array of integers, you can convert the byte array to integers and print them
+    // // Console.WriteLine("\n*****cpuState_test as int values:");
+    // // for (int i = 0; i < cpuState_test.Length; i += sizeof(int))
+    // // {
+    // //     if (i + sizeof(int) <= cpuState_test.Length)
+    // //     {
+    // //         int intValue = BitConverter.ToInt32(cpuState_test, i);
+    // //         Console.WriteLine($"Index {i / sizeof(int)}: {intValue}");
+    // //     }
+    // // }
+    //     }
+
+        public void Fuzz_PrepareState()
+        {
+            var statePtr = TlibExportState();
+            Console.WriteLine("^^^^^^^^^^^ Test Prepare state - Translation CPU ^^^^^^^^^^^^^^");
+            
+            BeforeSave(statePtr);
+            cpuState = new byte[TlibGetStateSize()]; // This line initializes the cpuState array with a size equal to the value returned by the function TlibGetStateSize(), TlibGetStateSize() is likely a function that returns the size of the CPU state in bytes
+            Console.WriteLine($"^^^^^^^^^^^TlibGetStateSize : {cpuState.Length}");
+            Marshal.Copy(statePtr, cpuState, 0, cpuState.Length); // Marshal.Copy is used to copy data from unmanaged memory (pointed to by statePtr) into managed memory (cpuState), 0: The start index in the destination array (cpuState).cpuState.Length: The number of bytes to copy, which is the size of the cpuState array.
+            Console.WriteLine("^^^^^^^^^^^ Prepare state - Translation CPU Done!! ^^^^^^^^^^^^^^");
+        }
+
+
+        public void Fuzz_LoadState()
+        {
+            // Console.WriteLine("^^^^^^^^^^^ testLoadState - Translation CPU ^^^^^^^^^^^^^^");
+            if(cpuState != null)
+            {
+                // Console.WriteLine("^^^^^ TranslationCPU - testLoadState - cpuState!=null, calling afterLoad ^^^^^^^^");
+                // Console.WriteLine($"\n*****cpuStateSize - testLoadState : {cpuState.Length}");
+                var statePtr = TlibExportState();
+                Marshal.Copy(cpuState, 0, statePtr, cpuState.Length);
+                
+                AfterLoad(statePtr);
+            }
+            
+            // Console.WriteLine("^^^^^^^^^^^ testLoadState - Translation CPU Done!! ^^^^^^^^^^^^^^");
+        }
+
         [PreSerialization]
         private void PrepareState()
         {
             var statePtr = TlibExportState();
-            Console.WriteLine("^^^^^^^^^^^ Prepare state - Translation CPU ^^^^^^^^^^^^^^");
+            // Console.WriteLine("^^^^^^^^^^^ Prepare state - Translation CPU ^^^^^^^^^^^^^^");
             BeforeSave(statePtr);
             cpuState = new byte[TlibGetStateSize()]; // This line initializes the cpuState array with a size equal to the value returned by the function TlibGetStateSize(), TlibGetStateSize() is likely a function that returns the size of the CPU state in bytes
             Marshal.Copy(statePtr, cpuState, 0, cpuState.Length); // Marshal.Copy is used to copy data from unmanaged memory (pointed to by statePtr) into managed memory (cpuState), 0: The start index in the destination array (cpuState).cpuState.Length: The number of bytes to copy, which is the size of the cpuState array.
-            Console.WriteLine("^^^^^^^^^^^ Prepare state - Translation CPU Done!! ^^^^^^^^^^^^^^");
+            // Console.WriteLine("^^^^^^^^^^^ Prepare state - Translation CPU Done!! ^^^^^^^^^^^^^^");
         }
 
         [PostSerialization]
@@ -242,7 +297,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         [LatePostDeserialization]
         private void RestoreState()
         {
-            // Console.WriteLine("^^^^ Translation CPU - RestoreState");
+           // Console.WriteLine("^^^^ Translation CPU - RestoreState");
             Init();
             // TODO: state of the reset events
             FreeState();
@@ -303,13 +358,21 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected override void OnLeavingResetState()
         {
+           // Console.WriteLine("^^^^^^^ TarnslationalCPU.cs OnLeavingResetState()");
             base.OnLeavingResetState();
+            TlibOnLeavingResetState();
+        }
+
+        protected override void Fuzz_OnLeavingResetState()
+        {
+            //Console.WriteLine("^^^^^^^ TarnslationalCPU.cs Fuzz_OnLeavingResetState()");
+            // base.Fuzz_OnLeavingResetState();
             TlibOnLeavingResetState();
         }
 
         protected override void RequestPause()
         {
-            // Console.WriteLine("\n^^^^^^^^^^^^^^PAUSE translationalcpu.cs^^^^^^^^^^^^\n");
+            //Console.WriteLine("\n^^^^^^^^^^^^^^PAUSE translationalcpu.cs^^^^^^^^^^^^\n");
             base.RequestPause();
             TlibSetReturnRequest();
         }
@@ -324,13 +387,26 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
+        public override void Fuzz_Reset()
+        {
+            //Console.WriteLine("^^^^^^^ TarnslationalCPU.cs Fuzz_Reset()");
+            base.Fuzz_Reset();
+            isInterruptLoggingEnabled = false;
+            TlibReset();
+            // ResetOpcodesCounters();
+            // profiler?.Dispose();
+            //Console.WriteLine("^^^^^^^ TarnslationalCPU.cs Fuzz_Reset() Done!!");
+        }
+        
         public override void Reset()
         {
+           // Console.WriteLine("^^^^^^^ TarnslationalCPU.cs Reset()");
             base.Reset();
             isInterruptLoggingEnabled = false;
             TlibReset();
             ResetOpcodesCounters();
             profiler?.Dispose();
+           // Console.WriteLine("^^^^^^^ TarnslationalCPU.cs Reset() Done!!");
         }
 
         public bool RequestTranslationBlockRestart(bool quiet = false)
@@ -843,6 +919,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public void ResetMmuWindow(uint index)
         {
+            //Console.WriteLine("^^^^^^^ TarnslationalCPU.cs ResetMmuWindow()");
             if(AssertMmuEnabledAndWindowInRange(index))
             {
                 TlibResetMmuWindow(index);
@@ -1256,7 +1333,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void Init()
         {
-            // Console.WriteLine("^^^^^ TranslationCPU - Init ^^^^^^^^");
+           // Console.WriteLine("^^^^^ TranslationCPU - Init ^^^^^^^^");
             memoryManager = new SimpleMemoryManager(this);
             isPaused = true;
 
@@ -1299,7 +1376,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             {
                 var statePtr = TlibExportState();
                 Marshal.Copy(cpuState, 0, statePtr, cpuState.Length);
-                // Console.WriteLine("^^^^^ TranslationCPU - Init - cpuState!=null, calling afterLoad ^^^^^^^^");
+                //Console.WriteLine("^^^^^ TranslationCPU - Init - cpuState!=null, calling afterLoad ^^^^^^^^");
                 AfterLoad(statePtr);
             }
             if(machine != null)

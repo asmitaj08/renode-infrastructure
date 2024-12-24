@@ -68,6 +68,11 @@ namespace Antmicro.Renode.Peripherals.UART
             started = true;
         }
 
+        // public void Fuzz_Resume()
+        // {
+        //     started = true;
+        // }
+
         public virtual void DetachFrom(I uart)
         {
             lock(locker)

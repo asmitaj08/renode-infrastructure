@@ -249,7 +249,9 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected virtual UInt32 BeforePCWrite(UInt32 value)
         {
+            // Console.WriteLine($"^^^^^ BeforePCWrite Arm.cs : {value}");
             TlibSetThumb((int)(value & 0x1));
+            // Console.WriteLine($"^^^^^ BeforePCWrite Arm.cs : ret val : {value & ~(uint)0x1}");
             return value & ~(uint)0x1;
         }
 
@@ -305,6 +307,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public void SetEventFlag(bool value)
         {
+            // Console.WriteLine($"^^^^^ Setting event flag : Arm.cs : {value}");
             TlibSetEventFlag(value ? 1 : 0);
         }
 
@@ -345,6 +348,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public ulong GetSystemRegisterValue(string name)
         {
+            // Console.WriteLine($"^^^^^ GetSystemRegisterValue : Arm.cs : {name}");
             ValidateSystemRegisterAccess(name, isWrite: false);
 
             return TlibGetSystemRegister(name, 1u /* log_unhandled_access: true */);
@@ -352,6 +356,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public void SetSystemRegisterValue(string name, ulong value)
         {
+            // Console.WriteLine($"^^^^^ SetSystemRegisterValue : Arm.cs : {name}, {value:X}");
             ValidateSystemRegisterAccess(name, isWrite: true);
 
             TlibSetSystemRegister(name, value, 1u /* log_unhandled_access: true */);

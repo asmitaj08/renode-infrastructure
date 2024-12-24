@@ -87,6 +87,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public void ResetOpcodesCounters()
         {
+            // Console.WriteLine("TranslationCPU_opcodeCounting.cs ResetOpcodesCounters()");
             TlibResetOpcodeCounters();
         }
 

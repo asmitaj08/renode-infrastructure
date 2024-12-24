@@ -74,7 +74,7 @@ namespace Antmicro.Renode.Core
         [PreSerialization]
         private void SerializeAtomicMemoryState()
         {
-            Console.WriteLine("^^^^^ Machine.cs : SerializeAtomicMemoryState : PreSerialization");
+            //Console.WriteLine("^^^^^ Machine.cs : SerializeAtomicMemoryState : PreSerialization");
             atomicMemoryState = new byte[AtomicMemoryStateSize];
             Marshal.Copy(atomicMemoryStatePointer, atomicMemoryState, 0, atomicMemoryState.Length);
             // the first byte of an atomic memory state contains value 0 or 1
@@ -467,7 +467,7 @@ namespace Antmicro.Renode.Core
         {
             lock(pausingSync)
             {
-                // Console.WriteLine("\n^^^^^^^^^^^^^^PAUSE machine.cs^^^^^^^^^^^^\n");
+                //Console.WriteLine($"\n^^^^^^^^^^^^^^PAUSE machine.cs^^^^^^^^^^^^ , state : {state}\n");
                 switch(state)
                 {
                 case State.Paused:
@@ -1644,18 +1644,21 @@ namespace Antmicro.Renode.Core
             }
         }
 
-        private void Resume()
+        // private void Resume() // modified
+        public void Resume()
         {
             // Console.WriteLine("\n^^^^^^^^^^^^^^Resume machine.cs^^^^^^^^^^^^\n");
             lock(pausingSync)
             {
+               
                 (LocalTimeSource as SlaveTimeSource)?.Resume();
                 foreach(var ownLife in ownLifes.OrderBy(x => x is ICPU ? 1 : 0))
                 {
-                    this.NoisyLog("Resuming {0}.", GetNameForOwnLife(ownLife));
+                    //this.NoisyLog("Resuming {0}.", GetNameForOwnLife(ownLife));
+                    //Console.WriteLine($"^^^^ Machine.cs Resume : ownLife : {ownLife}, Resuming : {GetNameForOwnLife(ownLife)}, type : {ownLife.GetType().Name}");
                     ownLife.Resume();
                 }
-                this.Log(LogLevel.Info, "Machine resumed.");
+                //this.Log(LogLevel.Info, "Machine resumed.");
                 state = State.Started;
                 var machineStarted = StateChanged;
                 if(machineStarted != null)
@@ -1665,6 +1668,7 @@ namespace Antmicro.Renode.Core
             }
         }
 
+
         public void HandleTimeProgress(TimeInterval diff)
         {
             clockSource.Advance(diff);
@@ -1672,6 +1676,7 @@ namespace Antmicro.Renode.Core
 
         public void PostCreationActions()
         {
+            // Console.WriteLine("Machine.cs PostCreationActions");
             // Enable broadcasting dirty addresses on multicore platforms
             var cpus = SystemBus.GetCPUs().OfType<ICPUWithMappedMemory>().ToArray();
             if(cpus.Length > 1)
@@ -1796,6 +1801,7 @@ namespace Antmicro.Renode.Core
             {
                 this.machine = machine;
                 sync = machine.pausingSync;
+                // Console.WriteLine("^^^^^^^^^Machine paused : PausedState");
             }
 
             public PausedState Enter()

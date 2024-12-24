@@ -15,6 +15,8 @@ namespace Antmicro.Renode.Peripherals
 		void Pause();
 		void Resume();
 
+		// void Fuzz_Resume();
+
 		bool IsPaused { get; }
 	}
 }
