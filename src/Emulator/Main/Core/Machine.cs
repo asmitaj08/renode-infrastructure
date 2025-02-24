@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2024 Antmicro
+// Copyright (c) 2010-2025 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -31,6 +31,7 @@ using Antmicro.Renode.Utilities;
 using Antmicro.Renode.Utilities.Collections;
 using Antmicro.Renode.Utilities.GDB;
 using Microsoft.CSharp.RuntimeBinder;
+using Monitor = System.Threading.Monitor;
 
 namespace Antmicro.Renode.Core
 {
@@ -1072,6 +1073,35 @@ namespace Antmicro.Renode.Core
             }
             gdbStubs[port.Value].Dispose();
             gdbStubs.Remove(port.Value);
+        }
+
+        public bool AttachConnectionAcceptedListenerToGdbStub(int port, Action<Stream> listener)
+        {
+            if(!gdbStubs.TryGetValue(port, out var gdbStub))
+            {
+                return false;
+            }
+            gdbStub.ConnectionAccepted += listener;
+            return true;
+        }
+
+        public bool DetachConnectionAcceptedListenerFromGdbStub(int port, Action<Stream> listener)
+        {
+            if(!gdbStubs.TryGetValue(port, out var gdbStub))
+            {
+                return false;
+            }
+            gdbStub.ConnectionAccepted -= listener;
+            return true;
+        }
+
+        public bool IsGdbConnectedToServer(int port)
+        {
+            if(!gdbStubs.TryGetValue(port, out var gdbStub))
+            {
+                return false;
+            }
+            return gdbStub.GdbClientConnected;
         }
 
         public override string ToString()

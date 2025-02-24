@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2024 Antmicro
+// Copyright (c) 2010-2025 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -329,7 +329,7 @@ namespace Antmicro.Renode.Peripherals.CPU
                     timeHandle = value;
                     timeHandle.Enabled = !currentHaltedState;
                     timeHandle.PauseRequested += RequestPause;
-                    timeHandle.StartRequested += StartCPUThread;
+                    timeHandle.StartRequested += StartCPUThreadTimeHandle;
                 }
             }
         }
@@ -377,7 +377,38 @@ namespace Antmicro.Renode.Peripherals.CPU
 
             if(onCpuThread)
             {
-                TimeHandle.Interrupt();
+                bool success = false;
+                do
+                {
+                    const int startPauseDeadlockResolveTimeoutMs = 100;
+                    TimeHandle.Interrupt(ref success, startPauseDeadlockResolveTimeoutMs);
+                    if(!success)
+                    {
+                        /// We weren't able to interrupt the <see cref="TimeHandle"/>.
+                        /// Check marker to distinguish a usual timeout from a deadlock.
+                        if(pauseLockTimeHandleMarker)
+                        {
+                            /// We have a deadlock with other thread in <see cref="StartCPUThreadTimeHandle"/>.
+                            /// Release <see cref="pauseLock"/> and try <see cref="TimeHandle.Interrupt"/> again later after the deadlock is resolved.
+                            /// In rare cases we expect a deadlock as a result of starting and pausing cpu from different threads.
+                            /// We use <see cref="Monitor.Pulse"/> on <see cref="pauseLock"/> only in <see cref="StartCPUThreadTimeHandle"/>
+                            /// which is a verified case of the race between time source and Monitor thread.
+                            /// Clear marker before releasing lock to select short path in <see cref="StartCPUThreadTimeHandle"/>.
+                            pauseLockTimeHandleMarker = false;
+                            Monitor.Wait(pauseLock);
+                            /// We should get control back very soon due to short path in <see cref="StartCPUThreadTimeHandle"/>.
+                            DebugHelper.Assert(pauseLockTimeHandleMarker);
+                            pauseLockTimeHandleMarker = false;
+                        }
+                        else
+                        {
+                            /// We have a usual timeout. Try <see cref="TimeHandle.Interrupt"/> again.
+                            /// Leave a warning here, as this may require special attention performance-wise.
+                            this.Log(LogLevel.Warning, "Trying to stop CPU execution, but it is taking longer than expected...");
+                        }
+                    }
+                }
+                while(!success);
             }
         }
 
@@ -844,13 +875,44 @@ restart:
             // Console.WriteLine($"BaseCPU.cs CpuThreadBodyInner : returning ExecutedInstructions thread ID: {cpuThread.ManagedThreadId}");
             return CpuResult.ExecutedInstructions;
         }
-        
-         private static int threadCount = 0; //fuzz
+
+        private void StartCPUThreadTimeHandle()
+        {
+            this.Trace();
+            pauseLockTimeHandleMarker = true;
+            lock(pauseLock)
+            {
+                if(!pauseLockTimeHandleMarker)
+                {
+                    /// Marker value got changed by other thread in <see cref="InnerPause"/>.
+                    /// We escaped from a deadlock and we are going to be interrupted by <see cref="TimeHandle.Interrupt"/>.
+                    /// It means there is a race between starting and pausing cpu from different threads.
+                    /// We allow pausing to win in such case because pausing cpu is more "explicit" operation
+                    /// than starting cpu as part of <see cref="TimeHandle.StartRequested"/>.
+                    /// We were allowed to enter this critical region guarded by <see cref="pauseLock"/> due to special circumstances
+                    /// despite <see cref="pauseLock"/> having previously been held by <see cref="Pause"/> + <see cref="InnerPause"/>.
+                    /// Signal that we escaped deadlock condition and return control to the other thread waiting in <see cref="InnerPause"/>.
+                    pauseLockTimeHandleMarker = true;
+                    Monitor.Pulse(pauseLock);
+                    return;
+                }
+                pauseLockTimeHandleMarker = false; // clear marker
+                StartCPUThreadInner();
+            }
+        }
+
         protected void StartCPUThread()
         {
             // Console.WriteLine("^^^^Starting CPU : StartCPUThread() 000 : BaseCPU.cs");
             this.Trace();
             lock(pauseLock)
+            {
+                StartCPUThreadInner();
+            }
+        }
+
+        private void StartCPUThreadInner()
+        {
             lock(cpuThreadBodyLock)
             {
                 // Console.WriteLine($"^^^^cpuThreadBodyLock : StartCPUThread() 111 : BaseCPU.cs : isAborted : {isAborted}, {cpuThread == null}");
@@ -925,10 +987,10 @@ restart:
             return true;
         }
 
-        protected virtual ulong SkipInstructions
+        public virtual ulong SkipInstructions
         {
             get => skipInstructions;
-            set => skipInstructions = value;
+            protected set => skipInstructions = value;
         }
 
         protected static bool IsSingleStepBlocking => EmulationManager.Instance.CurrentEmulation.SingleStepBlocking;
@@ -1014,7 +1076,9 @@ restart:
         private ulong instructionsLeftThisRound;
         private ulong instructionsExecutedThisRound;
         private ulong skipInstructions;
-        private bool fuzz_flag = false;
+
+        [Transient]
+        private volatile bool pauseLockTimeHandleMarker;
 
         private readonly object cpuThreadBodyLock = new object();
     }

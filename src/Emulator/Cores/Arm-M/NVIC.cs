@@ -460,7 +460,17 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             }
         }
 
+        public void SetSleepOnExceptionExitOnAllCPUs(bool value)
+        {
+            foreach(var cpu in machine.SystemBus.GetCPUs().OfType<CortexM>())
+            {
+                cpu.SetSleepOnExceptionExit(value);
+            }
+        }
+
         public DoubleWordRegisterCollection RegisterCollection { get; }
+
+        public bool DeepSleepEnabled => deepSleepEnabled.Value;
 
         private void DefineRegisters()
         {
@@ -577,7 +587,8 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 
             Registers.SystemControlRegister.Define(RegisterCollection)
                 .WithReservedBits(0, 1)
-                .WithTaggedFlag("SLEEPONEXIT", 1)
+                .WithFlag(1, out sleepOnExitEnabled, name: "SLEEPONEXIT",
+                    changeCallback: (_, value) => SetSleepOnExceptionExitOnAllCPUs(value))
                 .WithFlag(2, out deepSleepEnabled, name: "SLEEPDEEP")
                 .WithReservedBits(3, 1)
                 .WithFlag(4, out currentSevOnPending, name: "SEVONPEND",
@@ -622,6 +633,27 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 .WithTaggedFlag("RA (Read Allocation Support)", 29)
                 .WithTaggedFlag("WB (Write Back Support)", 30)
                 .WithTaggedFlag("WT (Write Through Support)", 31);
+
+            Registers.DebugExceptionAndMonitorControlRegister.Define(RegisterCollection)
+                .WithTaggedFlag("VC_CORERESET (Reset Vector Catch)", 0)
+                .WithReservedBits(1, 3)
+                .WithTaggedFlag("VC_MMERR (Debug trap on Memory Management faults)", 4)
+                .WithTaggedFlag("VC_NOCPERR (Debug trap on Usage Fault access to Coprocessor which is not present)", 5)
+                .WithTaggedFlag("VC_CHKERR (Debug trap on Usage Fault enabled checking errors)", 6)
+                .WithTaggedFlag("VC_STATERR (Debug trap on Usage Fault state error)", 7)
+                .WithTaggedFlag("VC_BUSERR (Debug trap on normal Bus error)", 8)
+                .WithTaggedFlag("VC_INTERR (Debug trap on interrupt/exception service errors)", 9)
+                .WithTaggedFlag("VC_HARDERR (Debug trap on Hard Fault)", 10)
+                .WithReservedBits(11, 5)
+                .WithTaggedFlag("MON_EN (Monitor Enable)", 16)
+                .WithTaggedFlag("MON_PEND (Monitor Pend)", 17)
+                .WithTaggedFlag("MON_STEP (Monitor Step)", 18)
+                .WithTaggedFlag("MON_REQ (Monitor Request)", 19)
+                .WithReservedBits(20, 4)
+                // The trace flag only store written data.
+                // Changing it doesn't change the behavior of the model.
+                .WithFlag(24, name: "TRCENA (Trace Enable)")
+                .WithReservedBits(25, 7);
         }
 
         private void DefineTightlyCoupledMemoryControlRegisters()
@@ -1033,11 +1065,15 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 
                 if(result != SpuriousInterrupt)
                 {
-                    maskedInterruptPresent = true;
                     if(result == NonMaskableInterruptIRQ || (cpu.PRIMASK == 0 && cpu.FAULTMASK == 0))
                     {
                         IRQ.Set(true);
                     }
+                    // This field has side-effects, and can cause Cortex-M CPU running in another thread to exit WFI immediately.
+                    // Make absolutely sure to execute last, after signaling IRQ handler to run with `IRQ.Set`.
+                    // Only this way the CPU will enter an exception handler immediately upon waking from WFI.
+                    // This doesn't matter for async (HW) interrupts, arriving when the core is executing normally.
+                    maskedInterruptPresent = true;
                 }
                 else
                 {
@@ -1163,6 +1199,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             Alias2OfMPURegionAttributeAndSize = 0xDB0, // MPU_RASR_A2
             Alias3OfMPURegionBaseAddress = 0xDB4, // MPU_RBAR_A3
             Alias3OfMPURegionAttributeAndSize = 0xDB8, // MPU_RASR_A3
+            DebugExceptionAndMonitorControlRegister = 0xDFC, // DEMCR
             SoftwareTriggerInterrupt = 0xF00, // STIR
             FPContextControl = 0xF34, // FPCCR
             FPContextAddress = 0xF38, // FPCAR
@@ -1262,6 +1299,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
         private readonly IMachine machine;
         private uint cpuId;
 
+        private IFlagRegisterField sleepOnExitEnabled;
         private IFlagRegisterField deepSleepEnabled;
         private IFlagRegisterField currentSevOnPending;
 

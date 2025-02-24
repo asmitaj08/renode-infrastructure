@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2023 Antmicro
+// Copyright (c) 2010-2025 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -21,10 +21,11 @@ namespace Antmicro.Renode.Logging
             Time = time;
             ThreadId = threadId;
             ForceMachineName = forceMachineName;
+            Count = 1;
             GetNames();
         }
 
-        public bool EqualsWithoutIdAndTime(LogEntry entry)
+        public bool EqualsWithoutIdTimeAndCount(LogEntry entry)
         {
             return entry != null &&
                 numericLogLevel == entry.numericLogLevel &&
@@ -48,17 +49,6 @@ namespace Antmicro.Renode.Logging
             return (int)Id;
         }
 
-        public int GetHashCodeWithoutIdAndTime()
-        {    
-            int hash = 17;
-            hash = hash * 23 + numericLogLevel;
-            hash = hash * 23 + Message.GetHashCode();
-            hash = hash * 23 + SourceId;
-            hash = hash * 23 + (ThreadId ?? -1);
-
-            return hash;
-        }
-
         public void Load(PrimitiveReader reader)
         {
             Id = reader.ReadUInt64();
@@ -67,6 +57,7 @@ namespace Antmicro.Renode.Logging
             ThreadId = reader.ReadInt32();
             Time = new DateTime(reader.ReadInt64());
             numericLogLevel = reader.ReadInt32();
+            Count = reader.ReadInt32();
             GetNames();
 
             if(ThreadId == -1)
@@ -83,6 +74,7 @@ namespace Antmicro.Renode.Logging
             writer.Write(ThreadId ?? -1);
             writer.Write(Time.Ticks);
             writer.Write(numericLogLevel);
+            writer.Write(Count);
         }
 
         public ulong Id { get; set; }
@@ -90,6 +82,7 @@ namespace Antmicro.Renode.Logging
         public string Message { get; private set; }
         public int? ThreadId { get; private set; }
         public DateTime Time { get; private set; }
+        public int Count { get; set; }
         public LogLevel Type
         {
             get

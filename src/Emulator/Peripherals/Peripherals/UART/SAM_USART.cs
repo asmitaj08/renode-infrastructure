@@ -185,6 +185,7 @@ namespace Antmicro.Renode.Peripherals.UART
                     {
                         transmitterEnabled = true;
                     }
+                    UpdateInterrupts();
                 })
             ;
 
@@ -202,7 +203,7 @@ namespace Antmicro.Renode.Peripherals.UART
                             }
                         }, name: "USART_MODE")
                         .WithTag("USCLKS", 4, 2)
-                        .WithTag("CHRL", 6, 2)
+                        .WithEnumField<DoubleWordRegister, CharacterLength>(6, 2, name: "CHRL")
                         .WithTaggedFlag("SYNC", 8)
                     )
                 .WithEnumField(9, 3, out parityType, name: "PAR")
@@ -258,7 +259,7 @@ namespace Antmicro.Renode.Peripherals.UART
                     .Else(reg => reg
                         .WithTaggedFlag("TIMEOUT", 8)
                     )
-                .WithTaggedFlag("TXEMPTY", 9)
+                .WithFlag(9, out txEmptyEnabled, FieldMode.Set, name: "TXEMPTY")
                 .If(uartOnlyMode)
                     .Then(reg => reg
                         .WithReservedBits(10, 1)
@@ -308,7 +309,7 @@ namespace Antmicro.Renode.Peripherals.UART
                     .Else(reg => reg
                         .WithTaggedFlag("TIMEOUT", 8)
                     )
-                .WithTaggedFlag("TXEMPTY", 9)
+                .WithFlag(9, FieldMode.Write, writeCallback: writeOneToClearFlag(txEmptyEnabled), name: "TXEMPTY")
                 .If(uartOnlyMode)
                     .Then(reg => reg
                         .WithReservedBits(10, 1)
@@ -357,7 +358,7 @@ namespace Antmicro.Renode.Peripherals.UART
                     .Else(reg => reg
                         .WithTaggedFlag("TIMEOUT", 8)
                     )
-                .WithTaggedFlag("TXEMPTY", 9)
+                .WithFlag(9, FieldMode.Read, valueProviderCallback: _ => txEmptyEnabled.Value, name: "TXEMPTY")
                 .If(uartOnlyMode)
                     .Then(reg => reg
                         .WithReservedBits(10, 1)
@@ -441,7 +442,7 @@ namespace Antmicro.Renode.Peripherals.UART
             ;
 
             Registers.ReceiveHolding.Define(this)
-                .WithValueField(0, 9, FieldMode.Read, valueProviderCallback: _ => ReadBuffer() ?? 0x0, name: "RXCHR")
+                .WithValueField(0, 9, FieldMode.Read, valueProviderCallback: _ => ReadBuffer(true) ?? 0x0, name: "RXCHR")
                 .WithReservedBits(9, 6)
                 .If(uartOnlyMode)
                     .Then(reg => reg
@@ -467,7 +468,7 @@ namespace Antmicro.Renode.Peripherals.UART
             ;
 
             Registers.BaudRateGenerator.Define(this)
-                .WithTag("CD", 0, 16)
+                .WithValueField(0, 16, name: "CD")
                 .If(uartOnlyMode)
                     .Then(reg => reg
                         .WithReservedBits(16, 3)
@@ -550,7 +551,7 @@ namespace Antmicro.Renode.Peripherals.UART
             UpdateInterrupts();
         }
 
-        private byte? ReadBuffer()
+        private byte? ReadBuffer(bool warnEmpty = false)
         {
             if(!receiverEnabled)
             {
@@ -559,7 +560,10 @@ namespace Antmicro.Renode.Peripherals.UART
 
             if(!TryGetCharacter(out var character))
             {
-                this.Log(LogLevel.Warning, "Trying to read data from empty receive fifo");
+                if(warnEmpty)
+                {
+                    this.Log(LogLevel.Warning, "Trying to read data from empty receive fifo");
+                }
                 return null;
             }
             if(Count == 0)
@@ -575,6 +579,7 @@ namespace Antmicro.Renode.Peripherals.UART
             var state = false;
             state |= receiverEnabled && receiverReadyIrqEnabled.Value && receiverReady.Value;
             state |= transmitterEnabled && transmitterReadyIrqEnabled.Value;
+            state |= transmitterEnabled && txEmptyEnabled.Value;
             state |= (pdc?.EndOfRxBuffer ?? false) && endOfRxBufferIrqEnabled.Value;
             state |= (pdc?.EndOfTxBuffer ?? false) && endOfTxBufferIrqEnabled.Value;
             state |= (pdc?.TxBufferEmpty ?? false) && txBufferEmptyIrqEnabled.Value;
@@ -591,6 +596,7 @@ namespace Antmicro.Renode.Peripherals.UART
         private IFlagRegisterField endOfTxBufferIrqEnabled;
         private IFlagRegisterField txBufferEmptyIrqEnabled;
         private IFlagRegisterField rxBufferFullIrqEnabled;
+        private IFlagRegisterField txEmptyEnabled;
 
         private IEnumRegisterField<ParityTypeValues> parityType;
         private IEnumRegisterField<NumberOfStopBitsValues> numberOfStopBits;
@@ -617,6 +623,14 @@ namespace Antmicro.Renode.Peripherals.UART
             Half = 1,
             Two = 2,
             OneAndAHalf = 3
+        }
+
+        private enum CharacterLength
+        {
+            FiveBits = 0,
+            SixBits = 1,
+            SevenBits = 2,
+            EightBits = 3,
         }
 
         private enum Registers

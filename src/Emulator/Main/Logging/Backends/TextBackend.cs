@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2018 Antmicro
+// Copyright (c) 2010-2025 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -13,7 +13,7 @@ namespace Antmicro.Renode.Logging
 {
     public abstract class TextBackend : LoggerBackend
     {
-        protected string FormatLogEntry(LogEntry entry)
+        protected virtual string FormatLogEntry(LogEntry entry)
         {
             var messageBuilder = new StringBuilder();
             var messages = entry.Message.Split('\n').GetEnumerator();
@@ -42,6 +42,12 @@ namespace Antmicro.Renode.Logging
                 messageBuilder.Append("    ");
                 messageBuilder.Append(messages.Current);
             }
+
+            if(entry.Count > 1)
+            {
+                messageBuilder.AppendFormat(" ({0})", entry.Count);
+            }
+
             return messageBuilder.ToString();
         }
     }

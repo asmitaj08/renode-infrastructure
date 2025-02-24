@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2024 Antmicro
+// Copyright (c) 2010-2025 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -552,6 +552,11 @@ namespace Antmicro.Renode.Logging
 
                 StopLoggingThread();
 
+                if(aggregateLogs) 
+                {
+                    FlushAggregatedLogs();
+                }
+
                 // switch collections to avoid
                 // stucking forever in the loop below
                 var localEntries = entries;
@@ -604,9 +609,34 @@ namespace Antmicro.Renode.Logging
                         break;
                     }
 
-                    // we set ids here to avoid the need of locking counter in `ObjectInnerLog`
-                    entry.Id = Logger.nextEntryId++;
-                    WriteLogEntryToBackends(entry);
+                    if(!aggregateLogs)
+                    {
+                        // we set ids here to avoid the need of locking counter in `ObjectInnerLog`
+                        entry.Id = Logger.nextEntryId++;
+                        WriteLogEntryToBackends(entry);
+                        continue;
+                    }
+
+                    lock(aggregationFlushLock)
+                    {
+                        if(entry.EqualsWithoutIdTimeAndCount(lastLoggedEntry))
+                        {
+                            repeatLogEntryCount++;
+                            if(repeatLogEntryCount >= MaxRepeatedLogs)
+                            {
+                                FlushAggregatedLogs();
+                            }
+                        } 
+                        else 
+                        {
+                            FlushAggregatedLogs();
+
+                            // we set ids here to avoid the need of locking counter in `ObjectInnerLog`
+                            entry.Id = Logger.nextEntryId++;
+                            WriteLogEntryToBackends(entry);
+                            lastLoggedEntry = entry;
+                        }
+                    }
                 }
             }
 
@@ -628,6 +658,23 @@ namespace Antmicro.Renode.Logging
                 }
             }
 
+            private void FlushAggregatedLogs()
+            {
+                if(repeatLogEntryCount == 0)
+                {
+                    return;
+                }
+
+                lastLoggedEntry.Count = repeatLogEntryCount;
+
+                WriteLogEntryToBackends(lastLoggedEntry);
+
+                repeatLogEntryCount = 0;
+
+                // reset timer
+                logAggregatorTimer?.Change(MaxAggregateTimeMs, MaxAggregateTimeMs);
+            }
+
             [PostDeserialization]
             private void Init()
             {
@@ -635,9 +682,11 @@ namespace Antmicro.Renode.Logging
                 nextNameId = 0;
 
                 innerLock = new object();
+                aggregationFlushLock = new object();
 
                 SynchronousLogging = ConfigurationManager.Instance.Get("general", "use-synchronous-logging", false);
                 alwaysAppendMachineName = ConfigurationManager.Instance.Get("general", "always-log-machine-name", false);
+                aggregateLogs = ConfigurationManager.Instance.Get("general", "collapse-repeated-log-entries", true);
 
                 if(!SynchronousLogging)
                 {
@@ -651,6 +700,17 @@ namespace Antmicro.Renode.Logging
             {
                 lock(innerLock)
                 {
+                    if(aggregateLogs) 
+                    {
+                        logAggregatorTimer = new Timer(x =>
+                        {
+                            lock(aggregationFlushLock)
+                            {
+                                FlushAggregatedLogs();
+                            }
+                        }, null, MaxAggregateTimeMs, MaxAggregateTimeMs);
+                    }
+
                     cancellationToken = new CancellationTokenSource();
                     loggingThread = new Thread(LoggingThreadBody);
                     loggingThread.IsBackground = true;
@@ -672,8 +732,20 @@ namespace Antmicro.Renode.Logging
                     cancellationToken.Cancel();
                     loggingThread.Join();
                     loggingThread = null;
+
+                    logAggregatorTimer?.Dispose();
+                    logAggregatorTimer = null;
                 }
             }
+
+            [Transient]
+            private int repeatLogEntryCount;
+            [Transient]
+            private LogEntry lastLoggedEntry;
+            [Transient]
+            private Timer logAggregatorTimer;
+            [Transient]
+            private bool aggregateLogs;
 
             [Transient]
             private bool alwaysAppendMachineName;
@@ -683,6 +755,9 @@ namespace Antmicro.Renode.Logging
 
             [Transient]
             private object innerLock;
+
+            [Transient]
+            private object aggregationFlushLock;
 
             [Transient]
             private Thread loggingThread;
@@ -699,6 +774,9 @@ namespace Antmicro.Renode.Logging
             private int nextNameId;
             [Transient]
             private LogSourcesMap logSourcesMap;
+
+            private const int MaxRepeatedLogs = 10000;
+            private const int MaxAggregateTimeMs = 500;
 
             private class LogSourcesMap
             {

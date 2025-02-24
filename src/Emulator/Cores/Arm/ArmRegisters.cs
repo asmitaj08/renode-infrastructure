@@ -24,8 +24,7 @@ namespace Antmicro.Renode.Peripherals.CPU
                 throw new RecoverableException($"Wrong register index: {register}");
             }
 
-            // Console.WriteLine($"^^^^^^^^Setting register ARM : {(ArmRegisters)register} : {r.Index} with {value:X}");
-            SetRegisterValue32(r.Index, checked((UInt32)value));
+            SetRegisterValue32(r.Index, checked((uint)value));
         }
 
         public override RegisterValue GetRegister(int register)
@@ -126,9 +125,9 @@ namespace Antmicro.Renode.Peripherals.CPU
         #pragma warning disable 649
 
         [Import(Name = "tlib_set_register_value_32")]
-        protected ActionInt32UInt32 SetRegisterValue32;
+        protected Action<int, uint> SetRegisterValue32;
         [Import(Name = "tlib_get_register_value_32")]
-        protected FuncUInt32Int32 GetRegisterValue32;
+        protected Func<int, uint> GetRegisterValue32;
 
         #pragma warning restore 649
 

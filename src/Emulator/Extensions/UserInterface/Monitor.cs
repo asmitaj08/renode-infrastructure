@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2010-2024 Antmicro
+// Copyright (c) 2010-2025 Antmicro
 // Copyright (c) 2011-2015 Realtime Embedded
 //
 // This file is licensed under the MIT License.
@@ -570,6 +570,12 @@ namespace Antmicro.Renode.UserInterface
                 {
                     var compiler = new AdHocCompiler();
                     compiledCode = compiler.Compile(filename);
+                    // Load dynamically compiled assembly to memory. It presents an advantage that next
+                    // ad-hoc compiled assembly can reference types from this one without any extra steps.
+                    // Therefore "EnsureTypeIsLoaded" call is no necessary as dependencies are already loaded.
+                    // Assembly.LoadFrom is used for a compatibility with Mono/.NET Framework,
+                    // but once we move fully to .NET, consider AssemblyLoadContext.LoadFromAssemblyPath.
+                    Assembly.LoadFrom(compiledCode);
                     EmulationManager.Instance.CompiledFilesCache.StoreEntryWithSha(sha, compiledCode);
                 }
 
@@ -680,6 +686,11 @@ namespace Antmicro.Renode.UserInterface
         public object ExecutePythonCommand(string command)
         {
             return pythonRunner.ExecutePythonCommand(command, Interaction);
+        }
+
+        public object GetVariable(string name)
+        {
+            return variables.GetOrDefault(GetVariableName(name))?.GetObjectValue();
         }
 
         private bool TryGetFilenameFromAvailablePaths(string fileName, out string fullPath)
