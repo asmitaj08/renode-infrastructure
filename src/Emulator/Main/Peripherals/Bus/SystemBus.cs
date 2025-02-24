@@ -54,6 +54,7 @@ namespace Antmicro.Renode.Peripherals.Bus
             pcCache.OnChanged += HandleChangedSymbols;
             InitStructures();
             this.Log(LogLevel.Info, "System bus created.");
+            
         }
 
         public void LoadFileChunks(string path, IEnumerable<FileChunk> chunks, ICPU cpu)
@@ -62,10 +63,12 @@ namespace Antmicro.Renode.Peripherals.Bus
             AddFingerprint(path);
             UpdateLowestLoadedAddress(minAddr);
             this.DebugLog(path + " File loaded.");
+            Console.WriteLine($"^^^ SystemBus.cs LoadFileChunks : File loaded, path : {path}, minAddr : {minAddr}");
         }
 
         public void Unregister(IBusPeripheral peripheral)
         {
+            Console.WriteLine($"^^^ SystemBus.cs Unregister 1111 : ibus_peripheral : {peripheral}");
             using(Machine.ObtainPausedState(true))
             {
                 Machine.UnregisterAsAChildOf(this, peripheral);
@@ -75,6 +78,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void Unregister(IBusRegistered<IBusPeripheral> busRegisteredPeripheral)
         {
+            Console.WriteLine($"^^^ SystemBus.cs Unregister 2222 : busRegisteredPeripheral : {busRegisteredPeripheral}");
             using(Machine.ObtainPausedState(true))
             {
                 Machine.UnregisterAsAChildOf(this, busRegisteredPeripheral.RegistrationPoint);
@@ -84,6 +88,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void Unregister(IPeripheral peripheral)
         {
+            Console.WriteLine($"^^^ SystemBus.cs Unregister 3333 : iPeripheral : {peripheral}");
             using(Machine.ObtainPausedState(true))
             {
                 Machine.UnregisterAsAChildOf(this, peripheral);
@@ -92,6 +97,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void Register(IPeripheral peripheral, NullRegistrationPoint registrationPoint)
         {
+            Console.WriteLine($"^^^ SystemBus.cs Register 1111 : iPeripheral : {peripheral}, NullRegistrationPoint : 0x{registrationPoint:X}");
             using(Machine.ObtainPausedState(true))
             {
                 // NullRegistrationPoint peripherals are not mapped on the bus and
@@ -102,6 +108,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void Register(IBusPeripheral peripheral, BusRangeRegistration registrationPoint)
         {
+            Console.WriteLine($"^^^ SystemBus.cs Register 1111 : ibus_Peripheral : {peripheral}, BusRangeRegistration : 0x{registrationPoint:X}");
             var methods = PeripheralAccessMethods.CreateWithLock();
             if(registrationPoint is BusParametrizedRegistration parametrizedRegistrationPoint)
             {
@@ -564,6 +571,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void ReadBytes(ulong address, int count, byte[] destination, int startIndex, bool onlyMemory = false, ICPU context = null)
         {
+            // Console.WriteLine($"^^^^^^ 222222 systembus.cs: ReadBytes : offset: {address:X} count: {count}");
             using(SetLocalContext(context))
             {
                 var targets = FindTargets(address, checked((ulong)count), context);
@@ -594,23 +602,28 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public byte[] ReadBytes(ulong address, int count, bool onlyMemory = false, ICPU context = null)
         {
+            // Console.WriteLine($"^^^^^^ 11111111 systembus.cs: ReadBytes : offset: {address:X} count: {count}");
             var result = new byte[count];
             ReadBytes(address, count, result, 0, onlyMemory, context);
+            // Console.WriteLine($"^^^^^^ 11111111 systembus.cs: ReadBytes : result[0]: {result[0]}");
             return result;
         }
 
         public byte[] ReadBytes(long offset, int count, ICPU context = null)
         {
+            // Console.WriteLine($"^^^^^^ systembus.cs: ReadBytes : offset: {offset:X} count: {count}");
             return ReadBytes((ulong)offset, count, context: context);
         }
 
         public void WriteBytes(byte[] bytes, ulong address, bool onlyMemory = false, ICPU context = null)
         {
+            // Console.WriteLine($"^^^^^^ systembus.cs: WriteBytes : offset: {address:X}");
             WriteBytes(bytes, address, bytes.Length, onlyMemory, context);
         }
 
         public void WriteBytes(byte[] bytes, ulong address, int startingIndex, long count, bool onlyMemory = false, ICPU context = null)
         {
+            // Console.WriteLine($"^^^^^^ 111111 systembus.cs: WriteBytes : offset: {address:X}, count : {count}");
             using(SetLocalContext(context))
             {
                 var targets = FindTargets(address, checked((ulong)count), context);
@@ -641,11 +654,13 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void WriteBytes(byte[] bytes, ulong address, long count, bool onlyMemory = false, ICPU context = null)
         {
+            // Console.WriteLine($"^^^^^^222222  systembus.cs: WriteBytes : offset: {address:X}, count : {count}");
             WriteBytes(bytes, address, 0, count, onlyMemory, context);
         }
 
         public void WriteBytes(long offset, byte[] array, int startingIndex, int count, ICPU context = null)
         {
+            // Console.WriteLine($"^^^^^^ 3333 systembus.cs: WriteBytes : offset: {offset:X}, count : {count}");
             WriteBytes(array, (ulong)offset, startingIndex, count, context: context);
         }
 
@@ -804,6 +819,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void MapMemory(IMappedSegment segment, IBusPeripheral owner, bool relative = true, ICPUWithMappedMemory context = null)
         {
+            Console.WriteLine($"^^^^^^ systemBus.cs : MapMemory(), {segment}");
             if(relative)
             {
                 var wrappers = new List<MappedSegmentWrapper>();
@@ -1070,11 +1086,13 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void Clear()
         {
+            Console.WriteLine("^^^ Sysbus.cs clear()");
             ClearAll();
         }
 
         public void Reset()
         {
+            Console.WriteLine("Sysbus.cs Reset()");
             LowestLoadedAddress = null;
             globalLookup = new SymbolLookup();
             localLookups = new Dictionary<ICPU, SymbolLookup>();
@@ -1210,6 +1228,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         private void UnregisterInner(IBusPeripheral peripheral)
         {
+            Console.WriteLine($"^^^ Sysbus.cs UnregisterInner() 1111 : peripheral : {peripheral}");
             RemoveMappingsForPeripheral(peripheral);
 
             // remove the peripheral from all cpu-local and the global mappings
@@ -1222,6 +1241,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         private void UnregisterInner(IBusRegistered<IBusPeripheral> busRegistered)
         {
+            Console.WriteLine($"^^^ Sysbus.cs UnregisterInner() 2222: busRegistered : {busRegistered}");
             if(mappingsForPeripheral.ContainsKey(busRegistered.Peripheral))
             {
                 var toRemove = new HashSet<MappedSegmentWrapper>();
@@ -1759,6 +1779,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         private void ClearAll()
         {
+            Console.WriteLine("^^^ Sysbus.cs clearAll()");
             lock(cpuSync)
             {
                 foreach(var group in Machine.PeripheralsGroups.ActiveGroups)
@@ -1793,6 +1814,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         private void InitStructures()
         {
+            Console.WriteLine($"^^^ Sysbus.cs InitStructures()");
             cpuById.Clear();
             idByCpu.Clear();
             hooksOnRead.Clear();
@@ -2120,6 +2142,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
             public void Touch()
             {
+                Console.WriteLine("Sysbus.cs MappedSegmentWrapper : Touch() ");
                 wrappedSegment.Touch();
             }
 
@@ -2141,6 +2164,7 @@ namespace Antmicro.Renode.Peripherals.Bus
             {
                 get
                 {
+                    
                     return peripheralOffset + wrappedSegment.StartingOffset;
                 }
             }
@@ -2165,6 +2189,7 @@ namespace Antmicro.Renode.Peripherals.Bus
             {
                 get
                 {
+                    // Console.WriteLine($"Sysbus.cs : MappedSegmentwrapper : OriginalStartingOffset : {wrappedSegment.StartingOffset}");
                     return wrappedSegment.StartingOffset;
                 }
             }
@@ -2173,6 +2198,7 @@ namespace Antmicro.Renode.Peripherals.Bus
             {
                 get
                 {
+                    // Console.WriteLine($"Sysbus.cs : MappedSegmentwrapper : PeripheralOffset : {peripheralOffset}");
                     return peripheralOffset;
                 }
             }

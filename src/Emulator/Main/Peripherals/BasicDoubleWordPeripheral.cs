@@ -25,16 +25,19 @@ namespace Antmicro.Renode.Peripherals
 
         public virtual void Reset()
         {
+            // Console.WriteLine($"^^^^^ BasicDoubleWordPeripheral.cs. Reset()");
             RegistersCollection.Reset();
         }
 
         public virtual uint ReadDoubleWord(long offset)
         {
+            // Console.WriteLine($"^^^^^ BasicDoubleWordPeripheral.cs. ReadDoubleWord(), ofset : {offset}");
             return RegistersCollection.Read(offset);
         }
 
         public virtual void WriteDoubleWord(long offset, uint value)
         {
+            // Console.WriteLine($"^^^^^ BasicDoubleWordPeripheral.cs. WriteDoubleWord(), ofset : {offset}");
             RegistersCollection.Write(offset, value);
         }
 

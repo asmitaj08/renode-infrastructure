@@ -25,16 +25,19 @@ namespace Antmicro.Renode.Peripherals
 
         public virtual void Reset()
         {
+            Console.WriteLine($"^^^^^ BasicBytePeripheral.cs.cs Reset()");
             RegistersCollection.Reset();
         }
 
         public virtual byte ReadByte(long offset)
         {
+            Console.WriteLine($"^^^^^ BasicBytePeripheral.cs.cs ReadByte(), address : {offset}");
             return RegistersCollection.Read(offset);
         }
 
         public virtual void WriteByte(long offset, byte value)
         {
+            Console.WriteLine($"^^^^^ BasicBytePeripheral.cs.cs WriteByte(), address : {offset}");
             RegistersCollection.Write(offset, value);
         }
 

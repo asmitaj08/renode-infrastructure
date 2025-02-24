@@ -22,6 +22,7 @@ namespace Antmicro.Renode.Peripherals.I2C
     {
         public NRF52840_I2C(IMachine machine) : base(machine)
         {
+            Console.WriteLine("^^^ NRF52840.cs constructor init");
             IRQ = new GPIO();
 
             slaveToMasterBuffer = new Queue<byte>();
@@ -65,6 +66,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private void DefineRegisters()
         {
+            Console.WriteLine("^^^ NRF52840.cs DefineRegisters");
             Registers.StartReceiving.Define(this)
                 .WithFlag(0, FieldMode.Write, name: "TASKS_STARTRX", writeCallback: (_, val) =>
                 {

@@ -334,7 +334,7 @@ namespace Antmicro.Renode.Core
 
         public IDisposable ObtainPausedState()
         {
-            // Console.WriteLine("^^^^^^^^^Emulation paused : ObtainPausedState");
+            Console.WriteLine("^^^^^^^^^Emulation paused : ObtainPausedState");
             return new PausedState(this);
         }
 
@@ -740,7 +740,7 @@ namespace Antmicro.Renode.Core
             public PausedState(Emulation emulation)
             {
                 
-                // Console.WriteLine("^^^^^^^^^Emulation paused : PausedState");
+                Console.WriteLine("^^^^^^^^^Emulation paused : PausedState");
                 wasStarted = emulation.IsStarted;
                 this.emulation = emulation;
 
@@ -749,7 +749,7 @@ namespace Antmicro.Renode.Core
                     emulation.MasterTimeSource.Stop();
                     machineStates = emulation.Machines.Select(x => x.ObtainPausedState()).ToArray();
                     emulation.ExternalsManager.Pause();
-                    // Console.WriteLine("^^^^^^^^^Emulation paused All: PausedState");
+                    Console.WriteLine("^^^^^^^^^Emulation paused All: PausedState");
                 }
             }
 

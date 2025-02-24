@@ -38,6 +38,7 @@ namespace Antmicro.Renode.Core
     {
         public Machine(bool createLocalTimeSource = false)
         {
+            // Console.WriteLine("^^^^^^ MAchine.cs constructor ...");
             InitAtomicMemoryState();
 
             collectionSync = new object();
@@ -69,12 +70,13 @@ namespace Antmicro.Renode.Core
             }
 
             machineCreatedAt = new DateTime(CustomDateTime.Now.Ticks, DateTimeKind.Local);
+            //  Console.WriteLine("^^^^^^ MAchine.cs constructor done ...");
         }
 
         [PreSerialization]
         private void SerializeAtomicMemoryState()
         {
-            //Console.WriteLine("^^^^^ Machine.cs : SerializeAtomicMemoryState : PreSerialization");
+            // Console.WriteLine("^^^^^ Machine.cs : SerializeAtomicMemoryState : PreSerialization");
             atomicMemoryState = new byte[AtomicMemoryStateSize];
             Marshal.Copy(atomicMemoryStatePointer, atomicMemoryState, 0, atomicMemoryState.Length);
             // the first byte of an atomic memory state contains value 0 or 1
@@ -415,6 +417,7 @@ namespace Antmicro.Renode.Core
         /// by a CPU breakpoint is not.</param>
         public IDisposable ObtainPausedState(bool internalPause = false)
         {
+            // Console.WriteLine("^^^^^ Machine.cs ObtainPausedState");
             InternalPause = internalPause;
             pausedState.Enter();
             return DisposableWrapper.New(() =>
@@ -429,6 +432,7 @@ namespace Antmicro.Renode.Core
         /// Useful when unpausing the machine but we don't want to unpause what's already been paused before.</param>
         private void Start(Func<IHasOwnLife, bool> startFilter)
         {
+            // Console.WriteLine("^^^^^Machine.cs Start() -- private func");
             lock(pausingSync)
             {
                 switch(state)
@@ -460,6 +464,7 @@ namespace Antmicro.Renode.Core
 
         public void Start()
         {
+            // Console.WriteLine("^^^^^ Machine.cs start() - public func");
             Start(_ => true);
         }
 
@@ -467,7 +472,7 @@ namespace Antmicro.Renode.Core
         {
             lock(pausingSync)
             {
-                //Console.WriteLine($"\n^^^^^^^^^^^^^^PAUSE machine.cs^^^^^^^^^^^^ , state : {state}\n");
+                // Console.WriteLine($"\n^^^^^^^^^^^^^^PAUSE machine.cs^^^^^^^^^^^^ , state : {state}");
                 switch(state)
                 {
                 case State.Paused:
@@ -480,8 +485,10 @@ namespace Antmicro.Renode.Core
                 {
                     var ownLifeName = GetNameForOwnLife(ownLife);
                     this.NoisyLog("Pausing {0}.", ownLifeName);
+                    // Console.WriteLine($"\n^^^^^^^^^^^^^^PAUSE machine.cs^^^^Pausing : ownLifeName : {ownLifeName}\n");
                     ownLife.Pause();
                     this.NoisyLog("{0} paused.", ownLifeName);
+                    //  Console.WriteLine($"\n^^^^^^^^^^^^^^PAUSE machine.cs^^^^Paused : ownLifeName : {ownLifeName}\n");
                 }
                 state = State.Paused;
                 var machinePaused = StateChanged;
@@ -490,6 +497,7 @@ namespace Antmicro.Renode.Core
                     machinePaused(this, new MachineStateChangedEventArgs(MachineStateChangedEventArgs.State.Paused));
                 }
                 this.Log(LogLevel.Info, "Machine paused.");
+                //  Console.WriteLine($"\n^^^^^^^^^^^^^^PAUSE machine.cs Done!!^^^^^^^^^^^^ , state : {state}");
             }
         }
 
@@ -533,6 +541,7 @@ namespace Antmicro.Renode.Core
 
         public void Reset()
         {
+            // Console.WriteLine("^^^ MAchine.cs Machine Reset");
             lock(pausingSync)
             {
                 using(ObtainPausedState(true))
@@ -851,6 +860,7 @@ namespace Antmicro.Renode.Core
 
         public long[] GetNewDirtyAddressesForCore(ICPU cpu)
         {
+            Console.WriteLine($"^^^^^ Machine.cs GetNewDirtyAddressesForCore cpu : {cpu}");
             if(!firstUnbroadcastedDirtyAddressIndex.ContainsKey(cpu))
             {
                 throw new RecoverableException($"No entries for a cpu: {cpu.GetName()}. Was the cpu registered properly?");
@@ -864,11 +874,17 @@ namespace Antmicro.Renode.Core
                 newAddresses = invalidatedAddressesByCpu[cpu].GetRange(firstUnsentIndex, addressesCount).ToArray();
                 firstUnbroadcastedDirtyAddressIndex[cpu] += addressesCount;
             }
+
+            // Print the new addresses before returning
+            Console.WriteLine($"^^^^ Machine.cs : GetNewDirtyAddressesForCore : New addresses for CPU {cpu.GetName()} before returning: {string.Join(", ", newAddresses)}");
+            // Print all dirty addresses, including those already broadcasted
+            Console.WriteLine($"^^^^ Machine.cs : GetNewDirtyAddressesForCore: All dirty addresses for CPU {cpu.GetName()}: {string.Join(", ", invalidatedAddressesByCpu[cpu])}");
             return newAddresses;
         }
 
         public void AppendDirtyAddresses(ICPU cpu, long[] addresses)
         {
+            Console.WriteLine($"^^^^^ Machine.cs AppendDirtyAddresses cpu : {cpu}, address : { addresses}");
             if(!invalidatedAddressesByCpu.ContainsKey(cpu))
             {
                 throw new RecoverableException($"Invalid cpu: {cpu.GetName()}");
@@ -1323,6 +1339,7 @@ namespace Antmicro.Renode.Core
 
         private void TryReduceBroadcastedDirtyAddresses(ICPU cpu)
         {
+            Console.WriteLine("^^^^Machine.cs TryReduceBroadcastedDirtyAddresses()");
             var firstUnread = firstUnbroadcastedDirtyAddressIndex.Values.Min();
             if(firstUnread == 0)
             {
@@ -1368,6 +1385,7 @@ namespace Antmicro.Renode.Core
 
         private void InitializeInvalidatedAddressesList(ICPU cpu)
         {
+            Console.WriteLine("^^^^^Machine.cs InitializeInvalidatedAddressesList()");
             lock(invalidatedAddressesLock)
             {
                 if(!invalidatedAddressesByArchitecture.TryGetValue(cpu.Architecture, out var newInvalidatedAddressesList))
@@ -1654,11 +1672,11 @@ namespace Antmicro.Renode.Core
                 (LocalTimeSource as SlaveTimeSource)?.Resume();
                 foreach(var ownLife in ownLifes.OrderBy(x => x is ICPU ? 1 : 0))
                 {
-                    //this.NoisyLog("Resuming {0}.", GetNameForOwnLife(ownLife));
-                    //Console.WriteLine($"^^^^ Machine.cs Resume : ownLife : {ownLife}, Resuming : {GetNameForOwnLife(ownLife)}, type : {ownLife.GetType().Name}");
+                    this.NoisyLog("Resuming {0}.", GetNameForOwnLife(ownLife));
+                    // Console.WriteLine($"^^^^ Machine.cs Resume : ownLife : {ownLife}, Resuming : {GetNameForOwnLife(ownLife)}, type : {ownLife.GetType().Name}");
                     ownLife.Resume();
                 }
-                //this.Log(LogLevel.Info, "Machine resumed.");
+                this.Log(LogLevel.Info, "Machine resumed.");
                 state = State.Started;
                 var machineStarted = StateChanged;
                 if(machineStarted != null)
@@ -1676,7 +1694,7 @@ namespace Antmicro.Renode.Core
 
         public void PostCreationActions()
         {
-            // Console.WriteLine("Machine.cs PostCreationActions");
+            Console.WriteLine("^^^^^^^^^^^ Machine.cs PostCreationActions");
             // Enable broadcasting dirty addresses on multicore platforms
             var cpus = SystemBus.GetCPUs().OfType<ICPUWithMappedMemory>().ToArray();
             if(cpus.Length > 1)
@@ -1711,6 +1729,7 @@ namespace Antmicro.Renode.Core
                     }
                 }
             }
+            // Console.WriteLine("^^^^^^^^^^^ Machine.cs PostCreationActions done");
         }
 
         public void ExchangeRegistrationPointForPeripheral(IPeripheral parent, IPeripheral child, IRegistrationPoint oldPoint, IRegistrationPoint newPoint)

@@ -70,7 +70,7 @@ namespace Antmicro.Renode.Peripherals.Memory
             this.machine = machine;
             this.size = size;
             SegmentSize = segmentSize.Value;
-            // Console.WriteLine($"*****MappedMeory********** : machine : {machine}, size : {size}, segmentSize : {SegmentSize}");
+            Console.WriteLine($"*****MappedMeory()********** : machine : {machine}, size : {size}, segmentSize : {SegmentSize}");
             Init();
         }
 
@@ -90,12 +90,14 @@ namespace Antmicro.Renode.Peripherals.Memory
         {
             get
             {
+                Console.WriteLine("^^^^ Getting MappedSegments , in MappedMemory.cs");
                 return describedSegments;
             }
         }
 
         public byte ReadByte(long offset)
         {
+            // Console.WriteLine($"^^^^^^******  MappedMemory ReadByte(), offset : 0x{offset:X},");
             if(offset < 0 || offset >= size)
             {
                 this.Log(LogLevel.Error, "Tried to read byte at offset 0x{0:X} outside the range of the peripheral 0x0 - 0x{1:X}", offset, size);
@@ -109,6 +111,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public void WriteByte(long offset, byte value)
         {
+            // Console.WriteLine($"^^^^^^******  MappedMemory WriteByte(), offset : 0x{offset:X},val : {value:X}");
             if(offset < 0 || offset >= size)
             {
                 this.Log(LogLevel.Error, "Tried to write byte value 0x{0:X} to offset 0x{1:X} outside the range of the peripheral 0x0 - 0x{2:X}", value, offset, size);
@@ -123,6 +126,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public ushort ReadWord(long offset)
         {
+            // Console.WriteLine($"^^^^^^******  MappedMemory ReadWord(), offset : 0x{offset:X},");
             if(offset < 0 || offset > size - sizeof(ushort))
             {
                 this.Log(LogLevel.Error, "Tried to read word at offset 0x{0:X} outside the range of the peripheral 0x0 - 0x{1:X}", offset, size);
@@ -144,6 +148,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public void WriteWord(long offset, ushort value)
         {
+            // Console.WriteLine($"^^^^^^******  MappedMemory WriteWord(), offset : 0x{offset:X},");
             if(offset < 0 || offset > size - sizeof(ushort))
             {
                 this.Log(LogLevel.Error, "Tried to write word value 0x{0:X} to offset 0x{1:X} outside the range of the peripheral 0x0 - 0x{2:X}", value, offset, size);
@@ -252,6 +257,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public void ReadBytes(long offset, int count, byte[] destination, int startIndex)
         {
+            // Console.WriteLine($"^^^^^^ 111111 MappedMemory ReadBytes(), offset : 0x{offset:X}, count : {count}, Total_size : 0x{size:X}, segLen : {segments.Length}, segSize : {SegmentSize}");
             if(offset < 0 || offset > size - count)
             {
                 this.Log(LogLevel.Error, "Tried to read {0} bytes at offset 0x{1:X} outside the range of the peripheral 0x0 - 0x{2:X}", count, offset, size);
@@ -263,7 +269,10 @@ namespace Antmicro.Renode.Peripherals.Memory
             {
                 var currentOffset = offset + read;
                 var localOffset = GetLocalOffset(currentOffset);
+                // Console.WriteLine($"^^^^^^ 111111 MappedMemory ReadBytes() localOffset : 0x{localOffset:X}");
+                // Console.WriteLine($"^^^^^^ 111111 MappedMemory ReadBytes() GetSegmentNo : {GetSegmentNo(currentOffset)}");
                 var segment = segments[GetSegmentNo(currentOffset)];
+                // Console.WriteLine($"^^^^^^ 111111 MappedMemory ReadBytes() segment : 0x{segment.ToInt64():X}");
                 var length = Math.Min(count - read, (int)(SegmentSize - localOffset));
                 Marshal.Copy(new IntPtr(segment.ToInt64() + localOffset), destination, read + startIndex, length);
                 read += length;
@@ -272,6 +281,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public byte[] ReadBytes(long offset, int count, ICPU context = null)
         {
+            // Console.WriteLine($"^^^^^^ MappedMemory ReadBytes(), offset : {offset}, count : {count}");
             var result = new byte[count];
             ReadBytes(offset, count, result, 0);
             return result;
@@ -279,16 +289,19 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public void WriteBytes(long offset, byte[] value)
         {
+            // Console.WriteLine($"^^^^^^******  11111 MappedMemory WriteBytes(), offset : 0x{offset:X},");
             WriteBytes(offset, value, 0, value.Length);
         }
 
         public void WriteBytes(long offset, byte[] value, int count)
         {
+            // Console.WriteLine($"^^^^^^******  MappedMemory WriteBytes(), offset : 0x{offset:X},");
             WriteBytes(offset, value, 0, count);
         }
 
         public void WriteBytes(long offset, byte[] array, int startingIndex, int count, ICPU context = null)
         {
+            // Console.WriteLine($"^^^^^^******  222222 MappedMemory WriteBytes(), offset : 0x{offset:X},count : {count}");
             if(offset < 0 || offset > size - count)
             {
                 this.Log(LogLevel.Error, "Tried to write {0} bytes at offset 0x{1:X} outside the range of the peripheral 0x0 - 0x{2:X}", count, offset, size);
@@ -347,12 +360,15 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public bool IsTouched(int segmentNo)
         {
+            //  Console.WriteLine($"^^^^^^^^ MappedMemory.cs IsTouched() : {segmentNo}");
             CheckSegmentNo(segmentNo);
             return segments[segmentNo] != IntPtr.Zero;
         }
 
+        private List<IntPtr> allocatedPointers = new List<IntPtr>(); // for fuzzer
         public void TouchSegment(int segmentNo)
         {
+            // Console.WriteLine($"^^^^^^^^ MappedMemory.cs TouchSegment() : {segmentNo}, current seg val : 0x{segments[segmentNo].ToInt64():X}");
             CheckSegmentNo(segmentNo);
             if(segments[segmentNo] == IntPtr.Zero)
             {
@@ -362,14 +378,56 @@ namespace Antmicro.Renode.Peripherals.Memory
                 segments[segmentNo] = alignedPointer;
                 this.NoisyLog(string.Format("Segment no {1} allocated at 0x{0:X} (aligned to 0x{2:X}).",
                     allocSeg.ToInt64(), segmentNo, alignedPointer.ToInt64()));
+
+                // Console.WriteLine($"Segment no {segmentNo} allocated at 0x{allocSeg.ToInt64():X} (aligned to 0x{alignedPointer.ToInt64():X}).");
                 originalPointers[segmentNo] = allocSeg;
                 MemSet(alignedPointer, ResetByte, SegmentSize);
+
+
+                // Track the allocated pointer globally (only tracking the original allocated segment) - Fuzz
+                allocatedPointers.Add(allocSeg); // I added it - fuzz
+
                 var segmentTouched = SegmentTouched;
                 if(segmentTouched != null)
                 {
                     segmentTouched(segmentNo);
                 }
             }
+        }
+        
+        // private void FreeSegment(IntPtr pointer) // fuzz
+        // {
+        //     if (pointer != IntPtr.Zero)
+        //     {
+        //         Marshal.FreeHGlobal(pointer);  // Deallocate unmanaged memory
+        //         // this.NoisyLog($"Memory at 0x{pointer.ToInt64():X} has been freed.");
+        //     }
+        // }
+        public void Fuzz_DeallocateAllSegments() // fuzz - done by Free()
+        {
+            Console.WriteLine($"^^^^^^^^ MappedMemory.cs Fuzz_dealloc(), disposed : {disposed}");
+            // if(!disposed )
+            // {
+                for(var i = 0; i < segments.Length; i++)
+                {
+                    var segment = originalPointers[i];
+                    // Console.WriteLine($"^^^^^ MappedMemeory.cs Free() segment [{i}] : 0x{segment.ToInt64():X}");
+                    if(segments[i] != IntPtr.Zero)
+                    {
+                        Console.WriteLine($"^^^^^ MappedMemeory.cs Fuzz_dealloc() Orig_segment [{i}] : 0x{segment.ToInt64():X} & segment [{i}] : 0x{segments[i].ToInt64():X}");
+                        Marshal.FreeHGlobal(segment);
+                        segment = IntPtr.Zero;
+                        segments[i] = IntPtr.Zero;
+                        this.NoisyLog("Segment {0} freed.", i);
+                    }
+                }
+
+                // if(segments != null){ //This is true , here segments !=NULL
+                //     Console.WriteLine($"^^^^^^^^^^^^^^^^^^^segments not NULL: 0x{segments:X}, len :{segments.Length}");
+                //     Console.WriteLine($"^^^^^^^^^^^^^^^^^^^segments not NULL: orig pointer 0x{originalPointers:X}");
+                // }
+            // }
+            // disposed = true;
         }
 
         public byte ResetByte { get; set; }
@@ -399,6 +457,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public void ZeroAll()
         {
+            // Console.WriteLine($"^^^^^^^^ MappedMemory.cs ZeroAll(), ResetByte : 0x{ResetByte:X} ");
             foreach(var segment in segments.Where(x => x != IntPtr.Zero))
             {
                 MemSet(segment, ResetByte, SegmentSize);
@@ -407,11 +466,13 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public void ZeroRange(long rangeStart, long rangeLength)
         {
+            // Console.WriteLine($"^^^^^^^^ MappedMemory.cs ZeroRange(), ResetByte : 0x{ResetByte:X}, rangeStart : 0x{rangeStart:X}, length : {rangeLength} ");
             SetRange(rangeStart, rangeLength, ResetByte);
         }
 
         public void SetRange(long rangeStart, long rangeLength, byte value)
         {
+            // Console.WriteLine($"^^^^^^^^ MappedMemory.cs SetRange(), rangeStart : 0x{rangeStart:X}, rangeLength : {rangeLength}");
             var array = new byte[rangeLength];
             for(long i = 0; i < rangeLength; ++i)
             {
@@ -422,6 +483,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public void Dispose()
         {
+            // Console.WriteLine($"^^^^^^^^ MappedMemory.cs Dispose()");
             Free();
             GC.SuppressFinalize(this);
         }
@@ -462,7 +524,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public void Save(PrimitiveWriter writer)
         {
-            // Console.WriteLine("^^^^^^^^^^^ Save - mappedMemeory ^^^^^^^^^^^^^^");
+            Console.WriteLine("^^^^^^^^^^^ Save - mappedMemeory ^^^^^^^^^^^^^^");
             var globalStopwatch = Stopwatch.StartNew();
             var realSegmentsCount = 0;
 
@@ -477,6 +539,7 @@ namespace Antmicro.Renode.Peripherals.Memory
                 {
                     return;
                 }
+
                 Interlocked.Increment(ref realSegmentsCount);
                 var localBuffer = new byte[SegmentSize];
                 Marshal.Copy(segments[i], localBuffer, 0, localBuffer.Length);
@@ -505,7 +568,7 @@ namespace Antmicro.Renode.Peripherals.Memory
          public void Fuzz_Mem_Load()
         {
             // int position = 0;
-            // Console.WriteLine("^^^^^^^^^^^ Test Load - mappedMemory ^^^^^^^^^^^^^^");
+            // Console.WriteLine("^^^^^^^^^^^ Fuzz Mem Load - mappedMemory ^^^^^^^^^^^^^^");
 
              // If the buffer has been modified, reset it to the default state
             if (isBufferModified)
@@ -528,14 +591,30 @@ namespace Antmicro.Renode.Peripherals.Memory
                 ResetByte = reader.ReadByte();
                 if(emptyCtorUsed)
                 {
+                    // Console.WriteLine("^^^^^^^^^^^ Fuzz Mem Load - mappedMemory : emptyCtorUsed true ^^^^^^^^^^^^^^");
                     Init();
                 }
                 var realSegmentsCount = 0;
+                // Console.WriteLine($"Fuzz_Mem_Load Segment SegmentSize : {SegmentSize} no_of_seg: {segments.Length}");
                 for(var i = 0; i < segments.Length; i++)
                 {
+                    //  Console.WriteLine($"Fuzz_Mem_Load Segment {i} address: 0x{segments[i].ToInt64():X}");
                     var isTouched = reader.ReadBoolean();
+                    // Console.WriteLine($"Fuzz_Mem_Load Segment {i} address: 0x{segments[i].ToInt64():X}, readBollean :{isTouched}");
                     if(!isTouched)
                     {
+                          // Check if the segment is already allocated (not IntPtr.Zero)
+                        if (segments[i] != IntPtr.Zero)
+                        {
+                            // var segment = originalPointers[i];
+                            // // Deallocate the memory associated with this segment
+                            // Marshal.FreeHGlobal(segment);
+                            // // Set the segment pointer to IntPtr.Zero
+                            // segments[i] = IntPtr.Zero;
+                            // segment = IntPtr.Zero;
+                            MemSet(segments[i], ResetByte, SegmentSize);
+                            // Console.WriteLine($"Segment {i} reset to ResetByte");
+                        }
                         continue;
                     }
                     var compressedSegmentSize = reader.ReadInt32();
@@ -545,20 +624,23 @@ namespace Antmicro.Renode.Peripherals.Memory
                     var decodedBuffer = LZ4Codec.Decode(compressedBuffer, 0, compressedBuffer.Length, SegmentSize);
                     Marshal.Copy(decodedBuffer, 0, segments[i], decodedBuffer.Length);
                 }
+               
+                // Console.WriteLine($"Fuzz_Mem_Load Segment loaded : {segments.Length} , realSeg : {realSegmentsCount}");
             this.NoisyLog(string.Format("{0} segments loaded from stream, of which {1} had content.", segments.Length, realSegmentsCount));
         }
         }
 
         public void Fuzz_Mem_Save()
         {
-            // Console.WriteLine("^^^^^^^^^^^ test Save - mappedMemeory ^^^^^^^^^^^^^^");
+            Console.WriteLine($"^^^^^^^^^^^ Fuzz_Mem_Save - mappedMemeory : Total segment : {segments.Length}, segment size : {SegmentSize}^^^^^^^^^^^^^^");
             // If the buffer has been modified, reset it to the default state
+            Console.WriteLine($"Fuzz_Mem_Save test Segment {0} address: 0x{segments[0].ToInt64():X}");
             if (isBufferModified)
             {
                 globalBuffer = (byte[])defaultBuffer.Clone(); // Reset buffer to default state
                 isBufferModified = false;
             }
-            var globalStopwatch = Stopwatch.StartNew();
+            // var globalStopwatch = Stopwatch.StartNew();
             var realSegmentsCount = 0;
 
             using (var ms = new MemoryStream())
@@ -582,18 +664,23 @@ namespace Antmicro.Renode.Peripherals.Memory
                 });
                 for(var i = 0; i < segments.Length; i++)
                 {
+                     // Print the address of the current segment
+                    Console.WriteLine($"Fuzz_Mem_Save Segment {i} address: 0x{segments[i].ToInt64():X}");
                     if(segments[i] == IntPtr.Zero)
                     {
                         writer.Write(false);
                         continue;
                     }
+                    
                     writer.Write(true);
                     writer.Write(outputBuffers[i].Length);
                     writer.Write(outputBuffers[i], 0, outputBuffers[i].Length);
                 }
-                this.NoisyLog(string.Format("{0} segments saved to stream, of which {1} had contents.", segments.Length, realSegmentsCount));
-                globalStopwatch.Stop();
-                this.NoisyLog("Memory serialization ended in {0}s.", Misc.NormalizeDecimal(globalStopwatch.Elapsed.TotalSeconds));
+                Console.WriteLine($"Fuzz_Mem_Save Segment saved seg : {segments.Length} , realSeg : {realSegmentsCount}");
+
+                // this.NoisyLog(string.Format("{0} segments saved to stream, of which {1} had contents.", segments.Length, realSegmentsCount));
+                // // globalStopwatch.Stop();
+                // this.NoisyLog("Memory serialization ended in {0}s.", Misc.NormalizeDecimal(globalStopwatch.Elapsed.TotalSeconds));
             
                 // Update global buffer with the serialized data
                 globalBuffer = ms.ToArray();
@@ -624,21 +711,26 @@ namespace Antmicro.Renode.Peripherals.Memory
             PrepareSegments();
         }
 
-        private void Free()
+        // private void Free() 
+        public void Free() // Fuzz
         {
-            if(!disposed)
+            Console.WriteLine($"^^^^^^^^ MappedMemory.cs Free(), disposed : {disposed}");
+            if(!disposed )
             {
                 for(var i = 0; i < segments.Length; i++)
                 {
                     var segment = originalPointers[i];
+                    // Console.WriteLine($"^^^^^ MappedMemeory.cs Free() segment [{i}] : 0x{segment.ToInt64():X}");
                     if(segments[i] != IntPtr.Zero)
                     {
+                        Console.WriteLine($"^^^^^ MappedMemeory.cs Free() orig_segment [{i}] : 0x{segment.ToInt64():X}, segmetn: 0x{segments[i].ToInt64():X}");
                         Marshal.FreeHGlobal(segment);
                         this.NoisyLog("Segment {0} freed.", i);
                     }
                 }
             }
             disposed = true;
+            
         }
 
         private long GetLocalOffset(long offset)
@@ -656,6 +748,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         private void PrepareSegments()
         {
+            // Console.WriteLine("^^^^^^ MappedMemeory.cs Preparing segments");
             if(segments != null)
             {
                 // this is because in case of loading the starting memory snapshot
@@ -667,13 +760,17 @@ namespace Antmicro.Renode.Peripherals.Memory
             var segmentsNo = size / SegmentSize + (size % SegmentSize != 0 ? 1 : 0);
             this.NoisyLog(string.Format("Preparing {0} segments for {1} bytes of memory, each {2} bytes long.",
                 segmentsNo, size, SegmentSize));
+            
             segments = new IntPtr[segmentsNo];
+            Console.WriteLine($"^^^^^^ MappedMemeory.cs Preparing {segmentsNo} segments for {size:X} bytes of memory, each {SegmentSize} bytes long.");
             originalPointers = new IntPtr[segmentsNo];
             // segments are not allocated until they are used by read, write, load etc (or touched)
             describedSegments = new IMappedSegment[segmentsNo];
+            Console.WriteLine($"^^^^^^ MappedMemeory.cs Preparing seg : describedSegments len : {describedSegments.Length}");
             for(var i = 0; i < describedSegments.Length - 1; i++)
             {
                 describedSegments[i] = new MappedSegment(this, i, (uint)SegmentSize);
+                Console.WriteLine($"^^^^^^ MappedMemeory.cs Preparing seg : describedSegments[{i}] val :{describedSegments[i]}, pointer : 0x{describedSegments[i].Pointer.ToInt64():X}");
             }
             var last = describedSegments.Length - 1;
             var sizeOfLast = (uint)(size % SegmentSize);
@@ -682,6 +779,7 @@ namespace Antmicro.Renode.Peripherals.Memory
                 sizeOfLast = (uint)SegmentSize;
             }
             describedSegments[last] = new MappedSegment(this, last, sizeOfLast);
+             Console.WriteLine($"^^^^^^ MappedMemeory.cs Preparing seg : describedSegments[{last}] val : 0x{describedSegments[last]:X}");
         }
 
         private int GetSegmentNo(long offset)
@@ -697,6 +795,7 @@ namespace Antmicro.Renode.Peripherals.Memory
                     segments.Length
                 ));
             }
+            // Console.WriteLine($"^^^^^^^^ MappedMemory.cs GetSegmentNo(), offset : 0x{offset:X}");
 #endif
             // if such segment is not currently allocated,
             // allocate it
@@ -706,12 +805,14 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         private IntPtr AllocateSegment()
         {
+            Console.WriteLine($"^^^^^^^^ MappedMemory.cs AllocateSegment()");
             this.NoisyLog("Allocating segment of size {0}.", SegmentSize);
             return Marshal.AllocHGlobal(SegmentSize + Alignment);
         }
 
         private void InvalidateMemoryFragment(long start, int length)
         {
+            // Console.WriteLine($"^^^^^^^^ MappedMemory.cs InvalidateMemoryFragment at start : 0x{start:X}, length : {length}");
             if(machine == null)
             {
                 // this peripheral is not connected to any machine, so there is nothing we can do
@@ -774,9 +875,9 @@ namespace Antmicro.Renode.Peripherals.Memory
         private const int MaximalSegmentSize = 16 * 1024 * 1024;
         private const int RecommendedNumberOfSegments = 16;
 
-        private byte[] globalBuffer; // Global buffer to hold serialized data  // for test load save operations
-        private byte[] defaultBuffer; // To store the default state of the buffer // for test load save operations
-        private bool isBufferModified = false; // Flag to track buffer modification // for test load save operations
+        private byte[] globalBuffer; // Global buffer to hold serialized data  // for fuzz load save operations
+        private byte[] defaultBuffer; // To store the default state of the buffer // for fuzz load save operations
+        private bool isBufferModified = false; // Flag to track buffer modification // for fuzz load save operations
 
         private class MappedSegment : IMappedSegment
         {

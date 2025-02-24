@@ -25,16 +25,19 @@ namespace Antmicro.Renode.Peripherals
 
         public virtual void Reset()
         {
+            Console.WriteLine($"^^^^^ BasicWordPeripheral.cs. Reset()");
             RegistersCollection.Reset();
         }
 
         public virtual ushort ReadWord(long offset)
         {
+            Console.WriteLine($"^^^^^ BasicWordPeripheral.cs. ReadWord(), ofset : {offset}");
             return RegistersCollection.Read(offset);
         }
 
         public virtual void WriteWord(long offset, ushort value)
         {
+            Console.WriteLine($"^^^^^ BasicWordPeripheral.cs. WriteWord(), ofset : {offset}");
             RegistersCollection.Write(offset, value);
         }
 

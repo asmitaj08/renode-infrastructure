@@ -53,7 +53,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public override void Reset()
         {
-            //Console.WriteLine("^^^Reset() in CortexM.cs");
+            // Console.WriteLine("^^^Reset() in CortexM.cs");
             pcNotInitialized = true;
             vtorInitialized = false;
             base.Reset();
@@ -355,7 +355,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected override void OnLeavingResetState()
         {
-            //Console.WriteLine($"^^^^^OnLeavingResetState() in CortexM.cs : State {State}");
+            Console.WriteLine($"^^^^^OnLeavingResetState() in CortexM.cs : State {State}");
             // if(fuzz_flag_leave_restart==true && State == CPUState.Running){
             //     fuzz_flag_leave_restart = false;
             //     Fuzz_InitPCAndSP();
@@ -385,8 +385,9 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void InitPCAndSP()
         {
-            //Console.WriteLine("^^^^^^^CortexM.cs ---InitPCAndSP()");
+            // Console.WriteLine("^^^^^^^CortexM.cs ---InitPCAndSP()");
             var firstNotNullSection = machine.SystemBus.GetLookup(this).FirstNotNullSectionAddress;
+            // Console.WriteLine($"^^^^^^^CortexM.cs ---InitPCAndSP() firstNotNullSection.Value : {firstNotNullSection.Value}");
             if(!vtorInitialized && firstNotNullSection.HasValue)
             {
                 if((firstNotNullSection.Value & (2 << 6 - 1)) > 0)
@@ -403,7 +404,7 @@ namespace Antmicro.Renode.Peripherals.CPU
                         return; // Keep VectorTableOffset uninitialized in the case of error condition
                     }
                     VectorTableOffset = checked((uint)value);
-                    //Console.WriteLine($"^^^^^^^CortexM.cs ---InitPCAndSP() : VectorTableOffset = {VectorTableOffset}");
+                    // Console.WriteLine($"^^^^^^^CortexM.cs ---InitPCAndSP() : VectorTableOffset = {VectorTableOffset}");
                 }
             }
             if(pcNotInitialized)
@@ -422,11 +423,11 @@ namespace Antmicro.Renode.Peripherals.CPU
                 this.Log(LogLevel.Info, "Setting initial values: PC = 0x{0:X}, SP = 0x{1:X}.", pc, sp);
                 PC = pc;
                 SP = sp;
-                //Console.WriteLine($"^^^^^^^CortexM.cs ---InitPCAndSP() : pcNotInitialized is true: PC : {PC}, SP : {SP}");
+                // Console.WriteLine($"^^^^^^^CortexM.cs ---InitPCAndSP() : pcNotInitialized is true: PC : {PC}, SP : {SP}");
             }
-            else{
-             //Console.WriteLine($"^^^^^^^CortexM.cs ---InitPCAndSP() : pcNotInitialized is false: PC : {PC}, SP : {SP}");
-            }
+            // else{
+            // //  Console.WriteLine($"^^^^^^^CortexM.cs ---InitPCAndSP() : pcNotInitialized is false: PC : {PC}, SP : {SP}");
+            // }
         }
 
 

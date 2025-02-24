@@ -30,7 +30,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public void Reset()
         {
-            Console.WriteLine("** BME280 Reset");
+            // Console.WriteLine("** BME280 Reset");
             // RegistersCollection.Reset();
             selectedRegister = 0x0;
             // EncodeTemperature();
@@ -86,12 +86,12 @@ namespace Antmicro.Renode.Peripherals.I2C
             bool present_in_config_flag = false;
             if ((configValues.ContainsKey((byte)selectedRegister))){
                 present_in_config_flag = true;
-                Console.WriteLine($"Selected Reg present in config file ");
+                // Console.WriteLine($"Selected Reg present in config file ");
             }
             // byte[] buf = new byte[count];
             if ((!(present_in_config_flag)) && general_fuzz_data!=0xAA){
                     count = general_fuzz_data;
-                    Console.WriteLine($"fuzzing length : {count}");
+                    // Console.WriteLine($"fuzzing length : {count}");
             }
             byte[] buf = new byte[count]; // fuzzing data length, need to specifiy when to do 
             for(int i = 0; i < buf.Length; i++)
@@ -112,7 +112,7 @@ namespace Antmicro.Renode.Peripherals.I2C
                     buf[i] = general_fuzz_data;
                 }
                 
-                Console.WriteLine($"** Inside BME280 Read(), selectedReg : 0x{selectedRegister:X}, state : {state}, count : {count}, data: 0x{buf[i]:X}");
+                // Console.WriteLine($"** Inside BME280 Read(), selectedReg : 0x{selectedRegister:X}, state : {state}, count : {count}, data: 0x{buf[i]:X}");
 
                 // selectedRegister++;
             }

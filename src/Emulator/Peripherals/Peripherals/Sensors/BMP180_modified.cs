@@ -81,11 +81,14 @@ namespace Antmicro.Renode.Peripherals.Sensors
                 // Console.WriteLine($"Selected Reg present in config file ");
             }
             // Uncomment the following if you want to fuzz the data length as well
-            if ((!(present_in_config_flag)) && general_fuzz_data_length!=0xAA){
+            if (!present_in_config_flag && general_fuzz_data_length!=0xAA){
                     // count = general_fuzz_data;
                     count = general_fuzz_data_length;
-                    // Console.WriteLine($"fuzzing length : {count}, reg : {selectedRegister}");
+                    // Console.WriteLine($"^^^^ BMP180_modified.cs fuzzing length : {count:X}, reg : {selectedRegister}");
             }
+            // else{
+            //     Console.WriteLine($"^^^^^ Not satisfied : flag : {present_in_config_flag}, data_len : {count:X}");
+            // }
             byte[] buf = new byte[count];
             for(int i = 0; i < buf.Length; i++)
             {
@@ -99,9 +102,10 @@ namespace Antmicro.Renode.Peripherals.Sensors
                     // buf[i] = RegistersCollection.Read((byte)selectedRegister);
                     buf[i] = general_fuzz_data;
                 }
-                // Console.WriteLine($"** BMP180 Read(), selectedReg :{selectedRegister} : 0x{selectedRegister:X},count : {count}, data: 0x{buf[i]:X}");
+                // Console.WriteLine($"** BMP180 Read(), selectedReg :{selectedRegister}, buf_len : {buf.Length},count : {count}, data: 0x{buf[i]:X}");
                 RegistersAutoIncrement();
             }
+            // Console.WriteLine($"** returning buf BMP180 Read(),  buf_len : {buf.Length},count : {count}, data: 0x{buf[0]:X}");
             return buf;
         }
 
@@ -112,6 +116,7 @@ namespace Antmicro.Renode.Peripherals.Sensors
         public void ReadFromFuzzer(byte[] data){
                 general_fuzz_data = data[0];
                 general_fuzz_data_length = data.Length;
+                // Console.WriteLine($"^^^^ReadFromFuzzer() in .cs Len : {general_fuzz_data_length}, data :  {data}");
         }
 
         // public decimal Temperature

@@ -27,7 +27,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         
         public void Resume()
         {
-            // Console.WriteLine($"Starting CPU : Resume() : CPUCore.cs, isAborted val : {isAborted}, isPaused : {isPaused}");
+            // Console.WriteLine($"^^^ Starting CPU : Resume() : CPUCore.cs, isAborted val : {isAborted}, isPaused : {isPaused}");
             lock(pauseLock)
             {
                 if(isAborted || !isPaused)
@@ -59,7 +59,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public void Pause()
         {
-           // Console.WriteLine($"Starting CPU : Pause() : CPUCore.cs : isAborted : {isAborted} , isPaused : {isPaused}");
+        //    Console.WriteLine($"Starting CPU : Pause() : CPUCore.cs : isAborted : {isAborted} , isPaused : {isPaused}");
             if(isAborted || isPaused)
             {
                 // cpu is already paused or aborted

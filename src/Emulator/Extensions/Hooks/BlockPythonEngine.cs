@@ -24,7 +24,7 @@ namespace Antmicro.Renode.Hooks
         [DllImport("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/target/release/liblibafl_renode.so")] 
         // public static extern void update_cov_map(ulong pc);
         public static extern IntPtr get_cov_map_ptr();  
-        public const int MAP_SIZE = 8 * 1024;
+        public const int MAP_SIZE = 8 * 1024; //2621440; //8 * 1024;
         public static IntPtr covMapPtr = get_cov_map_ptr(); 
         public BlockPythonEngine(IMachine mach, ICPUWithHooks cpu, string script)
         {
@@ -51,7 +51,7 @@ namespace Antmicro.Renode.Hooks
                 // Console.WriteLine($"^^^^^^^^^^^^^^^^Inside  BlockPythonEngine HookWithSize");
                 Scope.SetVariable("pc", pc);
                 Scope.SetVariable("size", size);
-                covMapPtr = get_cov_map_ptr();
+                //covMapPtr = get_cov_map_ptr();
                 ulong hash = (pc ^ PREV_LOC) & (MAP_SIZE - 1);
                 byte newValue = Marshal.ReadByte(covMapPtr + (int)hash * sizeof(int));
                 byte prev_new_val = newValue;
@@ -62,7 +62,7 @@ namespace Antmicro.Renode.Hooks
                 // byte newValue2 = Marshal.ReadByte(LibAflInterop.covMapPtr + (int)hash * sizeof(int));
                 // using (StreamWriter logfile = new StreamWriter("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/log_renode.txt", true))
                 // {
-                //     logfile.WriteLine($"Called hook, cov_ptr : {covMapPtr}, new_addr : {covMapPtr + (int)hash * sizeof(int)}, pc : {pc.ToString("X")}");
+                //     logfile.WriteLine($"Called hook, cov_ptr : {covMapPtr},hash : {hash}, newValue : {newValue}, pc : {pc.ToString("X")}");
                 // }
                 //LibAflInterop.block_hook(pc);
                 // Console.WriteLine($"Inside  BlockPythonEngine HookWithSize");

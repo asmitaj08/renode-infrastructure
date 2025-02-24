@@ -64,16 +64,22 @@ namespace Antmicro.Renode.Peripherals.CPU
         protected TranslationCPU(uint id, string cpuType, IMachine machine, Endianess endianness, CpuBitness bitness = CpuBitness.Bits32)
             : base(id, cpuType, machine, endianness, bitness)
         {
+            // Console.WriteLine("^^^^^^ TranslationCPU constructor");
             atomicId = -1;
             pauseGuard = new CpuThreadPauseGuard(this);
             decodedIrqs = new Dictionary<Interrupt, HashSet<int>>();
             hooks = new Dictionary<ulong, HookDescriptor>();
+            // Console.WriteLine("^^^^^^ TranslationCPU currentMappings");
             currentMappings = new List<SegmentMapping>();
+            // Console.WriteLine("^^^^^^ TranslationCPU InitializeRegisters");
             InitializeRegisters();
+            // Console.WriteLine("^^^^^^ TranslationCPU Init");
             Init();
+            // Console.WriteLine("^^^^^^ TranslationCPU InitDisas");
             InitDisas();
             externalMmuWindowsCount = TlibGetMmuWindowsCount();
             Clustered = new TranslationCPU[] { this };
+            // Console.WriteLine("^^^^^^ TranslationCPU constructor done");
         }
 
         public new IEnumerable<ICluster<TranslationCPU>> Clusters { get; } = new List<ICluster<TranslationCPU>>(0);
@@ -246,31 +252,63 @@ namespace Antmicro.Renode.Peripherals.CPU
     // //     }
     // // }
     //     }
-
+        
+        private byte[] cpuState_fuzz;
+        // private IntPtr statePtr_fuzz;
         public void Fuzz_PrepareState()
         {
-            var statePtr = TlibExportState();
+              // InitializeRegisters();
+                using(machine?.ObtainPausedState(true))
+            {
             Console.WriteLine("^^^^^^^^^^^ Test Prepare state - Translation CPU ^^^^^^^^^^^^^^");
-            
-            BeforeSave(statePtr);
-            cpuState = new byte[TlibGetStateSize()]; // This line initializes the cpuState array with a size equal to the value returned by the function TlibGetStateSize(), TlibGetStateSize() is likely a function that returns the size of the CPU state in bytes
-            Console.WriteLine($"^^^^^^^^^^^TlibGetStateSize : {cpuState.Length}");
-            Marshal.Copy(statePtr, cpuState, 0, cpuState.Length); // Marshal.Copy is used to copy data from unmanaged memory (pointed to by statePtr) into managed memory (cpuState), 0: The start index in the destination array (cpuState).cpuState.Length: The number of bytes to copy, which is the size of the cpuState array.
+            var statePtr_fuzz = TlibExportState();
+            // Console.WriteLine("^^^^^^^^^^^ Test Prepare state - Translation CPU ^^^^^^^^^^^^^^");
+            // Console.WriteLine($"^^^^ TranslationCPU.cs Fuzz_PrepareState() : stateptr : {statePtr_fuzz}");
+            BeforeSave(statePtr_fuzz);
+            cpuState_fuzz = new byte[TlibGetStateSize()]; // This line initializes the cpuState array with a size equal to the value returned by the function TlibGetStateSize(), TlibGetStateSize() is likely a function that returns the size of the CPU state in bytes
+            // cpuState = new byte[TlibGetStateSize()];
+            Console.WriteLine($"^^^^^^^^^^^TlibGetStateSize : {cpuState_fuzz.Length}");
+            Marshal.Copy(statePtr_fuzz, cpuState_fuzz, 0, cpuState_fuzz.Length); // Marshal.Copy is used to copy data from unmanaged memory (pointed to by statePtr) into managed memory (cpuState), 0: The start index in the destination array (cpuState).cpuState.Length: The number of bytes to copy, which is the size of the cpuState array.
             Console.WriteLine("^^^^^^^^^^^ Prepare state - Translation CPU Done!! ^^^^^^^^^^^^^^");
+            }
         }
 
 
-        public void Fuzz_LoadState()
+        public void Fuzz_LoadState() //bool arg to decide whetehr to load from snapshot state or reset state
         {
-            // Console.WriteLine("^^^^^^^^^^^ testLoadState - Translation CPU ^^^^^^^^^^^^^^");
-            if(cpuState != null)
+            // Console.WriteLine("^^^^^^^^^^^ Fuzz_LoadState - Translation CPU 000 ^^^^^^^^^^^^^^");
+            if(cpuState_fuzz != null)
             {
-                // Console.WriteLine("^^^^^ TranslationCPU - testLoadState - cpuState!=null, calling afterLoad ^^^^^^^^");
-                // Console.WriteLine($"\n*****cpuStateSize - testLoadState : {cpuState.Length}");
-                var statePtr = TlibExportState();
-                Marshal.Copy(cpuState, 0, statePtr, cpuState.Length);
+                // InitializeRegisters();
+                using(machine?.ObtainPausedState(true))
+            {
                 
-                AfterLoad(statePtr);
+                // Console.WriteLine("^^^^^^^^^^^ Fuzz_LoadState - Translation CPU 11111 ^^^^^^^^^^^^^^");
+                isAborted = false;
+                isPaused = true;
+                // RestoreState();
+                // RenodeFreeHostBlocks();
+                // mark_currenMapping_false_for_ram();
+                // machine.Reset();
+                // Reset();
+                // OnLeavingResetState();
+                // TlibRestoreContext();
+                // Console.WriteLine("^^^^^^^^^^^ Fuzz_LoadState - Translation CPU 22222 ^^^^^^^^^^^^^^");
+                // if(!fromReset){
+                    var statePtr_fuzz = TlibExportState();
+                    // // IntPtr statePtr = IntPtr.Zero;
+                    // // statePtr = Marshal.AllocHGlobal(cpuState_fuzz.Length);
+                    Marshal.Copy(cpuState_fuzz, 0, statePtr_fuzz, cpuState_fuzz.Length);
+                    // Console.WriteLine($"^^^^ TranslationCPU.cs Fuzz_LoadState() : stateptr : 0x{statePtr_fuzz:X}");
+                    AfterLoad(statePtr_fuzz);
+
+                // }
+                // else{
+                //      Reset();
+                //     OnLeavingResetState();
+                // }
+            }
+               
             }
             
             // Console.WriteLine("^^^^^^^^^^^ testLoadState - Translation CPU Done!! ^^^^^^^^^^^^^^");
@@ -280,7 +318,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         private void PrepareState()
         {
             var statePtr = TlibExportState();
-            // Console.WriteLine("^^^^^^^^^^^ Prepare state - Translation CPU ^^^^^^^^^^^^^^");
+            Console.WriteLine("^^^^^^^^^^^ Prepare state - Translation CPU ^^^^^^^^^^^^^^");
             BeforeSave(statePtr);
             cpuState = new byte[TlibGetStateSize()]; // This line initializes the cpuState array with a size equal to the value returned by the function TlibGetStateSize(), TlibGetStateSize() is likely a function that returns the size of the CPU state in bytes
             Marshal.Copy(statePtr, cpuState, 0, cpuState.Length); // Marshal.Copy is used to copy data from unmanaged memory (pointed to by statePtr) into managed memory (cpuState), 0: The start index in the destination array (cpuState).cpuState.Length: The number of bytes to copy, which is the size of the cpuState array.
@@ -291,22 +329,24 @@ namespace Antmicro.Renode.Peripherals.CPU
         private void FreeState()
         {
             cpuState = null;
-            // Console.WriteLine("^^^^^^^^^^^ Free state - Translation CPU ^^^^^^^^^^^^^^");
+            Console.WriteLine("^^^^^^^^^^^ Free state - Translation CPU ^^^^^^^^^^^^^^");
         }
 
         [LatePostDeserialization]
-        private void RestoreState()
+        // private void RestoreState()
+        public void RestoreState()
         {
-           // Console.WriteLine("^^^^ Translation CPU - RestoreState");
+           Console.WriteLine("^^^^ Translation CPU - RestoreState");
             Init();
             // TODO: state of the reset events
             FreeState();
             if(memoryAccessHook != null)
             {
+                Console.WriteLine("^^^^ Translation CPU - RestoreState : memoryAccessHook != null");
                 // Repeat memory hook enable to make sure that the tcg context is set not to use the tlb
                 TlibOnMemoryAccessEventEnabled(1);
             }
-            //  Console.WriteLine("^^^^ Translation CPU - RestoreState Doen!!!^^^^");
+             Console.WriteLine("^^^^ Translation CPU - RestoreState Done!!!^^^^");
         }
 
         public override ExecutionMode ExecutionMode
@@ -358,7 +398,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected override void OnLeavingResetState()
         {
-           // Console.WriteLine("^^^^^^^ TarnslationalCPU.cs OnLeavingResetState()");
+           Console.WriteLine("^^^^^^^ TarnslationalCPU.cs OnLeavingResetState()");
             base.OnLeavingResetState();
             TlibOnLeavingResetState();
         }
@@ -372,13 +412,14 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected override void RequestPause()
         {
-            //Console.WriteLine("\n^^^^^^^^^^^^^^PAUSE translationalcpu.cs^^^^^^^^^^^^\n");
+            // Console.WriteLine("\n^^^^^^^^^^^^^^Request PAUSE translationalcpu.cs^^^^^^^^^^^^\n");
             base.RequestPause();
             TlibSetReturnRequest();
         }
 
         protected override void InnerPause(bool onCpuThread, bool checkPauseGuard)
         {
+            //  Console.WriteLine($"\n^^^^^^^^^^^^^^Inner PAUSE translationalcpu.cs : thread {onCpuThread}, guard :{checkPauseGuard}^^^^^^^^^^^^\n");
             base.InnerPause(onCpuThread, checkPauseGuard);
 
             if(!onCpuThread && checkPauseGuard)
@@ -389,28 +430,29 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public override void Fuzz_Reset()
         {
-            //Console.WriteLine("^^^^^^^ TarnslationalCPU.cs Fuzz_Reset()");
+            //Console.WriteLine("^^^^^^^ TranslationalCPU.cs Fuzz_Reset()");
             base.Fuzz_Reset();
             isInterruptLoggingEnabled = false;
             TlibReset();
             // ResetOpcodesCounters();
             // profiler?.Dispose();
-            //Console.WriteLine("^^^^^^^ TarnslationalCPU.cs Fuzz_Reset() Done!!");
+            //Console.WriteLine("^^^^^^^ TranslationalCPU.cs Fuzz_Reset() Done!!");
         }
         
         public override void Reset()
         {
-           // Console.WriteLine("^^^^^^^ TarnslationalCPU.cs Reset()");
+           Console.WriteLine("^^^^^^^ TranslationalCPU.cs Reset()");
             base.Reset();
             isInterruptLoggingEnabled = false;
             TlibReset();
             ResetOpcodesCounters();
             profiler?.Dispose();
-           // Console.WriteLine("^^^^^^^ TarnslationalCPU.cs Reset() Done!!");
+           Console.WriteLine("^^^^^^^ TranslationalCPU.cs Reset() Done!!");
         }
 
         public bool RequestTranslationBlockRestart(bool quiet = false)
         {
+            Console.WriteLine("^^^^^^^ TranslationalCPU.cs RequestTranslationBlockRestart()");
             if(!OnPossessedThread)
             {
                 if(!quiet)
@@ -424,6 +466,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public void RaiseException(uint exceptionId)
         {
+            Console.WriteLine($"^^^^^^ TranslationCPU.cs Tlib Raising exception : exceptionID : {exceptionId}");
             TlibRaiseException(exceptionId);
         }
 
@@ -474,6 +517,8 @@ namespace Antmicro.Renode.Peripherals.CPU
                 SetAccessMethod(segment.GetRange(), true);
             }
             this.NoisyLog("Registered memory at 0x{0:X}, size 0x{1:X}.", segment.StartingOffset, segment.Size);
+
+            Console.WriteLine($"^^^^ TranslationCPU.cs MapMemory() Registered memory at 0x{segment.StartingOffset:X}, size 0x{segment.Size:X}, pointer : 0x{segment.Pointer.ToInt64():X}." );
         }
 
         public void RegisterAccessFlags(ulong startAddress, ulong size, bool isIoMemory = false)
@@ -516,6 +561,7 @@ namespace Antmicro.Renode.Peripherals.CPU
                     Where(x => TlibIsRangeMapped(x.Segment.StartingOffset, x.Segment.StartingOffset + x.Segment.Size) == 1).ToList();
                 mappedMemory.Remove(range);
                 RebuildMemoryMappings();
+                Console.WriteLine("TranslationCPU.cs UnmappedMemory done ");
             }
         }
 
@@ -687,6 +733,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         protected virtual ulong ReadByteFromBus(ulong offset)
         {
+            // Console.WriteLine($"^^^^ TrasationCPU.cs export ReadByteFromBus() Reading offset : 0x{offset:X} at PC=0x{PC.RawValue:X}");
             if(UpdateContextOnLoadAndStore)
             {
                 TlibRestoreContext();
@@ -703,6 +750,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         protected virtual ulong ReadWordFromBus(ulong offset)
         {
+            // Console.WriteLine($"^^^^ TrasationCPU.cs export ReadWordFromBus() offset : 0x{offset:X} at PC=0x{PC.RawValue:X}");
             if(UpdateContextOnLoadAndStore)
             {
                 TlibRestoreContext();
@@ -718,6 +766,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         protected virtual ulong ReadDoubleWordFromBus(ulong offset)
         {
+            // Console.WriteLine($"^^^^ TrasationCPU.cs export ReadDoubleWordFromBus() Reading offset : 0x{offset:X} at PC=0x{PC.RawValue:X}");
             if(UpdateContextOnLoadAndStore)
             {
                 TlibRestoreContext();
@@ -733,6 +782,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         protected virtual ulong ReadQuadWordFromBus(ulong offset)
         {
+            // Console.WriteLine($"^^^^ TrasationCPU.cs export ReadQuadWordFromBus() Reading offset : 0x{offset:X} at PC=0x{PC.RawValue:X}");
             if(UpdateContextOnLoadAndStore)
             {
                 TlibRestoreContext();
@@ -748,6 +798,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         protected virtual void WriteByteToBus(ulong offset, ulong value)
         {
+            // Console.WriteLine($"^^^^ TrasationCPU.cs export WriteByteToBus(), value : 0x{value:X} offset : 0x{offset:X} at PC=0x{PC.RawValue:X}");
             if(UpdateContextOnLoadAndStore)
             {
                 TlibRestoreContext();
@@ -764,6 +815,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         protected virtual void WriteWordToBus(ulong offset, ulong value)
         {
+            // Console.WriteLine($"^^^^ TrasationCPU.cs export WriteWordToBus(), value : 0x{value:X} offset : 0x{offset:X} at PC=0x{PC.RawValue:X}");
             if(UpdateContextOnLoadAndStore)
             {
                 TlibRestoreContext();
@@ -780,6 +832,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         protected virtual void WriteDoubleWordToBus(ulong offset, ulong value)
         {
+            // Console.WriteLine($"^^^^ TrasationCPU.cs export WriteDoubleWordToBus(), value : 0x{value:X} offset : 0x{offset:X} at PC=0x{PC.RawValue:X}");
             if(UpdateContextOnLoadAndStore)
             {
                 TlibRestoreContext();
@@ -796,6 +849,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         protected void WriteQuadWordToBus(ulong offset, ulong value)
         {
+            // Console.WriteLine($"^^^^ TrasationCPU.cs export WriteQuadWordToBus(), value : 0x{value:X} offset : 0x{offset:X} at PC=0x{PC.RawValue:X}");
             if(UpdateContextOnLoadAndStore)
             {
                 TlibRestoreContext();
@@ -1106,6 +1160,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         private void OnBlockFinished(ulong pc, uint executedInstructions)
         {
+            // Console.WriteLine($"^^^^ TranslationCPU.cs : OnBlockFinished export : pc : 0x{pc:X}, executedInstructions: {executedInstructions}");
             using(ObtainGenericPauseGuard())
             {
                 blockFinishedHook?.Invoke(pc, executedInstructions);
@@ -1115,6 +1170,8 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         private void OnInterruptBegin(ulong interruptIndex)
         {
+            
+            Console.WriteLine($"^^^^ TranslationCPU.cs : OnInterruptBegin export");
             interruptBeginHook?.Invoke(interruptIndex);
         }
 
@@ -1122,7 +1179,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         private void MmuFaultExternalHandler(ulong address, int accessType, int windowIndex)
         {
             this.Log(LogLevel.Noisy, "External MMU fault at 0x{0:X} when trying to access as {1}", address, (AccessType)accessType);
-
+            Console.WriteLine($"^^^^ TranslationCPU.cs : MmuFaultExternalHandler export");
             if(windowIndex == -1)
             {
                 this.Log(LogLevel.Error, "MMU fault - the address 0x{0:X} is not specified in any of the existing ranges", address);
@@ -1133,6 +1190,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         private void OnInterruptEnd(ulong interruptIndex)
         {
+            Console.WriteLine($"^^^^ TranslationCPU.cs : OnInterruptEnd export");
             interruptEndHook?.Invoke(interruptIndex);
         }
 
@@ -1147,6 +1205,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         private void OnMassBroadcastDirty(IntPtr arrayStart, int size)
         {
+            Console.WriteLine($"^^^^ TranslationCPU.cs : OnMassBroadcastDirty export, size : {size}");
             var tempArray = new long[size];
             Marshal.Copy(arrayStart, tempArray, 0, size);
             machine.AppendDirtyAddresses(this, tempArray);
@@ -1158,8 +1217,10 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         private IntPtr GetDirty(IntPtr size)
         {
+            Console.WriteLine($"^^^^ TranslationCPU.cs : GetDirty() export, size : 0x{size.ToInt64():X}");
             var dirtyAddressesList = machine.GetNewDirtyAddressesForCore(this); 
             var newAddressesCount = dirtyAddressesList.Length;
+            Console.WriteLine($"^^^^ TranslationCPU.cs : GetDirty() export, dirtyAddressesList.Length : {dirtyAddressesList.Length}");
 
             if(newAddressesCount > 0)
             {
@@ -1193,6 +1254,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void HandleRamSetup()
         {
+            Console.WriteLine("^^^^^ TranslationCPU - HandleRamSetup ^^^^^^^^");
             foreach(var mapping in currentMappings)
             {
                 var range = mapping.Segment.GetRange();
@@ -1201,6 +1263,7 @@ namespace Antmicro.Renode.Peripherals.CPU
                     SetAccessMethod(range, asMemory: true);
                 }
             }
+            // Console.WriteLine("^^^^^ TranslationCPU - HandleRamSetup done^^^^^^^^");
         }
 
         public void AddHook(ulong addr, Action<ICpuSupportingGdb, ulong> hook)
@@ -1279,12 +1342,14 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public override void Dispose()
         {
+            // Console.WriteLine("^^^^^ TranslationCPU.cs Dispose()");
             base.Dispose();
             profiler?.Dispose();
         }
 
         protected override void DisposeInner(bool silent = false)
         {
+            Console.WriteLine("^^^^^ TranslationCPU.cs DisposeInner()");
             base.DisposeInner(silent);
             TimeHandle.Dispose();
             RemoveAllHooks();
@@ -1306,6 +1371,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         private void ReportAbort(string message)
         {
             this.Log(LogLevel.Error, "CPU abort [PC=0x{0:X}]: {1}.", PC.RawValue, message);
+            Console.WriteLine($"^^^^^^ TranslationalCPU.cs ReportAbort CPU abort [PC=0x{PC.RawValue:X}]: {message}");
             throw new CpuAbortException(message);
         }
 
@@ -1333,9 +1399,10 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void Init()
         {
-           // Console.WriteLine("^^^^^ TranslationCPU - Init ^^^^^^^^");
+           Console.WriteLine("^^^^^ TranslationCPU - Init ^^^^^^^^");
             memoryManager = new SimpleMemoryManager(this);
             isPaused = true;
+            // Console.WriteLine("^^^^^ TranslationCPU - Init - SimpleMemoryManager done ^^^^^^^^");
 
             onTranslationBlockFetch = OnTranslationBlockFetch;
 
@@ -1366,8 +1433,9 @@ namespace Antmicro.Renode.Peripherals.CPU
             var translationCacheSizeMin = (ulong)ConfigurationManager.Instance.Get("translation", "min-tb-size", DefaultMinimumTranslationCacheSize);
             var translationCacheSizeMax = (ulong)ConfigurationManager.Instance.Get("translation", "max-tb-size", DefaultMaximumTranslationCacheSize);
             TlibSetTranslationCacheConfiguration(translationCacheSizeMin, translationCacheSizeMax);
-
-            var result = TlibInit(Model);
+            Console.WriteLine($"^^^^^ TranslationCPU - Init - TlibInit start : model : {Model} ^^^^^^^^");
+            var result = TlibInit(Model); // This allocates  a bunch of memory, internally calls Allocate() which internally si  return memoryManager.Allocate(size);
+            Console.WriteLine($"^^^^^ TranslationCPU - Init - TlibInit start : model : {Model} Done!!!^^^^^^^^");
             if(result == -1)
             {
                 throw new ConstructionException("Unknown CPU type");
@@ -1376,11 +1444,12 @@ namespace Antmicro.Renode.Peripherals.CPU
             {
                 var statePtr = TlibExportState();
                 Marshal.Copy(cpuState, 0, statePtr, cpuState.Length);
-                //Console.WriteLine("^^^^^ TranslationCPU - Init - cpuState!=null, calling afterLoad ^^^^^^^^");
+                Console.WriteLine("^^^^^ TranslationCPU - Init - cpuState!=null, calling afterLoad ^^^^^^^^");
                 AfterLoad(statePtr);
             }
             if(machine != null)
             {
+                Console.WriteLine("^^^^^ TranslationCPU - Init - TlibAtomicMemoryStateInit start ^^^^^^^^");
                 atomicId = TlibAtomicMemoryStateInit(machine.AtomicMemoryStatePointer, atomicId);
                 if(atomicId == -1)
                 {
@@ -1394,7 +1463,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
             CyclesPerInstruction = 1;
 
-            //  Console.WriteLine("^^^^^ TranslationCPU - Init Done!!^^^^^^^^");
+             Console.WriteLine("^^^^^ TranslationCPU - Init Done!!^^^^^^^^");
         }
 
         protected override ulong SkipInstructions
@@ -1436,33 +1505,79 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         private void TouchHostBlock(ulong offset)
         {
+            Console.WriteLine($"^^^^^^^^ TranslationCPU.cs export TouchHostBlock : offset : 0x{offset:X} at [PC=0x{PC.RawValue:X}]");
             this.NoisyLog("Trying to find the mapping for offset 0x{0:X}.", offset);
             var mapping = currentMappings.FirstOrDefault(x => x.Segment.StartingOffset <= offset && offset < x.Segment.StartingOffset + x.Segment.Size);
+            Console.WriteLine($"^^^^^^^^ TranslationCPU.cs export TouchHostBlock , mapping : seg_pointer : 0x{mapping.Segment.Pointer.ToInt64():X}");
             if(mapping == null)
             {
                 throw new InvalidOperationException(string.Format("Could not find mapped segment for offset 0x{0:X}.", offset));
             }
-            mapping.Segment.Touch();
+            mapping.Segment.Touch(); //MappedMemory.cs TouchSegment()
             mapping.Touched = true;
             RebuildMemoryMappings();
         }
 
         private void RebuildMemoryMappings()
         {
+            Console.WriteLine($"^^^^^^^^ TranslationCPU.cs RebuildMemoryMappings Start ");
             checked
             {
+                
+                // It iterates through the currentMappings and selects only the ones marked as "Touched."
+                // For each touched segment, it creates a new HostMemoryBlock object, which contains:
                 var hostBlocks = currentMappings.Where(x => x.Touched).Select(x => x.Segment)
                     .Select(x => new HostMemoryBlock { Start = x.StartingOffset, Size = x.Size, HostPointer = x.Pointer })
                     .OrderBy(x => x.HostPointer.ToInt64()).ToArray();
+                
+                 // Print each member of the HostMemoryBlock for each element
+                foreach (var block in hostBlocks)
+                {
+                    Console.WriteLine($"^^^TranslationCPU.cs RebuildMemoryMappings : HostMemoryBlock - Start: 0x{block.Start:X}, Size: 0x{block.Size:X}, HostPointer: 0x{block.HostPointer.ToInt64():X}");
+                }
                 if(hostBlocks.Length > 0)
                 {
+                    //Allocate memory for host blocks
+                    
                     var blockBuffer = memoryManager.Allocate(new IntPtr(Marshal.SizeOf(typeof(HostMemoryBlock)) * hostBlocks.Length));
                     BlitArray(blockBuffer, hostBlocks.OrderBy(x => x.HostPointer.ToInt64()).Cast<dynamic>().ToArray());
+                    Console.WriteLine($"^^^TranslationCPU.cs RebuildMemoryMappings HostBlocks len : {hostBlocks.Length}, blockbuffer : 0x{blockBuffer.ToInt64():X}");
                     RenodeSetHostBlocks(blockBuffer, hostBlocks.Length);
+                    Console.WriteLine("^^TranslationCPU.cs RebuildMemoryMappings : RenodeSetHostBlocks done");
                     memoryManager.Free(blockBuffer);
                     this.NoisyLog("Memory mappings rebuilt, there are {0} host blocks now.", hostBlocks.Length);
                 }
+            Console.WriteLine($"^^^^^^^^ TranslationCPU.cs RebuildMemoryMappings Done with {hostBlocks.Length} host blocks now!!!!");
             }
+            
+        }
+        //Fuzz added externally for testing
+        private void mark_currenMapping_false_for_ram(){
+            // Assuming IMappedSegment has properties for Start and Size
+            foreach (var mapping in currentMappings)
+            {
+                // Assuming Segment has properties `Start` and `Size` to get offset and size
+                var segment = mapping.Segment;
+    
+                // Check if the segment starts at or after the specified offset
+                // and if the offset is within its size range
+                if (segment.StartingOffset >= 0x20000000 && segment.StartingOffset <= 0x20030000)
+                {
+                    // if(segment.Pointer != IntPtr.Zero)
+                    // {
+                    //     Console.WriteLine($"^^^^^ TranslationCPU.cs mark_currenMapping_false_for_ram() segment : 0x{segment.Pointer.ToInt64():X}");
+                    //     var temp = segment.Pointer;
+                    //     Marshal.FreeHGlobal(temp);
+                    //     temp = IntPtr.Zero;
+                    //     // segments[i] = IntPtr.Zero;
+                    //     // this.NoisyLog("Segment {0} freed.", i);
+                        // mapping.Touched = false;
+                    // }
+                    // Mark the mapping as not touched
+                    mapping.Touched = false;
+                }
+            }
+
         }
 
         private void BlitArray(IntPtr targetPointer, dynamic[] structures)
@@ -1518,18 +1633,23 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         private IntPtr Allocate(IntPtr size)
         {
+            // Console.WriteLine($"^^^^^ TranslationCPU - export Allocate(), size : 0x{size.ToInt64():X} at PC=0x{PC.RawValue:X} ^^^^^^^^");
+            // Console.WriteLine($"^^^^^ TranslationCPU - export Allocate(), size : 0x{size.ToInt64():X} ^^^^^^^^");
+
             return memoryManager.Allocate(size);
         }
 
         [Export]
         private IntPtr Reallocate(IntPtr oldPointer, IntPtr newSize)
         {
+            // Console.WriteLine($"^^^^^ TranslationCPU - export Reallocate(), size : 0x{newSize.ToInt64():X} at PC=0x{PC.RawValue:X} ^^^^^^^^");
             return memoryManager.Reallocate(oldPointer, newSize);
         }
 
         [Export]
         protected void Free(IntPtr pointer)
         {
+            // Console.WriteLine($"^^^^^ TranslationCOU.cs MemoryManager Free() export , ptr : 0x{pointer.ToInt64():X} at PC=0x{PC.RawValue:X}");
             memoryManager.Free(pointer);
         }
 
@@ -1557,12 +1677,15 @@ namespace Antmicro.Renode.Peripherals.CPU
         {
             public SimpleMemoryManager(TranslationCPU parent)
             {
+                // Console.WriteLine("^^^^^ TranslationCPU - SimpleMemoryManager Constructor ^^^^^^^^");
                 this.parent = parent;
                 ourPointers = new ConcurrentDictionary<IntPtr, long>();
+                
             }
 
             public IntPtr Allocate(IntPtr size)
             {
+                
                 var ptr = Marshal.AllocHGlobal(size);
                 var sizeNormalized = Misc.NormalizeBinary((double)size);
                 if(!ourPointers.TryAdd(ptr, (long)size))
@@ -1572,11 +1695,13 @@ namespace Antmicro.Renode.Peripherals.CPU
                 Interlocked.Add(ref allocated, (long)size);
                 parent.NoisyLog("Allocated {0}B pointer at 0x{1:X}.", sizeNormalized, ptr);
                 PrintAllocated();
+                // Console.WriteLine($"^^^^^ TranslationCPU - SimpleMemoryManager Allocate(), size : 0x{size.ToInt64():X}, ptr : 0x{ptr.ToInt64():X} ^^^^^^^^");
                 return ptr;
             }
 
             public IntPtr Reallocate(IntPtr oldPointer, IntPtr newSize)
             {
+                // Console.WriteLine($"^^^^^ TranslationCPU - SimpleMemoryManager Reallocate() : oldPointer : {oldPointer.ToInt64():X}, newSize : 0x{newSize.ToInt64():X} ^^^^^^^^");
                 if(oldPointer == IntPtr.Zero)
                 {
                     return Allocate(newSize);
@@ -1599,6 +1724,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
             public void Free(IntPtr ptr)
             {
+                //  Console.WriteLine($"^^^^^ TranslationCPU - SimpleMemoryManager Free() ptr : 0x{ptr.ToInt64():X}^^^^^^^^");
                 if(!ourPointers.TryRemove(ptr, out var oldSize))
                 {
                     throw new InvalidOperationException($"Trying to free a pointer at 0x{ptr:X} which wasn't allocated by this memory manager.");
@@ -1612,12 +1738,14 @@ namespace Antmicro.Renode.Peripherals.CPU
             {
                 get
                 {
+                    // Console.WriteLine("^^^^^ TranslationCPU - SimpleMemoryManager Allocated - get^^^^^^^^");
                     return allocated;
                 }
             }
 
             public void CheckIfAllIsFreed()
             {
+                Console.WriteLine("^^^^^^^ TranslationCPU.cs CheckIfAllIsFreed()");
                 if(!ourPointers.IsEmpty)
                 {
                     parent.Log(LogLevel.Warning, "Some memory allocated by the translation library was not freed - {0}B left allocated. This might indicate a memory leak. Cleaning up...", Misc.NormalizeBinary(allocated));
@@ -1867,6 +1995,7 @@ namespace Antmicro.Renode.Peripherals.CPU
                 this.Log(LogLevel.Warning, "Could not initialize assembly engine");
             }
             dirtyAddressesPtr = IntPtr.Zero;
+            // Console.WriteLine("^^^^^ TranslationCPU - InitDisas done ^^^^^^^^");
         }
 
         public uint PageSize
@@ -1879,12 +2008,16 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected virtual void BeforeSave(IntPtr statePtr)
         {
+            // Console.WriteLine($"^^^^ TranslationCPU.cs BeforeSave() : 0x{statePtr:X}");
             TlibBeforeSave(statePtr);
+            //  Console.WriteLine($"^^^^ TranslationCPU.cs BeforeSave() Done!!");
         }
 
         protected virtual void AfterLoad(IntPtr statePtr)
         {
+            // Console.WriteLine($"^^^^ TranslationCPU.cs AfterLoad() : 0x{statePtr:X}");
             TlibAfterLoad(statePtr);
+            // Console.WriteLine($"^^^^ TranslationCPU.cs AfterLoad() Done");
         }
 
         [Export]
@@ -2244,6 +2377,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void ExecuteHooks(ulong address)
         {
+            // Console.WriteLine($"^^^^^ TranslationCPU.cs ExecuteHooks() : Addresss : 0x{address:X}");
             lock(hooks)
             {
                 HookDescriptor hookDescriptor;
@@ -2259,6 +2393,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void DeactivateHooks(ulong address)
         {
+            // Console.WriteLine($"^^^^^ TranslationCPU.cs DeactivateHooks() : Addresss : 0x{address:X}");
             lock(hooks)
             {
                 HookDescriptor hookDescriptor;
@@ -2274,6 +2409,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void ReactivateHooks()
         {
+        //    Console.WriteLine($"^^^^^ TranslationCPU.cs ReactivateHooks()");
             lock(hooks)
             {
                 foreach(var inactive in hooks.Where(x => !x.Value.IsActive))
@@ -2338,6 +2474,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             if(result == ExecutionResult.StoppedAtBreakpoint)
             {
                 this.Trace();
+                // Console.WriteLine($"^^^^ TranslationCPU.cs : ExecutionFinished() : ExecutionResult.StoppedAtBreakpoint");
                 ExecuteHooks(PC);
                 // it is necessary to deactivate hooks installed on this PC before
                 // calling `tlib_execute` again to avoid a loop;
@@ -2350,6 +2487,7 @@ namespace Antmicro.Renode.Peripherals.CPU
                 // from tlib, but keeping it in C#), executing the beginning of the next
                 // block and registering the breakpoint again in the OnBlockBegin hook
                 DeactivateHooks(PC);
+                // Console.WriteLine($"^^^^ TranslationCPU.cs : ExecutionFinished() Done: ExecutionResult.StoppedAtBreakpoint");
                 return true;
             }
             else if(result == ExecutionResult.StoppedAtWatchpoint)
@@ -2428,6 +2566,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
             catch(CpuAbortException)
             {
+                Console.WriteLine("^^^^^^^ TranslationCPU.cs : CpuAbortException");
                 this.NoisyLog("CPU abort detected, halting.");
                 InvokeHalted(new HaltArguments(HaltReason.Abort, this));
                 return ExecutionResult.Aborted;
@@ -2441,7 +2580,9 @@ namespace Antmicro.Renode.Peripherals.CPU
                 }
                 DebugHelper.Assert(numberOfExecutedInstructions <= numberOfInstructionsToExecute, "tlib executed more instructions than it was asked to");
             }
-
+            // if(lastTlibResult != TlibExecutionResult.Ok){
+            //      Console.WriteLine($"^^^^^^ TranslationCPU.cs Tlib execution, execution result: {(TlibExecutionResult)lastTlibResult}");
+            // }
             switch(lastTlibResult)
             {
                 case TlibExecutionResult.Ok:
@@ -2469,6 +2610,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public void SetBroadcastDirty(bool enable)
         {
+            Console.WriteLine($"^^^^^^ TranslationCPU.cs Setting broadcast dirty to {enable}");
             TlibSetBroadcastDirty(enable ? 1 : 0);
         }
 
@@ -2494,6 +2636,7 @@ namespace Antmicro.Renode.Peripherals.CPU
                 // is required to avoid _Collection was modified_ exception.
                 foreach(var callback in callbacks.ToList())
                 {
+                    // Console.WriteLine($"^^^^ TranslationCPU.cs : ExecuteCallbacks() : {callback}");
                     callback(cpu, address);
                 }
             }

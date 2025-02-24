@@ -155,7 +155,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public virtual void Reset()
         {
-            //Console.WriteLine("^^^^^^ BaseCPU.cs Reset()");
+            // Console.WriteLine("^^^^^^ BaseCPU.cs Reset()");
             isAborted = false;
             Pause();
             State = CPUState.InReset;
@@ -211,6 +211,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             get
             {
                 var cpuThreadLocal = cpuThread;
+                // Console.WriteLine($"^^^^^^ BaseCPU.cs : OnPossessedThread : {cpuThreadLocal != null && Thread.CurrentThread.ManagedThreadId == cpuThreadLocal.ManagedThreadId}");
                 return cpuThreadLocal != null && Thread.CurrentThread.ManagedThreadId == cpuThreadLocal.ManagedThreadId;
             }
         }
@@ -261,56 +262,56 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
-        /// <remarks><c>StateChanged</c> is invoked when the value gets changed.</remarks>
-        // public CPUState State
-        // {
-        //     get => state;
-
-        //     private set
-        //     {
-        //         Console.WriteLine($"Set CPU state : state : {state}, to set to : {value}");
-        //         var oldState = state;
-        //         if(oldState == value)
-        //         {
-        //             return;
-        //         }
-        //         state = value;
-        //         if(oldState == CPUState.InReset)
-        //         {
-        //             OnLeavingResetState();
-        //         }
-        //         StateChanged?.Invoke(this, oldState, value);
-        //     }
-        // }
-
-
-        //modified 
-
-         public CPUState State
+        //  <remarks><c>StateChanged</c> is invoked when the value gets changed.</remarks>
+        public CPUState State
         {
             get => state;
 
             private set
             {
-                //Console.WriteLine($"Set CPU state : state : {state}, to set to : {value}");
+                // Console.WriteLine($"^^^ BaseCPU.cs : Set CPU state : state : {state}, to set to : {value}");
                 var oldState = state;
                 if(oldState == value)
                 {
                     return;
                 }
                 state = value;
-                if(fuzz_flag==true && oldState == CPUState.InReset)
-                {
-                    fuzz_flag=false;
-                    Fuzz_OnLeavingResetState();
-                }
-                else if(oldState == CPUState.InReset)
+                if(oldState == CPUState.InReset)
                 {
                     OnLeavingResetState();
                 }
                 StateChanged?.Invoke(this, oldState, value);
             }
         }
+
+
+        //modified 
+
+        //  public CPUState State
+        // {
+        //     get => state;
+
+        //     private set
+        //     {
+        //         //Console.WriteLine($"Set CPU state : state : {state}, to set to : {value}");
+        //         var oldState = state;
+        //         if(oldState == value)
+        //         {
+        //             return;
+        //         }
+        //         state = value;
+        //         if(fuzz_flag==true && oldState == CPUState.InReset)
+        //         {
+        //             fuzz_flag=false;
+        //             Fuzz_OnLeavingResetState();
+        //         }
+        //         else if(oldState == CPUState.InReset)
+        //         {
+        //             OnLeavingResetState();
+        //         }
+        //         StateChanged?.Invoke(this, oldState, value);
+        //     }
+        // }
 
         public TimeHandle TimeHandle
         {
@@ -321,6 +322,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             set
             {
                 this.Trace("Setting a new time handle");
+                // Console.WriteLine($"^^^^ BaseCPU.cs Setting a new time handle, currentHaltedState : {currentHaltedState}");
                 timeHandle?.Dispose();
                 lock(haltedLock)
                 {
@@ -370,7 +372,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected virtual void InnerPause(bool onCpuThread, bool checkPauseGuard)
         {
-            //Console.WriteLine("^^^^^^ BaseCPU.cs InnerPause()");
+            // Console.WriteLine("^^^^^^ BaseCPU.cs InnerPause()");
             RequestPause();
 
             if(onCpuThread)
@@ -381,7 +383,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected virtual void Pause(HaltArguments haltArgs, bool checkPauseGuard)
         {
-           // Console.WriteLine($"^^^^^^ BaseCPU.cs Pause() : isAborted : {isAborted}, isPaused : {isPaused}");
+        //    Console.WriteLine($"^^^^^^ BaseCPU.cs Pause() : isAborted : {isAborted}, isPaused : {isPaused}");
             if(isAborted || isPaused)
             {
                 // cpu is already paused or aborted
@@ -393,21 +395,27 @@ namespace Antmicro.Renode.Peripherals.CPU
                 // cpuThread can get null as a result of `InnerPause` call
                 var cpuThreadCopy = cpuThread;
                 var onCpuThread = (cpuThreadCopy != null && Thread.CurrentThread.ManagedThreadId != cpuThreadCopy.ManagedThreadId);
-
+                //fuzz :
+                // if(cpuThreadCopy != null){
+                //     // Console.WriteLine($"^^^^^^ BaseCPU.cs Pause() : CurrentThreadID : {Thread.CurrentThread.ManagedThreadId}, cpuThreadCopyID : {cpuThreadCopy.ManagedThreadId}, onCpuThread : {onCpuThread}");
+                // }
                 InnerPause(onCpuThread, checkPauseGuard);
 
                 if(onCpuThread)
                 {
                     singleStepSynchronizer.Enabled = false;
                     this.NoisyLog("Waiting for thread to pause.");
+                    // Console.WriteLine($"^^^^^^ BaseCPU.cs Pause() : Waiting for thread to pause., onCpuThread : {onCpuThread}");
                     cpuThreadCopy?.Join();
                     this.NoisyLog("Paused.");
+                    // Console.WriteLine($"^^^^^^ BaseCPU.cs Pause() : Paused");
                 }
 
                 isPaused = true;
             }
 
             InvokeHalted(haltArgs);
+            // Console.WriteLine($"^^^^^^ BaseCPU.cs Pause() Done!! : isAborted : {isAborted}, isPaused : {isPaused}");
         }
 
         protected void ReportProgress(ulong instructions)
@@ -425,7 +433,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected virtual void OnLeavingResetState()
         {
-            //Console.WriteLine($"^^^^^^ basecpu.cs, OnLeavingResetState()");
+            Console.WriteLine($"^^^^^^ basecpu.cs, OnLeavingResetState()");
             // Intentionally left blank.
         }
 
@@ -445,6 +453,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
             singleStepSynchronizer.Enabled = IsSingleStepMode;
             StartCPUThread();
+            // Console.WriteLine($"^^^^^^ OnResume : basecpu.cs, done!!");
         }
 
 
@@ -479,13 +488,14 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected override void OnPause()
         {
-            //Console.WriteLine("^^^^^^ OnPause : basecpu.cs");
+            // Console.WriteLine("^^^^^^ OnPause : basecpu.cs");
             Pause(new HaltArguments(HaltReason.Pause, this), checkPauseGuard: true);
+            // Console.WriteLine("^^^^^^ OnPause Done!!: basecpu.cs");
         }
 
         protected virtual void RequestPause()
         {
-            //Console.WriteLine("\n^^^^^^^^^^^^^^request PAUSE baseCPU.cs^^^^^^^^^^^^\n");
+            // Console.WriteLine("\n^^^^^^^^^^^^^^request PAUSE baseCPU.cs^^^^^^^^^^^^\n");
             lock(pauseLock)
             {
                 isPaused = true;
@@ -496,6 +506,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected virtual void DisposeInner(bool silent = false)
         {
+            // Console.WriteLine("^^^^^ BaseCPU.cs disposeInner()");
             disposing = true;
             if(!silent)
             {
@@ -508,11 +519,17 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected void InvokeHalted(HaltArguments arguments)
         {
+            // Console.WriteLine($"^^^^ BaseCPU.cs InvokeHalted called with arguments: reason : {arguments.Reason}, cpuThread : {arguments.Cpu},address : {arguments.Address} ");
             var halted = Halted;
             if(halted != null)
             {
+                // Console.WriteLine($"^^^^ BaseCPU.cs InvokeHalted called {halted}");
                 halted(arguments);
+                // Console.WriteLine($"^^^^ BaseCPU.cs InvokeHalted called halted done");
             }
+            // else{
+            //     // Console.WriteLine($"^^^^ BaseCPU.cs InvokeHalted called halted null");
+            // }
         }
 
         protected virtual void CpuThreadBody()
@@ -523,14 +540,17 @@ namespace Antmicro.Renode.Peripherals.CPU
 #if DEBUG
                 using(this.TraceRegion("CPU loop"))
 #endif
+                // Console.WriteLine($"^^^^^ BaseCPU.cs In CpuThreadBody : started : isAborted : {isAborted}, isPaused : {isPaused} thread ID: {cpuThread.ManagedThreadId}");
                 using(var activityTracker = (DisposableWrapper)this.ObtainSinkActiveState())
                 using(TimeDomainsManager.Instance.RegisterCurrentThread(() => new TimeStamp(TimeHandle.TotalElapsedTime, TimeHandle.TimeSource.Domain)))
                 {
                     try
                     {
 restart:
+                        //  Console.WriteLine($"^^^^^ BaseCPU.cs In CpuThreadBody : restarting : isAborted : {isAborted}, isPaused : {isPaused} thread ID: {cpuThread.ManagedThreadId}");
                         while(!isPaused && !isAborted)
                         {
+                            // Console.WriteLine($"^^^^^ BaseCPU.cs In CpuThreadBody : while loop : isAborted : {isAborted}, isPaused : {isPaused} thread ID: {cpuThread.ManagedThreadId}");
                             var singleStep = false;
                             // locking here is to ensure that execution mode does not change
                             // before calling `WaitForStepCommand` method
@@ -555,6 +575,7 @@ restart:
                             }
 
                             var cpuResult = CpuThreadBodyInner(singleStep);
+                            // Console.WriteLine($"BaseCPU.cs CpuThreadBody cpuResult = {cpuResult}, singlestep : {singleStep} thread ID: {cpuThread.ManagedThreadId}");
 
                             if(singleStep)
                             {
@@ -573,6 +594,7 @@ restart:
                                 }
                             }
                         }
+                        // Console.WriteLine($"^^^^^ BaseCPU.cs In CpuThreadBody : out of while loop : isAborted : {isAborted}, isPaused : {isPaused} thread ID: {cpuThread.ManagedThreadId}");
 
                         this.Trace();
                         lock(cpuThreadBodyLock)
@@ -581,6 +603,7 @@ restart:
                             {
                                 dispatcherRestartRequested = false;
                                 this.Trace();
+                                // Console.WriteLine($"^^^^^ BaseCPU.cs In CpuThreadBody : going to restart : isAborted : {isAborted}, isPaused : {isPaused}");
                                 goto restart;
                             }
 
@@ -606,6 +629,7 @@ restart:
                         // which might in turn crash with it's own
                         // exception (hiding the original one)
                         activityTracker.Disable();
+                        // Console.WriteLine("^^^^^^ BAseCPU.cs CPUThreadBody catch exception, activityTracker disable");
                         throw;
                     }
                 }
@@ -613,6 +637,7 @@ restart:
             finally
             {
                 cpuThread = null;
+                // Console.WriteLine("^^^^^^ BAseCPU.cs CPUThreadBody finally, cpuThread null");
                 if(isLocked)
                 {
                     this.Trace();
@@ -629,12 +654,15 @@ restart:
 
         protected CpuResult CpuThreadBodyInner(bool singleStep)
         {
+            // Console.WriteLine($"^^^^^ BaseCPU.cs In CpuThreadBodyInner : starting : isAborted : {isAborted}, isPaused : {isPaused}, singleStep : {singleStep} thread ID: {cpuThread.ManagedThreadId}");
             if(!TimeHandle.RequestTimeInterval(out var interval))
             {
                 this.Trace();
+                // Console.WriteLine($"^^^^^ BaseCPU.cs In CpuThreadBodyInner : TimeHandle.RequestTimeInterval - NothingExecuted : isAborted : {isAborted}, isPaused : {isPaused} thread ID: {cpuThread.ManagedThreadId}");
                 return CpuResult.NothingExecuted;
             }
             this.Trace($"CPU thread body running... granted {interval.Ticks} ticks");
+            // Console.WriteLine($"^^^^^ BaseCPU.cs In CpuThreadBodyInner : CPU thread body running... granted {interval.Ticks} ticks : isAborted : {isAborted}, isPaused : {isPaused} thread ID: {cpuThread.ManagedThreadId} ");
             var mmuFaultThrown = false;
             var initialExecutedResiduum = executedResiduum;
             var initialTotalElapsedTime = TimeHandle.TotalElapsedTime;
@@ -644,6 +672,7 @@ restart:
             if(instructionsToExecuteThisRound <= executedResiduum)
             {
                 this.Trace("not enough time granted, reporting continue");
+                // Console.WriteLine($"^^^^^ BaseCPU.cs In CpuThreadBodyInner : not enough time granted, reporting continue : isAborted : {isAborted}, isPaused : {isPaused} thread ID: {cpuThread.ManagedThreadId}");
                 TimeHandle.ReportBackAndContinue(interval);
                 return CpuResult.NothingExecuted;
             }
@@ -652,7 +681,8 @@ restart:
 
             while(!isPaused && !currentHaltedState && instructionsLeftThisRound > 0)
             {
-                this.Trace($"CPU thread body in progress; {instructionsLeftThisRound} instructions left...");
+                this.Trace($"CPU thread body in progress; {instructionsLeftThisRound} instructions left... thread ID: {cpuThread.ManagedThreadId}");
+                // Console.WriteLine($"^^^^^ BaseCPU.cs In CpuThreadBodyInner : CPU thread body in progress; {instructionsLeftThisRound} instructions left... : currentHaltedState : {currentHaltedState}, isPaused : {isPaused} thread ID: {cpuThread.ManagedThreadId}");
 
                 // this puts a limit on instructions to execute in one round
                 // and makes timers update independent of the current quantum
@@ -662,6 +692,7 @@ restart:
                 {
                     var amountOfInstructions = Math.Min(skipInstructions, toExecute);
                     this.Trace($"Skipping {amountOfInstructions} instructions");
+                    // Console.WriteLine($"^^^^^ BaseCPU.cs In CpuThreadBodyInner : Skipping {amountOfInstructions} instructions : isAborted : {isAborted}, isPaused : {isPaused} thread ID: {cpuThread.ManagedThreadId}");
 
                     toExecute -= amountOfInstructions;
                     skipInstructions -= amountOfInstructions;
@@ -677,28 +708,35 @@ restart:
                 var result = ExecutionResult.Ok;
                 if(toExecute > 0)
                 {
-                    this.Trace($"Asking CPU to execute {toExecute} instructions");
+                    this.Trace($"Asking CPU to execute {toExecute} instructions ");
+                    // Console.WriteLine($"^^^^^ BaseCPU.cs CpuThreadBodyInner Asking CPU to execute {toExecute} instructions at PC : {PC} thread ID: {cpuThread.ManagedThreadId}");
 
                     result = ExecuteInstructions(toExecute, out var executed);
                     this.Trace($"CPU executed {executed} instructions and returned {result}");
+                    //  Console.WriteLine($" ^^^^^ BaseCPU.cs CpuThreadBodyInner CPU executed {executed} instructions and returned {result} at PC : {PC} thread ID: {cpuThread.ManagedThreadId}");
                     machine.Profiler?.Log(new InstructionEntry(machine.SystemBus.GetCPUSlot(this), ExecutedInstructions));
                     ReportProgress(executed);
+                    // Console.WriteLine($" ^^^^^ BaseCPU.cs CpuThreadBodyInner : toExecute>0 if condition done!!");
                 }
                 if(ExecutionFinished(result))
                 {
+                //    Console.WriteLine($"^^^^^ BaseCPU.cs CpuThreadBodyInner : ExecutionFinished at PC : {PC} thread ID: {cpuThread.ManagedThreadId}");
                     break;
                 }
 
                 if(result == ExecutionResult.WaitingForInterrupt)
                 {
+                    // Console.WriteLine($"^^^^^ BaseCPU.cs CpuThreadBodyInner : result == ExecutionResult.WaitingForInterrupt at PC : {PC} thread ID: {cpuThread.ManagedThreadId}");
                     if(!InDebugMode && !neverWaitForInterrupt)
                     {
+                        //  Console.WriteLine($"^^^^^ BaseCPU.cs CpuThreadBodyInner : result == ExecutionResult.WaitingForInterrupt, !InDebugMode && !neverWaitForInterrup at PC : {PC}");
                         this.Trace();
                         var instructionsToSkip = Math.Min(InstructionsToNearestLimit(), instructionsLeftThisRound);
 
                         virtualTimeAhead = machine.LocalTimeSource.ElapsedVirtualHostTimeDifference;
                         if(!machine.LocalTimeSource.AdvanceImmediately && virtualTimeAhead.Ticks > 0 && instructionsToSkip > 0)
                         {
+                            // Console.WriteLine($"^^^^^ BaseCPU.cs CpuThreadBodyInner : result == ExecutionResult.WaitingForInterrupt 333333 at PC : {PC}");
                             // Don't fall behind realtime by sleeping
                             var intervalToSleep = TimeInterval.FromCPUCycles(instructionsToSkip, PerformanceInMips, out var cyclesResiduum).WithTicksMin(virtualTimeAhead.Ticks);
                             sleeper.Sleep(intervalToSleep.ToTimeSpan(out var nsResiduum), out var intervalSlept);
@@ -712,6 +750,7 @@ restart:
                 }
                 else if(result == ExecutionResult.ExternalMmuFault)
                 {
+                    // Console.WriteLine($"^^^^^ BaseCPU.cs CpuThreadBodyInner : result == ExecutionResult.ExternalMmuFault at PC : {PC} thread ID: {cpuThread.ManagedThreadId}");
                     this.Trace(result.ToString());
                     mmuFaultThrown = true;
                     break;
@@ -720,11 +759,13 @@ restart:
                 {
                     this.Trace(result.ToString());
                     isAborted = true;
+                    // Console.WriteLine($"^^^^ BaseCPU.cs CopuThreadBodyInner result == ExecutionResult.Aborted : isAborted : {isAborted} at PC : {PC}");
                     break;
                 }
                 else if(result == ExecutionResult.Interrupted || result == ExecutionResult.StoppedAtWatchpoint)
                 {
                     this.Trace(result.ToString());
+                    // Console.WriteLine($"^^^^^ BaseCPU.cs CpuThreadBodyInner : result == Interrupted or StoppedAtWatchpoint at PC : {PC}");
                     break;
                 }
             }
@@ -740,17 +781,22 @@ restart:
                 // remaining difference next time. Preserve the interrupt request so that if this
                 // extra sleep is interrupted due to a CPU pause, it will be picked up by the WFI
                 // handling above.
+                // Console.WriteLine($"^^^^^ BaseCPU.cs In CpuThreadBodyInner : Time advance : isAborted : {isAborted}, isPaused : {isPaused}");
                 sleeper.Sleep(virtualTimeAhead.ToTimeSpan(), out var _, preserveInterruptRequest: true);
             }
 
             this.Trace("CPU thread body finished");
+            // Console.WriteLine($"^^^^^ BaseCPU.cs In CpuThreadBodyInner : CPU thread body finished : isAborted : isPaused : {isPaused}, currentHaltedState  : {currentHaltedState}, instructionsLeftThisRound : {instructionsLeftThisRound}");
 
             if(isAborted)
             {
+                
                 this.Trace("aborted, reporting continue");
+                
                 TimeHandle.ReportBackAndContinue(TimeInterval.Empty);
                 executedResiduum = 0;
                 State = CPUState.Aborted;
+                // Console.WriteLine($"^^^^ BaseCPU.cs CopuThreadBodyInner aborted, continue: isAborted : {isAborted}, State :{State} at PC : {PC}");
                 return CpuResult.Aborted;
             }
             else if(currentHaltedState)
@@ -758,6 +804,7 @@ restart:
                 this.Trace("halted, reporting continue");
                 TimeHandle.ReportBackAndContinue(TimeInterval.Empty);
                 executedResiduum = 0;
+                // Console.WriteLine($"^^^^^ BaseCPU.cs In CpuThreadBodyInner : halted, reporting continue : isAborted : {isAborted}, isPaused : {isPaused}");
             }
             else
             {
@@ -771,6 +818,7 @@ restart:
                 if(instructionsLeft > 0)
                 {
                     this.Trace("reporting break");
+                    // Console.WriteLine($"BaseCPU.cs CpuThreadBodyInner : reporting break : instructionsLeft : {instructionsLeft} thread ID: {cpuThread.ManagedThreadId}");
                     TimeHandle.ReportBackAndBreak(timeLeft);
                 }
                 else
@@ -778,28 +826,34 @@ restart:
                     DebugHelper.Assert(executedResiduum == 0);
                     // executedResiduum < instructionsPerTick so timeLeft is 0 + ticksResiduum
                     this.Trace("finished, reporting continue");
+                    // Console.WriteLine($"BaseCPU.cs CpuThreadBodyInner : finished, reporting continue : instructionsLeft : {instructionsLeft}, thread ID: {cpuThread.ManagedThreadId}");
                     TimeHandle.ReportBackAndContinue(timeLeft);
                 }
             }
 
             if(mmuFaultThrown)
             {
+                // Console.WriteLine($"BaseCPU.cs CpuThreadBodyInner : returning MMUFault");
                 return CpuResult.MmuFault;
             }
             else if(executedResiduum == initialExecutedResiduum && TimeHandle.TotalElapsedTime == initialTotalElapsedTime)
             {
+                // Console.WriteLine($"BaseCPU.cs CpuThreadBodyInner : returning NothingExecuted");
                 return CpuResult.NothingExecuted;
             }
+            // Console.WriteLine($"BaseCPU.cs CpuThreadBodyInner : returning ExecutedInstructions thread ID: {cpuThread.ManagedThreadId}");
             return CpuResult.ExecutedInstructions;
         }
-
+        
+         private static int threadCount = 0; //fuzz
         protected void StartCPUThread()
         {
-        //    Console.WriteLine("^^^^Starting CPU : StartCPUThread() : BaseCPU.cs");
+            // Console.WriteLine("^^^^Starting CPU : StartCPUThread() 000 : BaseCPU.cs");
             this.Trace();
             lock(pauseLock)
             lock(cpuThreadBodyLock)
             {
+                // Console.WriteLine($"^^^^cpuThreadBodyLock : StartCPUThread() 111 : BaseCPU.cs : isAborted : {isAborted}, {cpuThread == null}");
                 if(isAborted)
                 {
                     return;
@@ -812,14 +866,21 @@ restart:
                         IsBackground = true,
                         Name = this.GetCPUThreadName(machine)
                     };
+                    // Console.WriteLine($"^^^^cpuThreadBodyLock : StartCPUThread() : starting cpu thread, cpuThread=null, thread name : {cpuThread.Name} thread ID: {cpuThread.ManagedThreadId}");
+
+                     threadCount++;
                     cpuThread.Start();
+                    // Console.WriteLine($"^^^^cpuThreadBodyLock : StartCPUThread() : cpu thread done, thread name : {cpuThread.Name},threadCount : {threadCount} thread ID: {cpuThread.ManagedThreadId} ");
                 }
                 else
                 {
+                    // Console.WriteLine($"^^^^cpuThreadBodyLock : StartCPUThread() : cpuThread!=null, thread name : {cpuThread.Name}, threadCount : {threadCount} thread ID: {cpuThread.ManagedThreadId}");
                     this.Trace();
                     dispatcherRestartRequested = true;
+                     
                 }
             }
+            // Console.WriteLine("^^^^Starting CPU : StartCPUThread() : BaseCPU.cs done");
         }
 
         protected void CheckIfOnSynchronizedThread()
@@ -926,7 +987,7 @@ restart:
 
         private void SetPCFromEntryPoint(ulong entryPoint)
         {
-            // Console.WriteLine($"^^^ SetPCFromEntryPoint : BaseCPU.cs : entryPoint : {entryPoint}");
+            // Console.WriteLine($"^^^ SetPCFromEntryPoint : BaseCPU.cs : entryPoint : 0x{entryPoint:X}");
             var what = machine.SystemBus.WhatIsAt(entryPoint, this);
             if(what != null)
             {
@@ -939,7 +1000,7 @@ restart:
                 }
             }
             PC = entryPoint;
-            // Console.WriteLine($"^^^ SetPCFromEntryPoint : BaseCPU.cs : PC : {PC}");
+            // Console.WriteLine($"^^^ SetPCFromEntryPoint : BaseCPU.cs : PC : 0x{PC:X}");
         }
 
         [Transient]
