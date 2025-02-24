@@ -427,17 +427,6 @@ namespace Antmicro.Renode.Peripherals.CPU
                 pauseGuard.OrderPause();
             }
         }
-
-        public override void Fuzz_Reset()
-        {
-            //Console.WriteLine("^^^^^^^ TranslationalCPU.cs Fuzz_Reset()");
-            base.Fuzz_Reset();
-            isInterruptLoggingEnabled = false;
-            TlibReset();
-            // ResetOpcodesCounters();
-            // profiler?.Dispose();
-            //Console.WriteLine("^^^^^^^ TranslationalCPU.cs Fuzz_Reset() Done!!");
-        }
         
         public override void Reset()
         {

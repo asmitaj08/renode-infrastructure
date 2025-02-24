@@ -775,6 +775,8 @@ namespace Antmicro.Renode.Peripherals.Memory
                             originalPointers[i] = IntPtr.Zero;
                             this.NoisyLog("Segment {0} freed.", i);
                         }
+                    }
+                }
             Console.WriteLine($"^^^^^^^^ MappedMemory.cs Free(), disposed : {disposed}");
             if(!disposed )
             {
@@ -792,6 +794,7 @@ namespace Antmicro.Renode.Peripherals.Memory
             }
             disposed = true;
             
+         }
         }
 
         private long GetLocalOffset(long offset)

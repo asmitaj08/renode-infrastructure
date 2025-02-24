@@ -161,15 +161,6 @@ namespace Antmicro.Renode.Peripherals.CPU
             State = CPUState.InReset;
         }
 
-        public virtual void Fuzz_Reset()
-        {
-           // Console.WriteLine("^^^^^^ BaseCPU.cs Fuzz_Reset()");
-           fuzz_flag = true;
-            isAborted = false;
-            // Pause();
-            State = CPUState.InReset;
-        }
-
         public virtual void SyncTime()
         {
             // by default do nothing
@@ -283,35 +274,6 @@ namespace Antmicro.Renode.Peripherals.CPU
                 StateChanged?.Invoke(this, oldState, value);
             }
         }
-
-
-        //modified 
-
-        //  public CPUState State
-        // {
-        //     get => state;
-
-        //     private set
-        //     {
-        //         //Console.WriteLine($"Set CPU state : state : {state}, to set to : {value}");
-        //         var oldState = state;
-        //         if(oldState == value)
-        //         {
-        //             return;
-        //         }
-        //         state = value;
-        //         if(fuzz_flag==true && oldState == CPUState.InReset)
-        //         {
-        //             fuzz_flag=false;
-        //             Fuzz_OnLeavingResetState();
-        //         }
-        //         else if(oldState == CPUState.InReset)
-        //         {
-        //             OnLeavingResetState();
-        //         }
-        //         StateChanged?.Invoke(this, oldState, value);
-        //     }
-        // }
 
         public TimeHandle TimeHandle
         {
@@ -486,37 +448,6 @@ namespace Antmicro.Renode.Peripherals.CPU
             StartCPUThread();
             // Console.WriteLine($"^^^^^^ OnResume : basecpu.cs, done!!");
         }
-
-
-        // protected override void OnResume()
-        // {
-        //     //Console.WriteLine($"^^^^^^ OnResume : basecpu.cs, state : {State}, currentHaltedState : {currentHaltedState}");
-            
-        //     // if(fuzz_flag==true){
-        //     //     State = CPUState.Running;
-        //     // }
-        //     if(State == CPUState.InReset && !currentHaltedState)
-        //     {
-        //         State = CPUState.Running;
-        //         // Console.WriteLine($"^^^^^^ OnResume : basecpu.cs . cpu state : {State}");
-        //     }
-        //     singleStepSynchronizer.Enabled = IsSingleStepMode;
-        //     StartCPUThread();
-        // }
-
-        protected override void Fuzz_OnResume()
-        {
-            //Console.WriteLine($"^^^^^^ Fuzz_OnResume : basecpu.cs, state : {State}, currentHaltedState : {currentHaltedState}");
-            // if(State == CPUState.InReset && !currentHaltedState)
-            // {
-                //fuzz_flag = true;
-                State = CPUState.Running;
-                // Console.WriteLine($"^^^^^^ OnResume : basecpu.cs . cpu state : {State}");
-            // }
-            singleStepSynchronizer.Enabled = IsSingleStepMode;
-            StartCPUThread();
-        }
-
         protected override void OnPause()
         {
             // Console.WriteLine("^^^^^^ OnPause : basecpu.cs");
@@ -910,7 +841,8 @@ restart:
                 StartCPUThreadInner();
             }
         }
-
+        
+        int threadCount;
         private void StartCPUThreadInner()
         {
             lock(cpuThreadBodyLock)

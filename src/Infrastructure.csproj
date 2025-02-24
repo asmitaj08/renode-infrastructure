@@ -716,6 +716,7 @@
     <Compile Include="Emulator/Peripherals/Peripherals/USBDeprecated/USBKeyboard.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/I2C/EFM32GGI2CController.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/Sensors/BMP180.cs" />
+    <Compile Include="Emulator/Peripherals/Peripherals/Sensors/BMP180_modified.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/I2C/BMA180.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/I2C/SHT21.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/I2C/BMC050.cs" />
