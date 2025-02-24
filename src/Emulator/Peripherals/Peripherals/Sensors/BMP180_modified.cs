@@ -115,7 +115,7 @@ namespace Antmicro.Renode.Peripherals.Sensors
 
         public void ReadFromFuzzer(byte[] data){
                 general_fuzz_data = data[0];
-                general_fuzz_data_length = data.Length;
+                // general_fuzz_data_length = data.Length;
                 // Console.WriteLine($"^^^^ReadFromFuzzer() in .cs Len : {general_fuzz_data_length}, data :  {data}");
         }
 
