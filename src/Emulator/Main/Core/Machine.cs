@@ -498,6 +498,7 @@ namespace Antmicro.Renode.Core
                     machinePaused(this, new MachineStateChangedEventArgs(MachineStateChangedEventArgs.State.Paused));
                 }
                 this.Log(LogLevel.Info, "Machine paused.");
+                
                 //  Console.WriteLine($"\n^^^^^^^^^^^^^^PAUSE machine.cs Done!!^^^^^^^^^^^^ , state : {state}");
             }
         }
@@ -1705,6 +1706,7 @@ namespace Antmicro.Renode.Core
                     this.NoisyLog("Resuming {0}.", GetNameForOwnLife(ownLife));
                     // Console.WriteLine($"^^^^ Machine.cs Resume : ownLife : {ownLife}, Resuming : {GetNameForOwnLife(ownLife)}, type : {ownLife.GetType().Name}");
                     ownLife.Resume();
+                    // Console.WriteLine($"^^^^ Machine.cs Resume : ownLife : {ownLife}, Resuming : {GetNameForOwnLife(ownLife)}, type : {ownLife.GetType().Name} Resume!!!");
                 }
                 this.Log(LogLevel.Info, "Machine resumed.");
                 state = State.Started;
@@ -1714,6 +1716,7 @@ namespace Antmicro.Renode.Core
                     machineStarted(this, new MachineStateChangedEventArgs(MachineStateChangedEventArgs.State.Started));
                 }
             }
+            // Console.WriteLine("\n^^^^^^^^^^^^^^Resume machine.cs Done!!^^^^^^^^^^^^\n");
         }
 
 
@@ -1724,7 +1727,7 @@ namespace Antmicro.Renode.Core
 
         public void PostCreationActions()
         {
-            Console.WriteLine("^^^^^^^^^^^ Machine.cs PostCreationActions");
+            // Console.WriteLine("^^^^^^^^^^^ Machine.cs PostCreationActions");
             // Enable broadcasting dirty addresses on multicore platforms
             var cpus = SystemBus.GetCPUs().OfType<ICPUWithMappedMemory>().ToArray();
             if(cpus.Length > 1)

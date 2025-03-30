@@ -35,6 +35,7 @@ namespace Antmicro.Renode.Core
             hostEmulationElements.Add(name, element);
 
             var elementAsIHasOwnLife = element as IHasOwnLife;
+            Console.WriteLine($"^^^^^ HostMAchine.cs : AddHostMachineElement(), adding element : {elementAsIHasOwnLife}");
             if(elementAsIHasOwnLife != null)
             {
                 EmulationManager.Instance.CurrentEmulation.ExternalsManager.RegisterIHasOwnLife(elementAsIHasOwnLife);
@@ -55,6 +56,7 @@ namespace Antmicro.Renode.Core
         public void RemoveHostMachineElement(IHostMachineElement element)
         {
             var elementAsIHasOwnLife = element as IHasOwnLife;
+             Console.WriteLine($"^^^^^ HostMAchine.cs : RemoveHostMachineElement(), adding element : {elementAsIHasOwnLife}");
             if(elementAsIHasOwnLife != null)
             {
                 EmulationManager.Instance.CurrentEmulation.ExternalsManager.UnregisterIHasOwnLife(elementAsIHasOwnLife);

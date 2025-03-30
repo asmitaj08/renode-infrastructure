@@ -155,7 +155,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public virtual void Reset()
         {
-            // Console.WriteLine("^^^^^^ BaseCPU.cs Reset()");
+            Console.WriteLine("^^^^^^ BaseCPU.cs Reset()");
             isAborted = false;
             Pause();
             State = CPUState.InReset;
@@ -675,14 +675,14 @@ restart:
 
                     result = ExecuteInstructions(toExecute, out var executed);
                     this.Trace($"CPU executed {executed} instructions and returned {result}");
-                    //  Console.WriteLine($" ^^^^^ BaseCPU.cs CpuThreadBodyInner CPU executed {executed} instructions and returned {result} at PC : {PC} thread ID: {cpuThread.ManagedThreadId}");
+                    // Console.WriteLine($" ^^^^^ BaseCPU.cs CpuThreadBodyInner CPU, toExecute:{toExecute} executed {executed} instructions and returned {result} at PC : {PC} thread ID: {cpuThread.ManagedThreadId}");
                     machine.Profiler?.Log(new InstructionEntry(machine.SystemBus.GetCPUSlot(this), ExecutedInstructions));
                     ReportProgress(executed);
                     // Console.WriteLine($" ^^^^^ BaseCPU.cs CpuThreadBodyInner : toExecute>0 if condition done!!");
                 }
                 if(ExecutionFinished(result))
                 {
-                //    Console.WriteLine($"^^^^^ BaseCPU.cs CpuThreadBodyInner : ExecutionFinished at PC : {PC} thread ID: {cpuThread.ManagedThreadId}");
+                //    Console.WriteLine($"^^^^^ BaseCPU.cs CpuThreadBodyInner : ExecutionFinished at PC : {PC}, result :{result} thread ID: {cpuThread.ManagedThreadId}");
                     break;
                 }
 

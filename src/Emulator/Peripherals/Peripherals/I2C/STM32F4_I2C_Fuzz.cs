@@ -19,9 +19,21 @@ using System.Runtime.InteropServices;
 namespace Antmicro.Renode.Peripherals.I2C
 {
     [AllowedTranslations(AllowedTranslation.WordToDoubleWord)]
-    public sealed class STM32F4_I2C : SimpleContainer<II2CPeripheral>, IDoubleWordPeripheral, IBytePeripheral, IKnownSize
+    public sealed class STM32F4_I2C_Fuzz : SimpleContainer<II2CPeripheral>, IDoubleWordPeripheral, IBytePeripheral, IKnownSize
     {
-        public STM32F4_I2C(IMachine machine) : base(machine)
+        
+        [DllImport("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/target/release/liblibafl_renode.so")] 
+        // // public static extern void update_cov_map(ulong pc);
+        public static extern IntPtr get_uart_input_ptr(); 
+        [DllImport("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/target/release/liblibafl_renode.so")]
+        public static extern IntPtr get_uart_input_size_ptr(); 
+        private static IntPtr inputPtr = get_uart_input_ptr();
+        private static IntPtr inputSizePtr = get_uart_input_size_ptr(); 
+        // private static readonly object syncLock = new object();
+        
+        // public const int MAP_SIZE = 64 * 1024;  //8 * 1024;
+        // public static IntPtr covMapPtr = get_cov_map_ptr(); 
+        public STM32F4_I2C_Fuzz(IMachine machine) : base(machine)
         {
             EventInterrupt = new GPIO();
             ErrorInterrupt = new GPIO();
@@ -95,6 +107,24 @@ namespace Antmicro.Renode.Peripherals.I2C
                 return 0x400;
             }
         }
+
+        // public void ReadFromFuzzer_PY_i2c(byte[] data){
+        //         //dataToReceive = new Queue<byte>(data);
+        //         general_fuzz_data = data;
+        //         // Console.WriteLine($"^^^^ReadFromFuzzer_i2c() in STM32F4_I2C.cs Len : {general_fuzz_data.Length}, data[0] :  {general_fuzz_data[0]}");
+
+        // }
+        
+        // public void ReadFromFuzzer_SH_i2c(out int size){
+        //         IntPtr sharedMedm = IntPtr.Zero;
+        //         sharedMedm = update_uart_input_data(out size);
+        //         if (sharedMedm != IntPtr.Zero && size !=0){
+        //             general_fuzz_data = new byte[(int)size];
+        //             Marshal.Copy(sharedMedm, general_fuzz_data,0,(int)size);
+        //         }
+                
+        //         Console.WriteLine($"^^^^ReadFromFuzzer_SH_i2c() in STM32F4_I2C.cs Len : {general_fuzz_data.Length}, data[0] :  {general_fuzz_data[0]}");
+        // }
 
         private void CreateRegisters()
         {
@@ -184,16 +214,43 @@ namespace Antmicro.Renode.Peripherals.I2C
                 startBit.Value = false;
                 willReadOnSelectedSlave = (newValue & 1) == 1; //LSB is 1 for read and 0 for write
                 var address = (int)(newValue >> 1);
-                if(ChildCollection.ContainsKey(address)) 
-                {
-                    selectedSlave = ChildCollection[address];
+                // if(ChildCollection.ContainsKey(address)) -- modified
+                // {
+                    //selectedSlave = ChildCollection[address];
                     addressSentOrMatched.Value = true; //Note: ADDR is not set after a NACK reception - from documentation
 
                     transmitterReceiver.Value = !willReadOnSelectedSlave; //true when transmitting
 
                     if(willReadOnSelectedSlave)
                     {
-                        dataToReceive = new Queue<byte>(selectedSlave.Read()); 
+                        // dataToReceive = new Queue<byte>(selectedSlave.Read()); // i commented
+                        //dataToReceive = new Queue<byte>(new byte[] { 0x1A, 0x2B, 0x3C, 0x4D, 0x5E }); //modified
+                        // int datasize = 0;
+                        // lock (syncLock){
+                        //     datasize = (int)get_uart_input_size(); // for now maybe just fix the data size
+                        // }
+                        // // ReadFromFuzzer_SH_i2c(out size);
+                        // // byte[] buffer = new byte[datasize];
+                        int datasize = 0;
+                        unsafe{
+                            ulong* datasize_ptr = (ulong*)inputSizePtr;
+                            datasize = (int)*datasize_ptr;
+                        }
+                        if(datasize>0 && datasize!=datasize_track){
+                            general_fuzz_data = new byte[datasize];
+                            //lock (syncLock){
+                                Marshal.Copy(inputPtr, general_fuzz_data, 0, datasize);
+                            //}
+                            dataToReceive = new Queue<byte>(general_fuzz_data);
+                            datasize_track = datasize;
+                        }
+                        else if(datasize<=0 && datasize_track<=0 ){
+                            dataToReceive = new Queue<byte>(new byte[] { 0x1A, 0x2B, 0x3C, 0x4D, 0x5E });
+                        }
+                        else{
+                            dataToReceive = new Queue<byte>(general_fuzz_data);
+                        }
+                        // Console.WriteLine($"^^^^^STM32f4_I2C_fuzz : datasize : {datasize},inputPtr : 0x{inputPtr.ToString("X")}, dataToReceive[0] : {dataToReceive.Dequeue()}");
                         byteTransferFinished.Value = true;
                     }
                     else
@@ -204,12 +261,12 @@ namespace Antmicro.Renode.Peripherals.I2C
                         dataRegisterEmpty.Value = true;
                         addressSentOrMatched.Value = true;
                     }
-                }
-                else
-                {
-                    state = State.Idle;
-                    acknowledgeFailed.Value = true;
-                }
+                // }
+                // else
+                // {
+                //     state = State.Idle;
+                //     acknowledgeFailed.Value = true;
+                // }
                 machine.LocalTimeSource.ExecuteInNearestSyncedState(_ => Update());
                 break;
             case State.AwaitingData:
@@ -244,9 +301,10 @@ namespace Antmicro.Renode.Peripherals.I2C
                 return;
             }
 
-            if(selectedSlave != null && dataToTransfer != null && dataToTransfer.Count > 0)
+            // if(selectedSlave != null && dataToTransfer != null && dataToTransfer.Count > 0)// modified
+            if(dataToTransfer != null && dataToTransfer.Count > 0)
             {
-                selectedSlave.Write(dataToTransfer.ToArray()); 
+                /*selectedSlave.Write(dataToTransfer.ToArray()); */ // modified
 
                 dataToTransfer.Clear();
                 state = State.Idle;
@@ -267,10 +325,11 @@ namespace Antmicro.Renode.Peripherals.I2C
             }
 
             this.NoisyLog("Setting START bit to {0}", newValue);
-            if(selectedSlave != null && dataToTransfer != null && dataToTransfer.Count > 0) 
+            // if(selectedSlave != null && dataToTransfer != null && dataToTransfer.Count > 0) // modified
+            if(dataToTransfer != null && dataToTransfer.Count > 0)
             {
                 // repeated start condition
-               selectedSlave.Write(dataToTransfer.ToArray()); 
+               // selectedSlave.Write(dataToTransfer.ToArray()); - modified
                 dataToTransfer.Clear();
             }
             //TODO: TRA cleared on repeated Start condition. Is this always here?
@@ -320,6 +379,11 @@ namespace Antmicro.Renode.Peripherals.I2C
         private Queue<byte> dataToReceive;
         private bool willReadOnSelectedSlave;
         private II2CPeripheral selectedSlave;
+
+        private int datasize_track = 0;
+
+        private byte[] general_fuzz_data ;
+        
 
         private enum Registers
         {

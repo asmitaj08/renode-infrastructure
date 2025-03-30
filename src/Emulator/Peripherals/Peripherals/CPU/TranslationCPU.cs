@@ -31,6 +31,9 @@ using ELFSharp.ELF;
 using Machine = Antmicro.Renode.Core.Machine;
 
 using Range = Antmicro.Renode.Core.Range;
+using System.Runtime.InteropServices;
+using System.Collections.Generic;
+
 
 namespace Antmicro.Renode.Peripherals.CPU
 {
@@ -38,7 +41,7 @@ namespace Antmicro.Renode.Peripherals.CPU
     {
         public static void SetHookAtBlockBegin(this TranslationCPU cpu, [AutoParameter]IMachine m, string pythonScript)
         {
-            // Console.WriteLine($"Inside  TranslationCPU SetHookAtBlockBegin");
+            Console.WriteLine($"Inside  TranslationCPU SetHookAtBlockBegin  : TranslationCPUHooksExtensions");
             var engine = new BlockPythonEngine(m, cpu, pythonScript);
             cpu.SetHookAtBlockBegin(engine.HookWithSize);
         }
@@ -56,6 +59,8 @@ namespace Antmicro.Renode.Peripherals.CPU
     /// </summary>
     public abstract partial class TranslationCPU : BaseCPU, ICluster<TranslationCPU>, IGPIOReceiver, ICpuSupportingGdb, ICPUWithExternalMmu, ICPUWithMMU, INativeUnwindable, ICPUWithMetrics, ICPUWithMappedMemory, ICPUWithRegisters, ICPUWithMemoryAccessHooks, IControllableCPU
     {
+        
+        
         protected TranslationCPU(string cpuType, IMachine machine, Endianess endianness, CpuBitness bitness = CpuBitness.Bits32)
         : this(0, cpuType, machine, endianness, bitness)
         {
@@ -611,6 +616,67 @@ namespace Antmicro.Renode.Peripherals.CPU
             });
         }
 
+        ulong PREV_LOC = 0;
+        // static byte[] CovMap = new byte[8 * 1024];
+        [DllImport("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/target/release/liblibafl_renode.so")] 
+        // public static extern void update_cov_map(ulong pc);
+        public static extern IntPtr get_cov_map_ptr();  
+        private const int MAP_SIZE = 64 * 1024;  //8 * 1024;
+        private static IntPtr covMapPtr = get_cov_map_ptr(); 
+        // This object will be used to synchronize access to the coverage map
+        // private static readonly object covMapLock = new object();
+
+        // HashSet to store unique block PCs (ulong used for PC values)
+        private HashSet<ulong> uniqueBlocks = new HashSet<ulong>();
+        public void Fuzz_SetHookAtBlockBegin()
+        {
+            Console.WriteLine($"^^^^^^^^^^^Fuzz_SetHookAtBlockBegin() : CovPointer : 0x{covMapPtr.ToInt64():X}");
+            SetInternalHookAtBlockBegin((pc, size) =>
+            {
+                // Console.WriteLine($"^^^^^^^^^^^Fuzz_SetHookAtBlockBegin() : CovPointer : 0x{covMapPtr.ToString():X}");
+
+                uniqueBlocks.Add(pc); 
+                //covMapPtr = get_cov_map_ptr();
+                // Console.WriteLine($"^^^^^^^^^Block_count :{uniqueBlocks.Count} "); // comment later
+                ulong hash = (pc ^ PREV_LOC) & (MAP_SIZE - 1);
+                // lock (covMapLock){
+                    byte newValue = Marshal.ReadByte(covMapPtr + (int)hash * sizeof(int));
+                    byte prev_new_val = newValue;
+                    newValue++;
+                    Marshal.WriteByte(covMapPtr + (int)hash * sizeof(int), newValue);
+                    // CovMap[index] = newValue;
+                    PREV_LOC = pc >> 1;
+                // }
+            });
+        }
+
+        public void Fuzz_GetBlockCount()
+        {
+            string filePath = "uniqueBlocks.txt";
+            try
+            {
+                using (StreamWriter writer = new StreamWriter(filePath))
+                {
+                foreach (var item in uniqueBlocks)
+                {
+                    writer.WriteLine(item.ToString("X"));  // Write each ulong to a new line in the file
+                }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("An error occurred while writing to the file: " + ex.Message);
+            }
+            Console.WriteLine($"^^^^^Block_count :{uniqueBlocks.Count} ");
+        }
+
+         public void Fuzz_ClearBlockSet()
+        {
+            uniqueBlocks.Clear();
+            Console.WriteLine($"^^^^^Block_count after clear :{uniqueBlocks.Count} ");
+        }
+
+
         // TODO: improve this when backend/analyser stuff is done
 
         public bool UpdateContextOnLoadAndStore { get; set; }
@@ -624,6 +690,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public void SetHookAtBlockBegin(Action<ulong, uint> hook)
         {
+            Console.WriteLine("^^^^^^^^ SetHookAtBlockBegin : Inside TranslationCPU.cs TranslationCPU, blockBeginUserHook");
             using(machine?.ObtainPausedState(true))
             {
                 if((hook == null) ^ (blockBeginUserHook == null))
@@ -889,6 +956,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void SetInternalHookAtBlockBegin(Action<ulong, uint> hook)
         {
+            Console.WriteLine("^^^^^^^^ SetInternalHookAtBlockBegin : Inside TranslationCPU.cs TranslationCPU, blockBeginInternalHook");
             using(machine?.ObtainPausedState(true))
             {
                 if((hook == null) ^ (blockBeginInternalHook == null))
@@ -1131,6 +1199,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         private uint OnBlockBegin(ulong address, uint size)
         {
+            
             ReactivateHooks();
 
             using(ObtainGenericPauseGuard())
@@ -1160,7 +1229,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         private void OnInterruptBegin(ulong interruptIndex)
         {
             
-            Console.WriteLine($"^^^^ TranslationCPU.cs : OnInterruptBegin export");
+            Console.WriteLine($"^^^^ TranslationCPU.cs : OnInterruptBegin export : interrupt Index : {interruptIndex}");
             interruptBeginHook?.Invoke(interruptIndex);
         }
 
@@ -2395,7 +2464,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void ReactivateHooks()
         {
-        //    Console.WriteLine($"^^^^^ TranslationCPU.cs ReactivateHooks()");
+            // Console.WriteLine($"^^^^^ TranslationCPU.cs ReactivateHooks()");
             lock(hooks)
             {
                 foreach(var inactive in hooks.Where(x => !x.Value.IsActive))

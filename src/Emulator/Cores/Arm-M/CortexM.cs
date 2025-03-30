@@ -350,7 +350,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected override void OnLeavingResetState()
         {
-            Console.WriteLine($"^^^^^OnLeavingResetState() in CortexM.cs : State {State}");
+            // Console.WriteLine($"^^^^^OnLeavingResetState() in CortexM.cs : State {State}");
             // if(fuzz_flag_leave_restart==true && State == CPUState.Running){
             //     fuzz_flag_leave_restart = false;
             //     Fuzz_InitPCAndSP();
