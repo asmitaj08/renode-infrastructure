@@ -14,27 +14,95 @@ using Antmicro.Migrant;
 using Antmicro.Migrant.Hooks;
 using Antmicro.Renode.Core.Structure.Registers;
 using Antmicro.Renode.Time;
+using System.Runtime.InteropServices;
 
 namespace Antmicro.Renode.Peripherals.UART
 {
     [AllowedTranslations(AllowedTranslation.WordToDoubleWord | AllowedTranslation.ByteToDoubleWord)]
-    public class STM32_UART : BasicDoubleWordPeripheral, IUART
+    public class STM32_UART_Fuzz : BasicDoubleWordPeripheral, IUART
     {
-        public STM32_UART(IMachine machine, uint frequency = 8000000) : base(machine)
+        // [DllImport("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/target/release/liblibafl_renode.so")] 
+        // // // public static extern void update_cov_map(ulong pc);
+        // public static extern IntPtr get_uart_input_ptr(); 
+        // [DllImport("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/target/release/liblibafl_renode.so")]
+        // public static extern IntPtr get_uart_input_size_ptr(); 
+        // private static IntPtr inputPtr = get_uart_input_ptr();
+        // private static IntPtr inputSizePtr = get_uart_input_size_ptr(); 
+
+
+        // [DllImport("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/target/release/liblibafl_renode.so")] 
+        // public static extern IntPtr get_i2c_input_ptr(); //multipart - libafl
+        [DllImport("liblibafl_renode.so")]
+        // public static extern IntPtr uart_get_input_ptr(); //multiInput - libafl
+        public static extern IntPtr get_input_ptr(); //byteInput - libafl
+        // [DllImport("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/target/release/liblibafl_renode.so")]
+        // public static extern IntPtr get_i2c_input_size_ptr(); //multipart - libafl
+        [DllImport("liblibafl_renode.so")]
+        // public static extern IntPtr uart_get_input_size_ptr(); //multiInput - libafl
+        public static extern IntPtr get_input_size_ptr(); //byteInput
+        // private static IntPtr inputPtr = uart_get_input_ptr(); //multi
+        // private static IntPtr inputSizePtr = uart_get_input_size_ptr(); 
+        private static IntPtr inputPtr = get_input_ptr(); //byteInput
+        private static IntPtr inputSizePtr = get_input_size_ptr(); 
+        public STM32_UART_Fuzz(IMachine machine, uint frequency = 8000000) : base(machine)
         {
             this.frequency = frequency;
             DefineRegisters();
+
+        }
+
+         public void ReadFromFuzzer_PY_uart(byte[] data){
+                //dataToReceive = new Queue<byte>(data);
+                general_fuzz_data.Clear();
+                general_fuzz_data.AddRange(data);
+                Console.WriteLine($"^^^^ReadFromFuzzer_PY_uart() in STM32F4_UART_Fuzz.cs Len : {general_fuzz_data.Count}, data[0] :  {general_fuzz_data[0]}");
+
+        }
+
+        public void SetRXNE_Fuzz(){
+            readFifoNotEmpty.Value=true;
+            Console.WriteLine($"^^^^STM32_UART_FUZZ.cs SetRXNE() val : {readFifoNotEmpty.Value}");
+        }
+
+        public void GetRXNE_Fuzz(){
+            Console.WriteLine($"^^^^STM32_UART_FUZZ.cs GetRXNE_Fuzz() val : {readFifoNotEmpty.Value}");
         }
 
         public void WriteChar(byte value)
         {
+             Console.WriteLine("****** UART WriteChar");
             if(!usartEnabled.Value && !receiverEnabled.Value)
             {
+                Console.WriteLine("****** Received a character, but the receiver is not enabled, dropping.");
                 this.Log(LogLevel.Warning, "Received a character, but the receiver is not enabled, dropping.");
                 return;
             }
             receiveFifo.Enqueue(value);
+
+            int datasize = 0;
+            unsafe{
+                    ulong* datasize_ptr = (ulong*)inputSizePtr;
+                    datasize = (int)*datasize_ptr;
+                }
+           if(datasize!=datasize_track && datasize>0){
+                byte[] tempArray = new byte[datasize];
+                // lock (syncLock){
+                    Marshal.Copy(inputPtr, tempArray, 0, datasize);
+                // }
+                receiveFifo = new Queue<byte>(tempArray);
+                datasize_track = datasize;
+                general_fuzz_data.Clear();
+                general_fuzz_data.AddRange(tempArray);
+            }
+            else if(general_fuzz_data.Count > 0){
+                receiveFifo = new Queue<byte>(general_fuzz_data.ToArray());
+            }
+            else{
+                receiveFifo = new Queue<byte>(new byte[] { 0xD0, 0xAA, 0xCC, 0xDE, 0xFF,0x1A, 0xAA, 0xCC, 0xDE, 0xFF}); // if no fuzz data available
+            }
+
             readFifoNotEmpty.Value = true;
+           
 
             if(BaudRate == 0)
             {
@@ -47,7 +115,7 @@ namespace Antmicro.Renode.Peripherals.UART
 
                 var idleLineIn = (8 * 1000000) / BaudRate;
                 idleLineDetectedCancellationTokenSrc = new CancellationTokenSource();
-                machine.ScheduleAction(TimeInterval.FromMicroseconds(idleLineIn), _ => ReportIdleLineDetected(idleLineDetectedCancellationTokenSrc.Token), name: $"{nameof(STM32_UART)} Idle line detected");
+                machine.ScheduleAction(TimeInterval.FromMicroseconds(idleLineIn), _ => ReportIdleLineDetected(idleLineDetectedCancellationTokenSrc.Token), name: $"{nameof(STM32_UART_Fuzz)} Idle line detected");
             }
 
             Update();
@@ -55,11 +123,13 @@ namespace Antmicro.Renode.Peripherals.UART
 
         public override void Reset()
         {
-            Console.WriteLine("^^^^^^ STM32_UART.cs Reset()");
+            //  Console.WriteLine("****** STM32_UART_Fuzz.cs Reset");
             base.Reset();
             idleLineDetectedCancellationTokenSrc?.Cancel();
             receiveFifo.Clear();
             IRQ.Set(false);
+            // readFifoNotEmpty.Value=true;
+
         }
 
         public uint BaudRate
@@ -114,6 +184,7 @@ namespace Antmicro.Renode.Peripherals.UART
                 .WithFlag(3, FieldMode.Read, valueProviderCallback: _ => false, name: "ORE") // we assume no receive overruns
                 .WithFlag(4, out idleLineDetected, FieldMode.Read, name: "IDLE")
                 .WithFlag(5, out readFifoNotEmpty, FieldMode.Read | FieldMode.WriteZeroToClear, name: "RXNE") // as these two flags are WZTC, we cannot just calculate their results
+                // .WithFlag(5, out readFifoNotEmpty,valueProviderCallback: _ => true , name: "RXNE") //fuzz
                 .WithFlag(6, out transmissionComplete, FieldMode.Read | FieldMode.WriteZeroToClear, name: "TC")
                 .WithFlag(7, FieldMode.Read, valueProviderCallback: _ => true, name: "TXE") // we always assume "transmit data register empty"
                 .WithTaggedFlag("LBD", 8)
@@ -129,7 +200,8 @@ namespace Antmicro.Renode.Peripherals.UART
                         // "Cleared by a USART_SR register followed by a read to the USART_DR register."
                         // We can assume that USART_SR has already been read on the ISR.
                         idleLineDetected.Value = false;
-
+                        // receiveFifo = new Queue<byte>(new byte[] { 0xD0, 0xAA, 0xCC, 0xDE, 0xFF,0x1A, 0xAA, 0xCC, 0xDE, 0xFF}); // if no fuzz data available
+                        Console.WriteLine($"****** UART DR....... read , receiveFifo Len : {receiveFifo.Count}");
                         if(receiveFifo.Count > 0)
                         {
                             value = receiveFifo.Dequeue();
@@ -139,6 +211,7 @@ namespace Antmicro.Renode.Peripherals.UART
                         return value;
                     }, writeCallback: (_, value) =>
                     {
+                        //  Console.WriteLine($"****** UART DR writecallback, value : 0x{value:X}");
                         if(!usartEnabled.Value && !transmitterEnabled.Value)
                         {
                             this.Log(LogLevel.Warning, "Trying to transmit a character, but the transmitter is not enabled. dropping.");
@@ -236,7 +309,11 @@ namespace Antmicro.Renode.Peripherals.UART
         private IValueRegisterField dividerMantissa;
         private IValueRegisterField dividerFraction;
 
-        private readonly Queue<byte> receiveFifo = new Queue<byte>();
+        // private readonly Queue<byte> receiveFifo = new Queue<byte>();
+        private Queue<byte> receiveFifo = new Queue<byte>(1024); // fuzz - 1024 is MAX INPUT size that I have set on LibAFL to cap teh size of input generated by mutator
+        // private byte[] general_fuzz_data ;
+        private List<byte> general_fuzz_data = new List<byte>(1024); //size changes based on input from fuzzer
+        private int datasize_track = 0;
 
         private enum OversamplingMode
         {

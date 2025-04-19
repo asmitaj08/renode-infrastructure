@@ -40,6 +40,7 @@ namespace Antmicro.Renode.Peripherals.UART
 
         public override void Reset()
         {
+            Console.WriteLine("^^^^^ UARTBase.cs Reset()");
             ClearBuffer();
         }
 

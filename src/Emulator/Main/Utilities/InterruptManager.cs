@@ -117,6 +117,7 @@ namespace Antmicro.Renode.Utilities
 
         public void Reset()
         {
+            Console.WriteLine("^^^^^^^^^ InterruptManager.cs Reset() ");
             activeInterrupts.Clear();
             enabledInterrupts.Clear();
             foreach(var irq in enabledOnResetInterrupts)

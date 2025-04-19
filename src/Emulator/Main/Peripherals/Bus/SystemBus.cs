@@ -290,6 +290,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void LogAllPeripheralsAccess(bool enable = true)
         {
+            Console.WriteLine($"LogAllPeripheralsAccess {enable}");
             lock(cpuSync)
             {
                 foreach(var p in allPeripherals.SelectMany(x => x.Peripherals))
@@ -1092,7 +1093,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void Reset()
         {
-            Console.WriteLine("Sysbus.cs Reset()");
+            Console.WriteLine("^^^^^^ Sysbus.cs Reset()");
             LowestLoadedAddress = null;
             globalLookup = new SymbolLookup();
             localLookups = new Dictionary<ICPU, SymbolLookup>();

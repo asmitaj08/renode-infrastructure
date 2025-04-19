@@ -7,6 +7,7 @@
 using System.Collections.Generic;
 using Antmicro.Renode.Core;
 using Antmicro.Renode.Utilities;
+using System;
 
 namespace Antmicro.Renode.Peripherals
 {
@@ -21,6 +22,7 @@ namespace Antmicro.Renode.Peripherals
 
         public void Reset()
         {
+            Console.WriteLine("^^^ InterruptHandler.cs Reset()");
             foreach(var irq in irqs)
             {
                 irq.Value.Value = 0;

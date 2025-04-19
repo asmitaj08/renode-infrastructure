@@ -15,6 +15,7 @@ using Antmicro.Renode.Core;
 using Antmicro.Renode.Exceptions;
 using Antmicro.Renode.Logging;
 using Antmicro.Renode.Logging.Profiling;
+using System.IO;
 
 namespace Antmicro.Renode.Peripherals.CPU
 {
@@ -203,7 +204,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
             // We don't care if translation fails here (the address is unchanged in this case)
             AttachedCPU.TryTranslateAddress(pc, MpuAccess.InstructionFetch, out var pcPhysical);
-
+            // Console.WriteLine($"^^^^^^^ HandleBlockEndHook : pc : 0x{pc:X}, pcPhysical : 0x{pcPhysical:X}, instructionsInBlock : {instructionsInBlock}");
             var block = new Block
             {
                 FirstInstructionPC = pcPhysical,
@@ -231,6 +232,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
             currentAdditionalData = new Queue<AdditionalData>();
         }
+
 
         [Transient]
         private TraceWriter writer;

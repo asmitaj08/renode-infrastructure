@@ -37,6 +37,7 @@ namespace Antmicro.Renode.Peripherals.GPIOPort
 
         public void Reset()
         {
+            Console.WriteLine("^^^^^ GPIOInterruptManager.cs Reset()");
             interruptEnable.Clear();
             interruptType.Clear();
             interruptMask.Clear();

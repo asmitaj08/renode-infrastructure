@@ -68,6 +68,7 @@ namespace Antmicro.Renode.Core
             if(createLocalTimeSource)
             {
                 LocalTimeSource = new SlaveTimeSource();
+                // Console.WriteLine($"^^^^^^^^^ Machine.cs, LocalTimeSource : {LocalTimeSource}");
             }
 
             machineCreatedAt = new DateTime(CustomDateTime.Now.Ticks, DateTimeKind.Local);
@@ -433,7 +434,7 @@ namespace Antmicro.Renode.Core
         /// Useful when unpausing the machine but we don't want to unpause what's already been paused before.</param>
         private void Start(Func<IHasOwnLife, bool> startFilter)
         {
-            // Console.WriteLine("^^^^^Machine.cs Start() -- private func");
+            Console.WriteLine("^^^^^Machine.cs Start() -- private func");
             lock(pausingSync)
             {
                 switch(state)
@@ -543,13 +544,14 @@ namespace Antmicro.Renode.Core
 
         public void Reset()
         {
-            // Console.WriteLine("^^^ MAchine.cs Machine Reset");
+            Console.WriteLine("^^^ Machine.cs Machine Reset()");
             lock(pausingSync)
             {
                 using(ObtainPausedState(true))
                 {
                     foreach(var resetable in registeredPeripherals.Distinct().ToList())
                     {
+                        Console.WriteLine($"^^^^^^Machine.cs registeredPeripherals : resetable : {resetable} ");
                         if(resetable == this)
                         {
                             continue;
@@ -561,6 +563,69 @@ namespace Antmicro.Renode.Core
                     {
                         machineReset(this);
                     }
+                }
+            }
+        }
+
+
+        //modified
+
+        private HashSet<string> peripheralsToReset = new HashSet<string>
+        {
+            "cpu",
+            "nvic",
+            "flash_ctrl",
+            "timer2",
+            "timer3",
+            "timer4"
+
+        };
+
+        public void ConfigurePeripheralsToReset(string[] peripheralNames)
+        {
+            // lock(collectionSync)
+            {
+                peripheralsToReset.Clear();
+                foreach(var name in peripheralNames)
+                {
+                    peripheralsToReset.Add(name);
+                }
+            }
+            Console.WriteLine($"^^^Machine.cs ConfigurePeripheralsToReset : peripheralsToReset.Count : {peripheralsToReset.Count}");
+        }
+
+        public void FuzzReset()
+        {
+            // Console.WriteLine("^^^ Machine.cs Machine Reset()");
+            //lock(pausingSync)
+            {
+               // using(ObtainPausedState(true))
+                {
+                    
+                    // foreach(var resetable in registeredPeripherals.Distinct().ToList())
+                    // {
+                        // if(TryGetLocalName(resetable, out var name) && peripheralsToReset.Contains(name))
+                        // {
+                        //     Console.WriteLine($"Resetting {name}");
+                        //     resetable.Reset();
+                        // }
+                        // resetable.Reset();
+
+                        foreach(var kvp in localNames) // kvp = KeyValuePair<IPeripheral, string>
+                        {
+                            // Console.WriteLine($"^^^ Machine.cs  localNames : {kvp.Value}");
+                            if(peripheralsToReset.Contains(kvp.Value))
+                            {
+                                // Console.WriteLine($" ^^^ Machine.cs Resetting {kvp.Value}");
+                                kvp.Key.Reset();
+                            }
+                        }
+                    // }
+                    // var machineReset = MachineReset;
+                    // if(machineReset != null)
+                    // {
+                    //     machineReset(this);
+                    // }
                 }
             }
         }
@@ -1258,6 +1323,7 @@ namespace Antmicro.Renode.Core
         {
             get
             {
+                // Console.WriteLine($"^^^^^ Machine.cs LocalTimeSource Get : {localTimeSource}");
                 return localTimeSource;
             }
 
@@ -1273,6 +1339,7 @@ namespace Antmicro.Renode.Core
                 }
                 localTimeSource = value;
                 localTimeSource.TimePassed += HandleTimeProgress;
+                Console.WriteLine($"^^^^^ Machine.cs LocalTimeSource Set : {localTimeSource}");
                 foreach(var timeSink in ownLifes.OfType<ITimeSink>())
                 {
                     localTimeSource.RegisterSink(timeSink);

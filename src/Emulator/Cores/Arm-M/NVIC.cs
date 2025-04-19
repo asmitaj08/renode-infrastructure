@@ -333,6 +333,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 
         public void Reset()
         {
+            //  Console.WriteLine("^^^^^ NVIC.cs Reset()");
             RegisterCollection.Reset();
             InitInterrupts();
             for(var i = 0; i < priorities.Length; i++)

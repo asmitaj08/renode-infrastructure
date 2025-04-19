@@ -58,6 +58,7 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
 
         public void Reset()
         {
+            // Console.WriteLine("****** STM32_SYSCFG.cs Reset");
             foreach(var connection in Connections.Values)
             {
                 connection.Unset();

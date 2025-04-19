@@ -57,6 +57,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             pcNotInitialized = true;
             vtorInitialized = false;
             base.Reset();
+            // nvic.Reset(); //modified
         }
 
         public void SetSleepOnExceptionExit(bool value)

@@ -426,6 +426,7 @@ namespace Antmicro.Renode.Peripherals.Timers
 
         public override void Reset()
         {
+            // Console.WriteLine("****** STM32_Timer.cs Reset");
             base.Reset();
             registers.Reset();
             autoReloadValue = initialLimit;

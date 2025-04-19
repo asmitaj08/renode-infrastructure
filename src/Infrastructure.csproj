@@ -651,6 +651,7 @@
     <Compile Include="Emulator/Peripherals/Peripherals/Timers/Cadence_TTC.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/Timers/Cadence_WDT.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/UART/STM32_UART.cs" />
+    <Compile Include="Emulator/Peripherals/Peripherals/UART/STM32_UART_Fuzz.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/UART/STM32W_UART.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/UART/EFM32_UART.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/UART/SI32_USART.cs" />
@@ -750,6 +751,7 @@
     <Compile Include="Emulator/Peripherals/Peripherals/GPIOPort/STM32F4GPIOPort_old.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/GPIOPort/STM32_GPIOPort.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/GPIOPort/STM32F1GPIOPort.cs" />
+    <Compile Include="Emulator/Peripherals/Peripherals/GPIOPort/STM32F1GPIOPort_Fuzz.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/GPIOPort/NXPGPIOPort.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/GPIOPort/XilinxGPIOPS.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/USBDeprecated/USBTablet.cs" />
@@ -916,6 +918,7 @@
     <Compile Include="Emulator/Peripherals/Peripherals/STM32Series.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/Analog/STM32_ADC_Common.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/Analog/STM32F0_ADC.cs" />
+    <Compile Include="Emulator/Peripherals/Peripherals/Analog/STM32F103_ADC_Fuzz.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/Analog/STM32G0_ADC.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/Analog/STM32WBA_ADC.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/Analog/Xilinx_XADC.cs" />

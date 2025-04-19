@@ -298,6 +298,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public override void Reset()
         {
+            // Console.WriteLine("^^^^^ ARM.cs Reset()");
             base.Reset();
             foreach(var config in defaultTCMConfiguration)
             {

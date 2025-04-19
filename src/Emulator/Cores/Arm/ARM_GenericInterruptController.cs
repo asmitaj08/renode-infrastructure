@@ -95,6 +95,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 
         public void Reset()
         {
+            Console.WriteLine("^^^^^ ARM_GenericInterruptController.cs Reset()");
             LockExecuteAndUpdate(() =>
                 {
                     ackControl = false;

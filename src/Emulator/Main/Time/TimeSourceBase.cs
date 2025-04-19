@@ -279,6 +279,7 @@ namespace Antmicro.Renode.Time
 
                 var timeDiff = currentCommonElapsedTime - ElapsedVirtualTime;
                 this.Trace($"Reporting time passed: {timeDiff}");
+                // Console.WriteLine($"^^^^^TimeSourceBase.cs SynchronizeVirtualTime() :currentCommonElapsedTime : {currentCommonElapsedTime} , ElapsedVirtualTime : {ElapsedVirtualTime}, timeDiff : {timeDiff}");
                 // this will update ElapsedVirtualTime
                 UpdateTime(timeDiff);
                 TimePassed?.Invoke(timeDiff);
@@ -475,6 +476,7 @@ namespace Antmicro.Renode.Time
             isBlocked = false;
             var quantum = NearestSyncPoint - ElapsedVirtualTime;
             this.Trace($"Starting a loop with #{quantum.Ticks} ticks");
+            // Console.WriteLine($"^^^^TimeSourceBase.cs InnerExecute : quantum.Ticks : {quantum.Ticks}");
 
             SynchronizeVirtualTime();
             var elapsedVirtualTimeAtStart = ElapsedVirtualTime;
@@ -622,6 +624,7 @@ namespace Antmicro.Renode.Time
         /// </remarks>
         protected void ResetVirtualTime(TimeInterval interval)
         {
+            Console.WriteLine($"^^^^^ TimeSourceBase.cs ResetVirtualTime(), interval : {interval}, ElapsedVirtualTime : {ElapsedVirtualTime} ");
             lock(hostTicksElapsed)
             {
                 DebugHelper.Assert(ElapsedVirtualTime <= interval, $"Couldn't reset back in time from {ElapsedVirtualTime} to {interval}.");
@@ -633,6 +636,7 @@ namespace Antmicro.Renode.Time
                 {
                     foreach(var handle in handles.All)
                     {
+                        Console.WriteLine($"^^^^^ TimeSourceBase.cs ResetVirtualTime(), handle : {handle}");
                         handle.Reset();
                     }
                 }

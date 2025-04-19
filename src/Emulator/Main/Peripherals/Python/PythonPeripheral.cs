@@ -12,6 +12,7 @@ using Antmicro.Renode.Exceptions;
 using Antmicro.Renode.Peripherals.Bus;
 using Antmicro.Renode.UserInterface;
 using Antmicro.Renode.Utilities;
+using System;
 
 namespace Antmicro.Renode.Peripherals.Python
 {
@@ -144,6 +145,7 @@ namespace Antmicro.Renode.Peripherals.Python
 
         public void Reset()
         {
+            Console.WriteLine("^^^^^^ PythonPeripheral.cs Reset()");
             inited = false;
             EnsureInit();
         }

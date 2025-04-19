@@ -58,6 +58,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public virtual void Reset()
         {
+            Console.WriteLine($"^^^^^ I2CPeripheralBase.cs Reset()");
             ResetState();
         }
 

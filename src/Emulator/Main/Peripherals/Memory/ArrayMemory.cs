@@ -78,6 +78,7 @@ namespace Antmicro.Renode.Peripherals.Memory
         public void Reset()
         {
             // nothing happens
+            Console.WriteLine($"^^^^^ ArrayMemory.cs Reset()");
         }
 
         public ushort ReadWord(long offset)

@@ -24,7 +24,7 @@ namespace Antmicro.Renode.Time
         /// </summary>
         public SlaveTimeSource()
         {
-            Console.WriteLine("^^^^ SlaveTimeSource.cs SlaveTimeSource() created.");
+            // Console.WriteLine("^^^^ SlaveTimeSource.cs SlaveTimeSource() created.");
             locker = new object();
             TimePassed += HandleTimePassed;
         }
@@ -35,7 +35,7 @@ namespace Antmicro.Renode.Time
         public override void Dispose()
         {
             this.Trace("Disposing...");
-            Console.WriteLine("^^^^ SlaveTimeSource.cs Dispose() slave time source.");
+            // Console.WriteLine("^^^^ SlaveTimeSource.cs Dispose() slave time source.");
             base.Dispose();
             base.Stop();
             lock(locker)
@@ -54,7 +54,7 @@ namespace Antmicro.Renode.Time
             lock(locker)
             {
                 this.Trace("Pausing...");
-                Console.WriteLine("^^^^ SlaveTimeSource.cs Pause() slave time source.");
+                // Console.WriteLine("^^^^ SlaveTimeSource.cs Pause() slave time source.");
                 if(!isStarted)
                 {
                     this.Trace();
@@ -82,7 +82,7 @@ namespace Antmicro.Renode.Time
         public void Resume()
         {
             this.Trace("Resuming...");
-            Console.WriteLine("^^^^ SlaveTimeSource.cs Resume() slave time source.");
+            // Console.WriteLine("^^^^ SlaveTimeSource.cs Resume() slave time source.");
             lock(locker)
             {
                 using(sync.HighPriority)
@@ -118,6 +118,7 @@ namespace Antmicro.Renode.Time
                     StopDispatcher();
                     TimeHandle?.Dispose();
                     this.Trace("About to attach to the new master");
+                    // Console.WriteLine($"^^^^ SlaveTimeSource.cs : Set Timehandle : timeHandle : {timeHandle} ");
                     timeHandle = value;
                     timeHandle.PauseRequested += RequestStop;
                     timeHandle.StartRequested += HandleStartRequest;

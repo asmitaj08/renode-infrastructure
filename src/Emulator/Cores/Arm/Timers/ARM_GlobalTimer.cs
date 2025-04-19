@@ -53,6 +53,7 @@ namespace Antmicro.Renode.Peripherals.Timers
 
         public override void Reset()
         {
+             Console.WriteLine("^^^^^ ARM_GlobalTimer.cs Reset()");
             lock(locker)
             {
                 base.Reset();

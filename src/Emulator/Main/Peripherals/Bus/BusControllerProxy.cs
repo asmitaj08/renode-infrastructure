@@ -22,6 +22,7 @@ namespace Antmicro.Renode.Peripherals.Bus
     {
         public void Reset()
         {
+            Console.WriteLine("^^^^ BusControllerProxy.cs Reset()");
             ParentController.Reset();
         }
 

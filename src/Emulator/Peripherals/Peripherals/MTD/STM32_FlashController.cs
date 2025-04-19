@@ -73,6 +73,7 @@ namespace Antmicro.Renode.Peripherals.MTD
 
             public void Reset()
             {
+                // Console.WriteLine($"^^^^^ STM32_FlashController.cs Reset()");
                 if(unlockedAfterReset)
                 {
                     IsLocked = false;

@@ -356,6 +356,8 @@ namespace Antmicro.Renode.Peripherals.Memory
             // to have deterministic behaviour (i.e. given script executed two times will
             // give the same results; not zeroing during reset will however is not necessary
             // (starting values are not random anyway)
+
+            // Console.WriteLine($"^^^^^ MappedMemeory.cs Reset()");
         }
 
         public IntPtr GetSegment(int segmentNo)

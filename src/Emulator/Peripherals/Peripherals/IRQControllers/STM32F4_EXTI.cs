@@ -56,6 +56,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 
         public override void Reset()
         {
+            // Console.WriteLine("****** STM32F4_EXTI.cs Reset");
             base.Reset();
             softwareInterrupt = 0;
             foreach(var gpio in Connections)

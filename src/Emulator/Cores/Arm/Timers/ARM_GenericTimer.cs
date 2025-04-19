@@ -10,6 +10,7 @@ using Antmicro.Renode.Core.Structure.Registers;
 using Antmicro.Renode.Exceptions;
 using Antmicro.Renode.Time;
 using Antmicro.Renode.Logging;
+using System;
 
 namespace Antmicro.Renode.Peripherals.Timers
 {
@@ -96,6 +97,7 @@ namespace Antmicro.Renode.Peripherals.Timers
 
         public void Reset()
         {
+             Console.WriteLine("^^^^^ ARM_GenericTimer.cs Reset()");
             el1PhysicalTimer.Reset();
             el1VirtualTimer.Reset();
             el3PhysicalTimer.Reset();

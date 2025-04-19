@@ -76,15 +76,15 @@ namespace Antmicro.Renode.Peripherals.CPU
             hooks = new Dictionary<ulong, HookDescriptor>();
             // Console.WriteLine("^^^^^^ TranslationCPU currentMappings");
             currentMappings = new List<SegmentMapping>();
-            // Console.WriteLine("^^^^^^ TranslationCPU InitializeRegisters");
+            Console.WriteLine("^^^^^^ TranslationCPU InitializeRegisters");
             InitializeRegisters();
-            // Console.WriteLine("^^^^^^ TranslationCPU Init");
+            Console.WriteLine("^^^^^^ TranslationCPU Init");
             Init();
             // Console.WriteLine("^^^^^^ TranslationCPU InitDisas");
             InitDisas();
             externalMmuWindowsCount = TlibGetMmuWindowsCount();
             Clustered = new TranslationCPU[] { this };
-            // Console.WriteLine("^^^^^^ TranslationCPU constructor done");
+            Console.WriteLine("^^^^^^ TranslationCPU constructor done");
         }
 
         public new IEnumerable<ICluster<TranslationCPU>> Clusters { get; } = new List<ICluster<TranslationCPU>>(0);
@@ -263,7 +263,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         public void Fuzz_PrepareState()
         {
               // InitializeRegisters();
-                using(machine?.ObtainPausedState(true))
+            using(machine?.ObtainPausedState(true))
             {
             Console.WriteLine("^^^^^^^^^^^ Test Prepare state - Translation CPU ^^^^^^^^^^^^^^");
             var statePtr_fuzz = TlibExportState();
@@ -370,6 +370,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public override void SyncTime()
         {
+            // Console.WriteLine($"In SyncTime : OnPossessedThread : {OnPossessedThread} ");
             if(!OnPossessedThread)
             {
                 this.Log(LogLevel.Error, "Syncing time should be done from CPU thread only. Ignoring the operation");
@@ -378,6 +379,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
             var numberOfExecutedInstructions = TlibGetExecutedInstructions();
             this.Trace($"CPU executed {numberOfExecutedInstructions} instructions and time synced");
+            // Console.WriteLine($"^^^^ ******* CPU executed {numberOfExecutedInstructions} instructions and time synced");
             ReportProgress(numberOfExecutedInstructions);
         }
 
@@ -403,7 +405,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected override void OnLeavingResetState()
         {
-           Console.WriteLine("^^^^^^^ TarnslationalCPU.cs OnLeavingResetState()");
+        //    Console.WriteLine("^^^^^^^ TranslationalCPU.cs OnLeavingResetState()");
             base.OnLeavingResetState();
             TlibOnLeavingResetState();
         }
@@ -435,13 +437,14 @@ namespace Antmicro.Renode.Peripherals.CPU
         
         public override void Reset()
         {
-           Console.WriteLine("^^^^^^^ TranslationalCPU.cs Reset()");
+        //    Console.WriteLine("^^^^^^^ TranslationalCPU.cs Reset()");
             base.Reset();
             isInterruptLoggingEnabled = false;
             TlibReset();
             ResetOpcodesCounters();
             profiler?.Dispose();
-           Console.WriteLine("^^^^^^^ TranslationalCPU.cs Reset() Done!!");
+            // Antmicro.Renode.Peripherals.IRQControllers.NVIC.Reset();
+        //    Console.WriteLine("^^^^^^^ TranslationalCPU.cs Reset() Done!!");
         }
 
         public bool RequestTranslationBlockRestart(bool quiet = false)
@@ -579,6 +582,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public ulong GetCurrentInstructionsCount()
         {
+            Console.WriteLine($"^^^^ In GetCurrentInstructionsCount");
             return TlibGetTotalExecutedInstructions();
         }
 
@@ -617,47 +621,190 @@ namespace Antmicro.Renode.Peripherals.CPU
         }
 
         ulong PREV_LOC = 0;
+        ulong PREV_PC = 0 ; // just for testing
         // static byte[] CovMap = new byte[8 * 1024];
-        [DllImport("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/target/release/liblibafl_renode.so")] 
+        // [DllImport("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/target/release/liblibafl_renode.so")] 
+        
+         // This will be executed automatically when the class is first used
+        // static IntPtr dllHandle = LoadPlugin();
+
+        // // Load the DLL from the ENV variable
+        // private static IntPtr LoadPlugin()
+        // {
+        //     string fullDllPath = Environment.GetEnvironmentVariable("LIBAFL_DLL");
+        //     if (string.IsNullOrEmpty(fullDllPath))
+        //     {
+        //         throw new Exception("LIBAFL_DLL environment variable not set!");
+        //     }
+
+        //     var handle = NativeLibrary.Load(fullDllPath);
+        //     Console.WriteLine($"[LIBAFL_DLL] Loaded DLL from: {fullDllPath}");
+        //     return handle;
+        // }
+        // static string dllPath = Environment.GetEnvironmentVariable("LIBAFL_DLL");
+        [DllImport("liblibafl_renode.so")]
+
         // public static extern void update_cov_map(ulong pc);
         public static extern IntPtr get_cov_map_ptr();  
         private const int MAP_SIZE = 64 * 1024;  //8 * 1024;
         private static IntPtr covMapPtr = get_cov_map_ptr(); 
-        // This object will be used to synchronize access to the coverage map
+        // // This object will be used to synchronize access to the coverage map
+
         // private static readonly object covMapLock = new object();
 
         // HashSet to store unique block PCs (ulong used for PC values)
-        private HashSet<ulong> uniqueBlocks = new HashSet<ulong>();
+        public HashSet<ulong> uniqueBlocksEnd = new HashSet<ulong>(); // just for testing
+        private HashSet<ulong> uniqueBlocks = new HashSet<ulong>(); // just for testing
+        private HashSet<ulong> uniqueBlocks_onTranslationFetch = new HashSet<ulong>(); // just for testing
+        private HashSet<ulong> uniqueBlocks_logDisassembly = new HashSet<ulong>(); // just for testing
+        private HashSet<ulong> indexHash = new HashSet<ulong>(); // just for testing
+        // private HashSet<(ulong,ulong)> uniqueEdges = new HashSet<(ulong,ulong)>(); // just for testing - gives some packer error
+
+        struct ULongPair
+        {
+            public ulong Item1;
+            public ulong Item2;
+
+            public ULongPair(ulong item1, ulong item2)
+            {
+                Item1 = item1;
+                Item2 = item2;
+            }
+        }
+        private HashSet<ULongPair> uniqueEdges = new HashSet<ULongPair>(); 
+        int covMap_nonzero_count = 0;// just for testing
+        int c = 0;// just for testing
+        bool isInterrupt = false;
+        public void zeroOutCovMap(){
+            PREV_LOC = 0;
+            PREV_PC = 0;
+            unsafe{
+                byte* ptr = (byte*)covMapPtr;
+                for(int i=0;i<MAP_SIZE;i++){
+                    // Marshal.WriteByte(covMapPtr,i,0);
+                    if(ptr[i]!=0){
+                        ptr[i]=0;
+                    }
+                }
+            }
+        }
+        
         public void Fuzz_SetHookAtBlockBegin()
         {
-            Console.WriteLine($"^^^^^^^^^^^Fuzz_SetHookAtBlockBegin() : CovPointer : 0x{covMapPtr.ToInt64():X}");
+            // Console.WriteLine($"^^^^^^^^^^^Fuzz_SetHookAtBlockBegin() : CovPointer : 0x{unsafe{((Byte*)covMapPtr).ToInt64()}:X}");
             SetInternalHookAtBlockBegin((pc, size) =>
             {
-                // Console.WriteLine($"^^^^^^^^^^^Fuzz_SetHookAtBlockBegin() : CovPointer : 0x{covMapPtr.ToString():X}");
+                // CountNonZeroElements_COVMAP();
+                // Console.WriteLine($"^^^^^^^^^^^Fuzz_SetHookAtBlockBegin() : CovPointer : 0x{covMapPtr.ToString("X")}, pc : 0x{pc:X}, PREV_LOC : 0x{PREV_LOC:X}");
 
-                uniqueBlocks.Add(pc); 
+                // uniqueBlocks.Add(pc); //--uncomment when replaying to get block start pc
                 //covMapPtr = get_cov_map_ptr();
                 // Console.WriteLine($"^^^^^^^^^Block_count :{uniqueBlocks.Count} "); // comment later
-                ulong hash = (pc ^ PREV_LOC) & (MAP_SIZE - 1);
-                // lock (covMapLock){
-                    byte newValue = Marshal.ReadByte(covMapPtr + (int)hash * sizeof(int));
-                    byte prev_new_val = newValue;
-                    newValue++;
-                    Marshal.WriteByte(covMapPtr + (int)hash * sizeof(int), newValue);
-                    // CovMap[index] = newValue;
-                    PREV_LOC = pc >> 1;
+                // if(pc == 0x80041a0){
+                //     // Console.WriteLine($"^^^^^^^^^Renode PC :0x{pc:X} "); 
+                //     CountNonZeroElements_COVMAP();
+                //     int threadId = Thread.CurrentThread.ManagedThreadId;
+                //     Console.WriteLine($"^^^^^Block_count :{uniqueBlocks.Count}, Index_hash_count : {indexHash.Count}, thread : {threadId} ");
+                //     // Fuzz_GetBlockCount(c);
+                //     c+=1;
+                //     uniqueBlocks.Clear();
+                //     indexHash.Clear();
+                //     zeroOutCovMap();
                 // }
+                // int threadId = Thread.CurrentThread.ManagedThreadId;
+                    // Console.WriteLine($"^^^^^Block_count :{uniqueBlocks.Count}, Index_hash_count : {indexHash.Count}, thread : {threadId} ");
+                //if(!isInterrupt){
+
+
+                    ulong hash = (pc ^ PREV_LOC) & (MAP_SIZE - 1);
+                    // indexHash.Add(hash); 
+                    uniqueBlocks.Add(pc);
+                    // uniqueEdges.Add(new ULongPair(PREV_PC,pc));
+                    // lock (covMapLock){ 
+                    unsafe{
+                        byte* ptr = (byte*)covMapPtr;
+                        ptr[hash]++;
+                        // byte val = ptr[hash];
+                        // if(val==255){
+                        //     ptr[hash] = 1;
+                        // }
+                        // else{
+                        //     ptr[hash]++;
+                        // }
+                    }
+                    PREV_PC = pc;
+                    PREV_LOC = pc >> 1;
+
+
+                    // Console.WriteLine("Written at covmap");
+                // }
+                // else{
+                //     Console.WriteLine($"Interupt ,  skip covmap, PC : 0x{pc:X}");
+                // }
+                    // // covMapPtr[hash]++;
+                    // byte newValue = Marshal.ReadByte(covMapPtr,(int)hash);
+                    // byte prev_new_val = newValue;
+                    // // Console.WriteLine($"^^^^^Block_count :{uniqueBlocks.Count}, Index_hash_count : {indexHash.Count}, thread : {threadId}, newValue : {newValue} ");
+                    // newValue++;
+                    // // covMapPtr[hash] = newValue;
+                    // Marshal.WriteByte(covMapPtr, (int)hash , newValue);
+                    // Console.WriteLine($"^^^^^^^^^^^Fuzz_SetHookAtBlockBegin() : CovPointer : 0x{covMapPtr.ToString("X")}, pc : 0x{pc:X}, PREV_LOC : 0x{PREV_LOC:X}, hash : {hash}");
+                    // CovMap[index] = newValue;
+                    // PREV_LOC = pc >> 1;
+               // }
             });
         }
 
-        public void Fuzz_GetBlockCount()
+        public void CountNonZeroElements_COVMAP()
         {
-            string filePath = "uniqueBlocks.txt";
+            int nonZeroCount = 0;
+            unsafe{
+                byte* ptr = (byte*)covMapPtr;
+            for (int i = 0; i < MAP_SIZE; i++)
+            {
+                // lock (covMapLock){
+                //     int value = Marshal.ReadByte(covMapPtr, i);  // Read each byte   
+                if (ptr[i] != 0)
+                {
+                    nonZeroCount++;  // Increment count if non-zero   
+                }
+            }
+            }
+
+            if (nonZeroCount==0){
+                Console.WriteLine($"***** CountNonZeroElements_COVMAP is ZeroAll!!!! : {nonZeroCount}");
+            }
+            else{
+                Console.WriteLine($"***** CountNonZeroElements_COVMAP : {nonZeroCount}");
+            }
+        }
+
+        public void Fuzz_GetBlock(int i) // //--use it when replaying to get block start PCs for block coverage
+        {
+            string filePath1 = $"uniqueBlocks_{i}.txt";
+            string filePath2 = $"uniqueBlocks_onTranslationFetch{i}.txt";
+            string filePath3 = $"uniqueBlocks_logDisassembly{i}.txt";
             try
             {
-                using (StreamWriter writer = new StreamWriter(filePath))
+                using (StreamWriter writer = new StreamWriter(filePath1))
                 {
                 foreach (var item in uniqueBlocks)
+                {
+                    writer.WriteLine(item.ToString("X"));  // Write each ulong to a new line in the file
+                }
+                }
+
+                using (StreamWriter writer = new StreamWriter(filePath2))
+                {
+                foreach (var item in uniqueBlocks_onTranslationFetch)
+                {
+                    writer.WriteLine(item.ToString("X"));  // Write each ulong to a new line in the file
+                }
+                }
+
+                using (StreamWriter writer = new StreamWriter(filePath3))
+                {
+                foreach (var item in uniqueBlocks_logDisassembly)
                 {
                     writer.WriteLine(item.ToString("X"));  // Write each ulong to a new line in the file
                 }
@@ -670,10 +817,67 @@ namespace Antmicro.Renode.Peripherals.CPU
             Console.WriteLine($"^^^^^Block_count :{uniqueBlocks.Count} ");
         }
 
-         public void Fuzz_ClearBlockSet()
+        public void Fuzz_GetBlockEndCount(int i) // //--use it when replaying to get block start PCs for block coverage
         {
+            string filePath = $"uniqueBlocksEnd_{i}.txt";
+            try
+            {
+                using (StreamWriter writer = new StreamWriter(filePath))
+                {
+                foreach (var item in uniqueBlocksEnd)
+                {
+                    writer.WriteLine(item.ToString("X"));  // Write each ulong to a new line in the file
+                }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("An error occurred while writing to the file: " + ex.Message);
+            }
+            Console.WriteLine($"^^^^^BlockEnd_count :{uniqueBlocksEnd.Count} ");
+        }
+
+        public void Fuzz_GetEdges(int i) // testing
+        {
+            string filePath = $"uniqueEdges_{i}.csv";
+            try
+            {
+                using (StreamWriter writer = new StreamWriter(filePath))
+                {
+                // Optional: Write header
+                writer.WriteLine("PREV_BLOCK,CURR_BLOCK");
+                foreach (var item in uniqueEdges)
+                {
+                    writer.WriteLine($"{item.Item1.ToString("X")}, {item.Item2.ToString("X")}");  // Write each ulong to a new line in the file
+                }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("An error occurred while writing to the file: " + ex.Message);
+            }
+        }
+
+        public void Fuzz_GetEdgesCount(){
+            Console.WriteLine($"^^^^^ Fuzz_GetEdgesCount : {uniqueEdges.Count}");
+        }
+        public void Fuzz_GetBlockCount(){
+            Console.WriteLine($"^^^^^ Fuzz_GetBlockCount : uniqueBlocks: {uniqueBlocks.Count}");
+            // Console.WriteLine($"^^^^^ Fuzz_GetBlockCount : uniqueBlocks_onTranslationFetch : {uniqueBlocks_onTranslationFetch.Count}");
+            // Console.WriteLine($"^^^^^ Fuzz_GetBlockCount : uniqueBlocks_logDisassembly : {uniqueBlocks_logDisassembly.Count}");
+        }
+
+         public void Fuzz_ClearSets() //--use it when replaying to get block start PCs for block coverage
+        {
+            // Console.WriteLine($"^^^^^Before clear:Block_count:{uniqueBlocks.Count}, edge_count : {uniqueEdges.Count}, indexHash : {indexHash.Count} ");
+            // Console.WriteLine($"^^^^^Before clear:Block_count:{uniqueBlocks.Count}, indexHash : {indexHash.Count} ");
             uniqueBlocks.Clear();
-            Console.WriteLine($"^^^^^Block_count after clear :{uniqueBlocks.Count} ");
+            // uniqueBlocks_onTranslationFetch.Clear();
+            // uniqueBlocks_logDisassembly.Clear();
+            // uniqueEdges.Clear();
+            // uniqueBlocksEnd.Clear();
+            // indexHash.Clear();
+            // Console.WriteLine($"^^^^^After cllear Block_count:{uniqueBlocks.Count}, edge_count : {uniqueEdges.Count} , indexHash : {indexHash.Count} ");
         }
 
 
@@ -751,6 +955,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public void LogCpuInterrupts(bool isEnabled)
         {
+            Console.WriteLine($"LogCpuInterrupts : {isEnabled}, isInterruptLoggingEnabled : {isInterruptLoggingEnabled}");
             if(isEnabled)
             {
                 if(!isInterruptLoggingEnabled)
@@ -946,12 +1151,16 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void LogCpuInterruptBegin(ulong exceptionIndex)
         {
-            this.Log(LogLevel.Info, "Begin of the interrupt: {0}", GetExceptionDescription(exceptionIndex));
+            isInterrupt = true;
+            Console.WriteLine($"Begin of the interrupt: {GetExceptionDescription(exceptionIndex)} at PC : 0x{PC.RawValue:X}");
+            // this.Log(LogLevel.Info, "Begin of the interrupt: {0}", GetExceptionDescription(exceptionIndex));
         }
 
         private void LogCpuInterruptEnd(ulong exceptionIndex)
         {
-            this.Log(LogLevel.Info, "End of the interrupt: {0}", GetExceptionDescription(exceptionIndex));
+            isInterrupt = false;
+            // Console.WriteLine($"End of the interrupt: {GetExceptionDescription(exceptionIndex)} at PC : 0x{PC.RawValue:X}");
+            // this.Log(LogLevel.Info, "End of the interrupt: {0}", GetExceptionDescription(exceptionIndex));
         }
 
         private void SetInternalHookAtBlockBegin(Action<ulong, uint> hook)
@@ -1199,11 +1408,15 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         private uint OnBlockBegin(ulong address, uint size)
         {
-            
+            // uniqueBlocks.Add(address); //fuzz testing
             ReactivateHooks();
 
             using(ObtainGenericPauseGuard())
             {
+                
+            // TryTranslateAddress(address, MpuAccess.InstructionFetch, out var pcPhysical);//testing
+            // uniqueBlocks.Add(pcPhysical); //testing
+            // Console.WriteLine($"^^^^^^^ OnBlockBegin : pc : 0x{address:X}, pcPhysical : 0x{pcPhysical:X}"); //testing
                 blockBeginInternalHook?.Invoke(address, size);
                 blockBeginUserHook?.Invoke(address, size);
             }
@@ -1219,8 +1432,12 @@ namespace Antmicro.Renode.Peripherals.CPU
         private void OnBlockFinished(ulong pc, uint executedInstructions)
         {
             // Console.WriteLine($"^^^^ TranslationCPU.cs : OnBlockFinished export : pc : 0x{pc:X}, executedInstructions: {executedInstructions}");
+
             using(ObtainGenericPauseGuard())
             {
+            // TryTranslateAddress(pc, MpuAccess.InstructionFetch, out var pcPhysical);//testing
+            // uniqueBlocksEnd.Add(pcPhysical); //testing
+            // Console.WriteLine($"^^^^^^^ OnBlockFinished : pc : 0x{pc:X}, pcPhysical : 0x{pcPhysical:X}, executedInstructions : {executedInstructions}"); //testing
                 blockFinishedHook?.Invoke(pc, executedInstructions);
             }
         }
@@ -1229,7 +1446,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         private void OnInterruptBegin(ulong interruptIndex)
         {
             
-            Console.WriteLine($"^^^^ TranslationCPU.cs : OnInterruptBegin export : interrupt Index : {interruptIndex}");
+            // Console.WriteLine($"^^^^ TranslationCPU.cs : OnInterruptBegin export : interrupt Index : {interruptIndex} at PC : 0x{PC.RawValue:X}");
             interruptBeginHook?.Invoke(interruptIndex);
         }
 
@@ -1248,7 +1465,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         private void OnInterruptEnd(ulong interruptIndex)
         {
-            Console.WriteLine($"^^^^ TranslationCPU.cs : OnInterruptEnd export");
+            // Console.WriteLine($"^^^^ TranslationCPU.cs : OnInterruptEnd export : interrupt Index : {interruptIndex} at PC : 0x{PC.RawValue:X}");
             interruptEndHook?.Invoke(interruptIndex);
         }
 
@@ -1301,6 +1518,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             {
                 info = " - " + info;
             }
+            uniqueBlocks_onTranslationFetch.Add(offset);
             this.Log(LogLevel.Info, "Fetching block @ 0x{0:X8}{1}", offset, info);
         }
 
@@ -2323,6 +2541,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         private void LogDisassembly(ulong pc, uint size, uint flags)
         {
+            uniqueBlocks_logDisassembly.Add(pc);
             if(LogFile == null)
             {
                 return;

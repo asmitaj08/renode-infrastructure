@@ -36,6 +36,7 @@ namespace Antmicro.Renode.Peripherals.MTD
 
         public override void Reset()
         {
+            // Console.WriteLine($"^^^^^ STM32F4_FlashController.cs. Reset()");
             base.Reset();
             controlLock.Reset();
             optionControlLock.Reset();

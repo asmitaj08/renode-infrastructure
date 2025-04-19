@@ -245,10 +245,16 @@ namespace Antmicro.Renode.Core.Structure.Registers
         /// </summary>
         public void Reset()
         {
-            foreach(var register in registers.Values)
+            // Console.WriteLine("^^^^ RegisterCollection.cs Reset()");
+           foreach(var register in registers.Values) //orig
+        //    foreach(var registerA in registers) //modified
             {
-                register.Reset();
+                // var register_key = registerA.Key; //modified
+                // var register = registerA.Value; //modified
+                // Console.WriteLine($"^^^^ RegisterCollection.cs register_key : {register_key}, value : {register}");
+               register.Reset(); 
             }
+            // Console.WriteLine("^^^^ RegisterCollection.cs Reset() Done!!");
         }
 
         /// <summary>

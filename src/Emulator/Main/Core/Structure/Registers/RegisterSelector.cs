@@ -31,10 +31,13 @@ namespace Antmicro.Renode.Core.Structure.Registers
 
         public void Reset()
         {
+            // Console.WriteLine("^^^^ RegisterSelector.cs Reset()");
             foreach(var c in conditionalRegisters)
             {
+                // Console.WriteLine($"^^^^^^ RegisterSelector.cs : c.reg {c.Register}, condition : {c.Condition} ");
                 c.Register.Reset();
             }
+            //  Console.WriteLine("^^^^ RegisterSelector.cs Reset() Done!!");
         }
 
         public void AddRegister(IPeripheralRegister<T> register, Func<bool> condition)

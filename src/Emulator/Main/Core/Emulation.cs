@@ -298,6 +298,7 @@ namespace Antmicro.Renode.Core
 
         public void StartAll()
         {
+             Console.WriteLine("^^^^^Emulation.cs StartAll() ");
             lock(machLock)
             {
                 InnerStartAll();
@@ -314,6 +315,7 @@ namespace Antmicro.Renode.Core
             //during start up procedure. It might happen on rare occasions. E.g. when a script loads them, and user
             //hits the pause button.
             //Otherwise it would crash.
+            Console.WriteLine("^^^^^Emulation.cs InnerStartAll() ");
             ExternalsManager.Start();
             foreach(var machine in Machines.ToList())
             {
@@ -323,6 +325,7 @@ namespace Antmicro.Renode.Core
 
         public void PauseAll()
         {
+            Console.WriteLine("^^^^^Emulation.cs PauseAll() ");
             lock(machLock)
             {
                 MasterTimeSource.Stop();
@@ -334,13 +337,13 @@ namespace Antmicro.Renode.Core
 
         public IDisposable ObtainPausedState()
         {
-            Console.WriteLine("^^^^^^^^^Emulation paused : ObtainPausedState");
+            Console.WriteLine("^^^^^^^^^Emulation.cs : ObtainPausedState");
             return new PausedState(this);
         }
 
         public IDisposable ObtainSafeState()
         {   
-             Console.WriteLine("^^^^^^^^^Emulation paused : ObtainSafeState");
+             Console.WriteLine("^^^^^^^^^Emulation.cs : ObtainSafeState");
             // check if we are on a safe thread that executes sync phase
             if(MasterTimeSource.IsOnSyncPhaseThread)
             {

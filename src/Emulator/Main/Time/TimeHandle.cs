@@ -116,6 +116,7 @@ namespace Antmicro.Renode.Time
 
         public void Reset()
         {
+            Console.WriteLine("^^^ TimeHandle.cs Reset()");
             lock(innerLock)
             {
                 DebugHelper.Assert(TimeSource.ElapsedVirtualTime >= TotalElapsedTime, $"Trying to move time handle back in time from: {TotalElapsedTime} to {TimeSource.ElapsedVirtualTime}");
@@ -133,6 +134,7 @@ namespace Antmicro.Renode.Time
         public void GrantTimeInterval(TimeInterval interval)
         {
             this.Trace($"{interval.Ticks}");
+            // Console.WriteLine($"^^^^TimeHandle.cs GrantedTimeInterval 1: interval.Ticks :{interval.Ticks}");
             lock(innerLock)
             {
                 DebugHelper.Assert(IsReadyForNewTimeGrant, "Interval granted, but the handle is not ready for a new one.");
@@ -157,6 +159,7 @@ namespace Antmicro.Renode.Time
                 }
             }
             this.Trace();
+            // Console.WriteLine($"^^^^TimeHandle.cs GrantedTimeInterval 2: intervalGranted : {intervalGranted}");
         }
 
         /// <summary>
@@ -283,12 +286,14 @@ namespace Antmicro.Renode.Time
                 else
                 {
                     interval = intervalGranted + slaveTimeResiduum;
+                    // Console.WriteLine($"^^^^ TimeHandle.cs RequestTimeInterval() : interval.Ticks : {interval.Ticks},intervalGranted.Ticks : {intervalGranted.Ticks}, slaveTimeResiduum.Ticks : {slaveTimeResiduum.Ticks}");
                     DebugHelper.Assert(reportedTimeResiduum == TimeInterval.Empty, "Reported time residuum should be empty at this point");
                     reportedTimeResiduum = slaveTimeResiduum;
                     slaveTimeResiduum = TimeInterval.Empty;
 
                     sinkSideInProgress = true;
                     grantPending = false;
+
                 }
 
                 this.Trace($"{result}, {interval.Ticks}");
@@ -299,6 +304,7 @@ namespace Antmicro.Renode.Time
 
         public void ReportProgress(TimeInterval progress)
         {
+            // Console.WriteLine($"^^^^^ TimeHandle.cs : ReportProgress() 1111: progress.Ticks : {progress.Ticks}, reportedTimeResiduum.Ticks = {reportedTimeResiduum.Ticks}");
             if(progress.Ticks == 0)
             {
                 return;
@@ -321,9 +327,11 @@ namespace Antmicro.Renode.Time
                 }
 
                 this.Trace($"Reporting progress: {progress}");
+                // Console.WriteLine($"^^^^^ TimeHandle.cs : ReportProgress() 2222: progress.Ticks : {progress.Ticks}, reportedTimeResiduum.Ticks = {reportedTimeResiduum.Ticks}");
                 TotalElapsedTime += progress;
                 reportedSoFar += progress;
                 TimeSource.ReportTimeProgress();
+
             }
         }
 
@@ -349,8 +357,10 @@ namespace Antmicro.Renode.Time
                 sinkSideInProgress = false;
 
                 DebugHelper.Assert(slaveTimeResiduum == TimeInterval.Empty, "Time residuum should be empty here.");
-                slaveTimeResiduum = timeLeft;
+                slaveTimeResiduum = timeLeft; //orig
+                // slaveTimeResiduum = TimeInterval.Empty; //fuzz change
                 intervalToReport = intervalGranted;
+                // Console.WriteLine($"^^^^^TimeHandle.cs ReportBackAndContinue() ,slaveTimeResiduum.Ticks = {slaveTimeResiduum.Ticks}, intervalToReport.Ticks : {intervalToReport.Ticks} ");
 
                 reportPending = true;
 
@@ -372,6 +382,8 @@ namespace Antmicro.Renode.Time
         public void ReportBackAndBreak(TimeInterval timeLeft)
         {
             this.Trace($"{timeLeft.Ticks}");
+            // Console.WriteLine($"^^^^^TimeHandle.cs ReportBackAndBreak() 1111 ,timeLeft.Ticks = {timeLeft.Ticks}, intervalGranted.Ticks : {intervalGranted.Ticks} ");
+
             lock(innerLock)
             {
                 if(DetachRequested)
@@ -382,8 +394,12 @@ namespace Antmicro.Renode.Time
                 DebugHelper.Assert(sinkSideInProgress, "Reporting a used time, but it seems that no grant has recently been requested.");
                 sinkSideInProgress = false;
 
-                intervalToReport = intervalGranted - timeLeft;
-                intervalGranted = timeLeft;
+                intervalToReport = intervalGranted - timeLeft; //orig
+                // intervalToReport = intervalGranted ; //fuzz change
+                intervalGranted = timeLeft; //orig
+                // intervalGranted = intervalGranted; //fuzz chnage
+                // Console.WriteLine($"^^^^^TimeHandle.cs ReportBackAndBreak() 2222 (fuzz) ,intervalToReport.Ticks= {intervalToReport.Ticks}, intervalGranted.Ticks : {intervalGranted.Ticks} ");
+
                 isBlocking = true;
 
                 reportPending = true;

@@ -350,6 +350,7 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
 
         public void Reset()
         {
+            // Console.WriteLine("****** STM32F4_RCC.cs Reset");
             RegistersCollection.Reset();
         }
 

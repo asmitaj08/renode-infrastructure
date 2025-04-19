@@ -11,6 +11,7 @@ using Antmicro.Renode.Time;
 using Antmicro.Renode.Peripherals.Bus;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using System;
 
 namespace Antmicro.Renode.Peripherals.Timers
 {
@@ -32,6 +33,7 @@ namespace Antmicro.Renode.Peripherals.Timers
 
         public override void Reset()
         {
+             Console.WriteLine("^^^^^ ARM_PrivateTimer.cs Reset()");
             base.Reset();
             timer.Reset();
             UpdateInterrupt();

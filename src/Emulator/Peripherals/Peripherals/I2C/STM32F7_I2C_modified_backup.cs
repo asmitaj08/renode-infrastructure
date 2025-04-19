@@ -129,7 +129,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private DoubleWordRegisterCollection CreateRegisters()
         {
-            Console.WriteLine("%% Inside stm32f7_I2C CreateRegisters()");
+            // Console.WriteLine("%% Inside stm32f7_I2C CreateRegisters()");
             var map = new Dictionary<long, DoubleWordRegister> { {
                     (long)Registers.Control1, new DoubleWordRegister(this)
                         .WithFlag(0, writeCallback: PeripheralEnabledWrite, name: "PE")

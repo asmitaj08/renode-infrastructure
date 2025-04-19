@@ -471,7 +471,9 @@ namespace Antmicro.Renode.Core.Structure.Registers
         /// </summary>
         public void Reset()
         {
+            // Console.WriteLine("^^^^ PeripheralRegister.cs Reset()");
             BitHelper.UpdateWithMasked(ref UnderlyingValue, resetValue, resettableMask);
+            // Console.WriteLine("^^^^ PeripheralRegister.cs Reset() Done!!");
         }
 
         /// <summary>
