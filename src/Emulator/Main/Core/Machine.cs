@@ -570,64 +570,101 @@ namespace Antmicro.Renode.Core
 
         //modified
 
-        private HashSet<string> peripheralsToReset = new HashSet<string>
-        {
-            "cpu",
-            "nvic",
-            "flash_ctrl",
-            "timer2",
-            "timer3",
-            "timer4"
+        // private HashSet<string> peripheralsToReset = new HashSet<string>
+        // {
+        //     "cpu",
+        //     "nvic",
+        //     "flash_ctrl",
+        //     "timer2",
+        //     "timer3",
+        //     "timer4"
 
-        };
+        // };
+         private HashSet<IPeripheral> peripheralsToReset_k = new HashSet<IPeripheral>();
+
+        // public void ConfigurePeripheralsToReset(string[] peripheralNames)
+        // {
+        //     // lock(collectionSync)
+        //     {
+        //         peripheralsToReset.Clear();
+        //         foreach(var name in peripheralNames)
+        //         {
+        //             peripheralsToReset.Add(name);
+        //         }
+        //     }
+        //     Console.WriteLine($"^^^Machine.cs ConfigurePeripheralsToReset : peripheralsToReset.Count : {peripheralsToReset.Count}");
+        // }
 
         public void ConfigurePeripheralsToReset(string[] peripheralNames)
         {
             // lock(collectionSync)
             {
-                peripheralsToReset.Clear();
+                peripheralsToReset_k.Clear();
                 foreach(var name in peripheralNames)
                 {
-                    peripheralsToReset.Add(name);
+                    
+                    if(localNames_reversed.TryGetValue(name, out var val)){
+                        peripheralsToReset_k.Add(val);
+                    }
                 }
+                // foreach(var kvp in localNames) // kvp = KeyValuePair<IPeripheral, string>
+                // {
+                //     // Console.WriteLine($"^^^ Machine.cs  localNames : val : {kvp.Value}, key : {kvp.Key}");
+                //     if(peripheralsToReset.Contains(kvp.Value))
+                //     {
+                //         peripheralsToReset_k.Add(kvp.Key);
+                //     }
+                // }
             }
-            Console.WriteLine($"^^^Machine.cs ConfigurePeripheralsToReset : peripheralsToReset.Count : {peripheralsToReset.Count}");
+            Console.WriteLine($"^^^Machine.cs ConfigurePeripheralsToReset : peripheralsToReset.Count : {peripheralsToReset_k.Count}");
+        }
+
+        private  Dictionary<string, IPeripheral> localNames_reversed;
+
+        public void fuzz_init_settings(){
+            localNames_reversed = localNames.ToDictionary(kvp=>kvp.Value, kvp=>kvp.Key);
+
         }
 
         public void FuzzReset()
         {
-            // Console.WriteLine("^^^ Machine.cs Machine Reset()");
-            //lock(pausingSync)
+            
+            foreach(var p in peripheralsToReset_k) 
             {
-               // using(ObtainPausedState(true))
-                {
-                    
-                    // foreach(var resetable in registeredPeripherals.Distinct().ToList())
-                    // {
-                        // if(TryGetLocalName(resetable, out var name) && peripheralsToReset.Contains(name))
-                        // {
-                        //     Console.WriteLine($"Resetting {name}");
-                        //     resetable.Reset();
-                        // }
-                        // resetable.Reset();
-
-                        foreach(var kvp in localNames) // kvp = KeyValuePair<IPeripheral, string>
-                        {
-                            // Console.WriteLine($"^^^ Machine.cs  localNames : {kvp.Value}");
-                            if(peripheralsToReset.Contains(kvp.Value))
-                            {
-                                // Console.WriteLine($" ^^^ Machine.cs Resetting {kvp.Value}");
-                                kvp.Key.Reset();
-                            }
-                        }
-                    // }
-                    // var machineReset = MachineReset;
-                    // if(machineReset != null)
-                    // {
-                    //     machineReset(this);
-                    // }
-                }
+                p.Reset();
             }
+            // // Console.WriteLine("^^^ Machine.cs Machine Reset()");
+            // //lock(pausingSync)
+            // {
+            //    // using(ObtainPausedState(true))
+            //     {
+                    
+            //         // foreach(var resetable in registeredPeripherals.Distinct().ToList())
+            //         // {
+            //             // if(TryGetLocalName(resetable, out var name) && peripheralsToReset.Contains(name))
+            //             // {
+            //             //     Console.WriteLine($"Resetting {name}");
+            //             //     resetable.Reset();
+            //             // }
+            //             // resetable.Reset();
+
+            //             // foreach(var kvp in localNames) // kvp = KeyValuePair<IPeripheral, string>
+            //             // {
+            //             //     // Console.WriteLine($"^^^ Machine.cs  localNames : {kvp.Value}");
+            //             //     if(peripheralsToReset.Contains(kvp.Value))
+            //             //     {
+            //             //         // Console.WriteLine($" ^^^ Machine.cs Resetting {kvp.Value}");
+            //             //         kvp.Key.Reset();
+            //             //     }
+            //             // }
+            //         // }
+            //         // var machineReset = MachineReset;
+            //         // if(machineReset != null)
+            //         // {
+            //         //     machineReset(this);
+            //         // }
+            //     }
+            // }
         }
 
         public bool InternalPause { get; private set; }

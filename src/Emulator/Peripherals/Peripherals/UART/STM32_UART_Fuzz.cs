@@ -21,21 +21,9 @@ namespace Antmicro.Renode.Peripherals.UART
     [AllowedTranslations(AllowedTranslation.WordToDoubleWord | AllowedTranslation.ByteToDoubleWord)]
     public class STM32_UART_Fuzz : BasicDoubleWordPeripheral, IUART
     {
-        // [DllImport("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/target/release/liblibafl_renode.so")] 
-        // // // public static extern void update_cov_map(ulong pc);
-        // public static extern IntPtr get_uart_input_ptr(); 
-        // [DllImport("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/target/release/liblibafl_renode.so")]
-        // public static extern IntPtr get_uart_input_size_ptr(); 
-        // private static IntPtr inputPtr = get_uart_input_ptr();
-        // private static IntPtr inputSizePtr = get_uart_input_size_ptr(); 
-
-
-        // [DllImport("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/target/release/liblibafl_renode.so")] 
-        // public static extern IntPtr get_i2c_input_ptr(); //multipart - libafl
         [DllImport("liblibafl_renode.so")]
         // public static extern IntPtr uart_get_input_ptr(); //multiInput - libafl
         public static extern IntPtr get_input_ptr(); //byteInput - libafl
-        // [DllImport("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/target/release/liblibafl_renode.so")]
         // public static extern IntPtr get_i2c_input_size_ptr(); //multipart - libafl
         [DllImport("liblibafl_renode.so")]
         // public static extern IntPtr uart_get_input_size_ptr(); //multiInput - libafl

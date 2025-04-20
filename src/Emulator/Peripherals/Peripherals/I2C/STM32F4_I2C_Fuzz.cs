@@ -21,14 +21,9 @@ namespace Antmicro.Renode.Peripherals.I2C
     [AllowedTranslations(AllowedTranslation.WordToDoubleWord)]
     public sealed class STM32F4_I2C_Fuzz : SimpleContainer<II2CPeripheral>, IDoubleWordPeripheral, IBytePeripheral, IKnownSize
     {
-        
-        // [DllImport("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/target/release/liblibafl_renode.so")] 
-        // public static extern IntPtr get_i2c_input_ptr(); //multipart - libafl
         [DllImport("liblibafl_renode.so")]
         // public static extern IntPtr i2c_get_input_ptr(); //multiInput - libafl
         public static extern IntPtr get_input_ptr(); //byteInput - libafl
-        // [DllImport("/home/asmita/fuzzing_bare-metal/SEFF_project_dirs/SEFF-project/LibAFL/fuzzers/libafl_renode/target/release/liblibafl_renode.so")]
-        // public static extern IntPtr get_i2c_input_size_ptr(); //multipart - libafl
         [DllImport("liblibafl_renode.so")]
         // public static extern IntPtr i2c_get_input_size_ptr(); //multiInput - libafl
         public static extern IntPtr get_input_size_ptr(); //byteInput
@@ -268,12 +263,13 @@ namespace Antmicro.Renode.Peripherals.I2C
                             // }
                             dataToReceive = new Queue<byte>(tempArray);
                             datasize_track = datasize;
-                            general_fuzz_data.Clear();
-                            general_fuzz_data.AddRange(tempArray);
+                            // general_fuzz_data.Clear();
+                            // general_fuzz_data.AddRange(tempArray);
                             // Console.WriteLine($"^^^^^STM32f4_I2C_fuzz : datasize : {general_fuzz_data.Count}");
                         }
-                        else if(dataToReceive.Count<=0 && general_fuzz_data.Count>0){
-                            dataToReceive = new Queue<byte>(general_fuzz_data.ToArray());
+                        else if(dataToReceive.Count<=0){
+                            dataToReceive = new Queue<byte>(new byte[] { 0x1A});
+                            // dataToReceive = new Queue<byte>(general_fuzz_data.ToArray());
                             // Console.WriteLine($"^^^^^STM32f4_I2C_fuzz : datasize prev : {general_fuzz_data.Count}");
                         }
                         // else if(datasize<=0 && datasize_track<=0 ){
