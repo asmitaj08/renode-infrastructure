@@ -32,6 +32,8 @@ using Antmicro.Renode.Utilities.Collections;
 using Antmicro.Renode.Utilities.GDB;
 using Microsoft.CSharp.RuntimeBinder;
 using Monitor = System.Threading.Monitor;
+using Antmicro.Renode.Peripherals.I2C;
+using Antmicro.Renode.Peripherals.UART;
 
 namespace Antmicro.Renode.Core
 {
@@ -626,6 +628,38 @@ namespace Antmicro.Renode.Core
 
         }
 
+        private HashSet<string> peripheralsToFuzz = new HashSet<string>();
+
+        public void ConfigurePeripheralsToFuzz(string[] peripheralNames)
+        {
+            {
+                // peripheralsToFuzz_k.Clear();
+                peripheralsToFuzz.Clear();
+                foreach(var name in peripheralNames)
+                {
+                    peripheralsToFuzz.Add(name);
+                    // if(localNames_reversed.TryGetValue(name, out var val)){
+                    //     peripheralsToFuzz_k.Add(val);
+                    // }
+                }
+
+            }
+            Console.WriteLine($"^^^Machine.cs ConfigurePeripheralsToFuzz : ConfigurePeripheralsToFuzz.Count : {peripheralsToFuzz.Count}");
+        }
+
+
+        // [DllImport("liblibafl_renode.so")]
+        // // public static extern IntPtr i2c_get_input_ptr(); //multiInput - libafl
+        // public static extern IntPtr get_input_ptr(); //byteInput - libafl
+        // [DllImport("liblibafl_renode.so")]
+        // // public static extern IntPtr i2c_get_input_size_ptr(); //multiInput - libafl
+        // public static extern IntPtr get_input_size_ptr(); //byteInput
+
+        // // private static IntPtr inputPtr = i2c_get_input_ptr(); //multi
+        // // private static IntPtr inputSizePtr = i2c_get_input_size_ptr(); //multi
+        // private static IntPtr inputPtr = get_input_ptr(); //byte
+        // private static IntPtr inputSizePtr = get_input_size_ptr();
+
         public void FuzzReset()
         {
             
@@ -633,36 +667,26 @@ namespace Antmicro.Renode.Core
             {
                 p.Reset();
             }
-            // // Console.WriteLine("^^^ Machine.cs Machine Reset()");
-            // //lock(pausingSync)
-            // {
-            //    // using(ObtainPausedState(true))
+            //Reading Fuzz input , comment these if providing input via python script using ReadFromFuzzer_PY during replay
+            // int datasize = 0;
+            // byte[] fuzzDataIn;
+            
+            // unsafe{
+            //     ulong* datasize_ptr = (ulong*)inputSizePtr;
+            //     datasize = (int)*datasize_ptr;
+            //     // Console.WriteLine($"inputPtr : 0x{inputPtr.ToString("X")}, inputSizePtr : 0x{inputSizePtr.ToString("X")}, datasize : {datasize}");
+            //     // Console.WriteLine($"^^^ Mahine.cs datasize : {datasize}");
+            //     }
+            // if((datasize>0)){
+            //         fuzzDataIn = new byte[datasize];
+            //     // lock (syncLock){
+            //         Marshal.Copy(inputPtr, fuzzDataIn, 0, datasize);
+            //     // }
+            //     //foreach(var p in peripheralsToFuzz)  // commented for now
             //     {
-                    
-            //         // foreach(var resetable in registeredPeripherals.Distinct().ToList())
-            //         // {
-            //             // if(TryGetLocalName(resetable, out var name) && peripheralsToReset.Contains(name))
-            //             // {
-            //             //     Console.WriteLine($"Resetting {name}");
-            //             //     resetable.Reset();
-            //             // }
-            //             // resetable.Reset();
-
-            //             // foreach(var kvp in localNames) // kvp = KeyValuePair<IPeripheral, string>
-            //             // {
-            //             //     // Console.WriteLine($"^^^ Machine.cs  localNames : {kvp.Value}");
-            //             //     if(peripheralsToReset.Contains(kvp.Value))
-            //             //     {
-            //             //         // Console.WriteLine($" ^^^ Machine.cs Resetting {kvp.Value}");
-            //             //         kvp.Key.Reset();
-            //             //     }
-            //             // }
-            //         // }
-            //         // var machineReset = MachineReset;
-            //         // if(machineReset != null)
-            //         // {
-            //         //     machineReset(this);
-            //         // }
+            //         // p.ReadFromFuzzer_Internal(fuzzDataIn);
+            //         STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(fuzzDataIn); //hardcoding for now, later make it more configurable
+            //         STM32_UART_Fuzz.ReadFromFuzzer_Internal(fuzzDataIn);
             //     }
             // }
         }
