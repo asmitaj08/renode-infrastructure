@@ -15,6 +15,7 @@ using Antmicro.Renode.Peripherals.Bus;
 using Antmicro.Renode.Peripherals.SPI;
 using Antmicro.Renode.Utilities;
 
+
 namespace Antmicro.Renode.Peripherals.UART.Silabs
 {
     public abstract class EFR32_GenericUSART : UARTBase, IUARTWithBufferState, IPeripheralContainer<ISPIPeripheral, NullRegistrationPoint>
@@ -80,15 +81,20 @@ namespace Antmicro.Renode.Peripherals.UART.Silabs
             return new[] { NullRegistrationPoint.Instance };
         }
 
-        public override void WriteChar(byte value)
+        public void WriteChar(byte value)
         {
             if(BufferState == BufferState.Full)
             {
+                // Console.WriteLine("^^^^^^^RX buffer is full");
                 this.Log(LogLevel.Warning, "RX buffer is full. Dropping incoming byte (0x{0:X})", value);
                 return;
             }
             base.WriteChar(value);
         }
+
+        // public override void ReadFromFuzzer_PY(byte[] data){
+        //          base.ReadFromFuzzer_PY(data);
+        // }
 
         IEnumerable<IRegistered<ISPIPeripheral, NullRegistrationPoint>> IPeripheralContainer<ISPIPeripheral, NullRegistrationPoint>.Children
         {
@@ -511,6 +517,7 @@ namespace Antmicro.Renode.Peripherals.UART.Silabs
 
         private byte ReadBuffer()
         {
+            // Console.WriteLine($"^^^^^EFR32_GenericUSART.cs ReadBuffer()");
             byte character;
             return TryGetCharacter(out character) ? character : (byte)0;
         }

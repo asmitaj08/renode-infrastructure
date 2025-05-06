@@ -655,8 +655,8 @@ namespace Antmicro.Renode.Peripherals.CPU
         // HashSet to store unique block PCs (ulong used for PC values)
         public HashSet<ulong> uniqueBlocksEnd = new HashSet<ulong>(); // just for testing
         private HashSet<ulong> uniqueBlocks = new HashSet<ulong>(); // just for testing
-        private HashSet<ulong> uniqueBlocks_onTranslationFetch = new HashSet<ulong>(); // just for testing
-        private HashSet<ulong> uniqueBlocks_logDisassembly = new HashSet<ulong>(); // just for testing
+        // private HashSet<ulong> uniqueBlocks_onTranslationFetch = new HashSet<ulong>(); // just for testing
+        // private HashSet<ulong> uniqueBlocks_logDisassembly = new HashSet<ulong>(); // just for testing
         private HashSet<ulong> indexHash = new HashSet<ulong>(); // just for testing
         // private HashSet<(ulong,ulong)> uniqueEdges = new HashSet<(ulong,ulong)>(); // just for testing - gives some packer error
 
@@ -718,8 +718,8 @@ namespace Antmicro.Renode.Peripherals.CPU
 
                     ulong hash = (pc ^ PREV_LOC) & (MAP_SIZE - 1);
                     // indexHash.Add(hash); 
-                    uniqueBlocks.Add(pc);
-                    // uniqueEdges.Add(new ULongPair(PREV_PC,pc));
+                    // uniqueBlocks.Add(pc);  //comment it when fuzzing, uncomment when replaying
+                    // uniqueEdges.Add(new ULongPair(PREV_PC,pc)); //comment it when fuzzing, uncomment when replaying
                     // lock (covMapLock){ 
                     unsafe{
                         byte* ptr = (byte*)covMapPtr;
@@ -755,7 +755,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             });
         }
 
-        public void CountNonZeroElements_COVMAP()
+        public int CountNonZeroElements_COVMAP()
         {
             int nonZeroCount = 0;
             unsafe{
@@ -771,19 +771,20 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
             }
 
-            if (nonZeroCount==0){
-                Console.WriteLine($"***** CountNonZeroElements_COVMAP is ZeroAll!!!! : {nonZeroCount}");
-            }
-            else{
-                Console.WriteLine($"***** CountNonZeroElements_COVMAP : {nonZeroCount}");
-            }
+            // if (nonZeroCount==0){
+            //     Console.WriteLine($"***** CountNonZeroElements_COVMAP is ZeroAll!!!! : {nonZeroCount}");
+            // }
+            // else{
+            //     Console.WriteLine($"***** CountNonZeroElements_COVMAP : {nonZeroCount}");
+            // }
+            return nonZeroCount;
         }
 
-        public void Fuzz_GetBlock(int i) // //--use it when replaying to get block start PCs for block coverage
+        public void Fuzz_WriteBlocksToFile(int i) // //--use it when replaying to get block start PCs for block coverage
         {
             string filePath1 = $"uniqueBlocks_{i}.txt";
-            string filePath2 = $"uniqueBlocks_onTranslationFetch{i}.txt";
-            string filePath3 = $"uniqueBlocks_logDisassembly{i}.txt";
+            // string filePath2 = $"uniqueBlocks_onTranslationFetch{i}.txt";
+            // string filePath3 = $"uniqueBlocks_logDisassembly{i}.txt";
             try
             {
                 using (StreamWriter writer = new StreamWriter(filePath1))
@@ -794,48 +795,48 @@ namespace Antmicro.Renode.Peripherals.CPU
                 }
                 }
 
-                using (StreamWriter writer = new StreamWriter(filePath2))
-                {
-                foreach (var item in uniqueBlocks_onTranslationFetch)
-                {
-                    writer.WriteLine(item.ToString("X"));  // Write each ulong to a new line in the file
-                }
-                }
+                // using (StreamWriter writer = new StreamWriter(filePath2))
+                // {
+                // foreach (var item in uniqueBlocks_onTranslationFetch)
+                // {
+                //     writer.WriteLine(item.ToString("X"));  // Write each ulong to a new line in the file
+                // }
+                // }
 
-                using (StreamWriter writer = new StreamWriter(filePath3))
-                {
-                foreach (var item in uniqueBlocks_logDisassembly)
-                {
-                    writer.WriteLine(item.ToString("X"));  // Write each ulong to a new line in the file
-                }
-                }
+                // using (StreamWriter writer = new StreamWriter(filePath3))
+                // {
+                // foreach (var item in uniqueBlocks_logDisassembly)
+                // {
+                //     writer.WriteLine(item.ToString("X"));  // Write each ulong to a new line in the file
+                // }
+                // }
             }
             catch (Exception ex)
             {
                 Console.WriteLine("An error occurred while writing to the file: " + ex.Message);
             }
-            Console.WriteLine($"^^^^^Block_count :{uniqueBlocks.Count} ");
+            // Console.WriteLine($"^^^^^Block_count :{uniqueBlocks.Count} ");
         }
 
-        public void Fuzz_GetBlockEndCount(int i) // //--use it when replaying to get block start PCs for block coverage
-        {
-            string filePath = $"uniqueBlocksEnd_{i}.txt";
-            try
-            {
-                using (StreamWriter writer = new StreamWriter(filePath))
-                {
-                foreach (var item in uniqueBlocksEnd)
-                {
-                    writer.WriteLine(item.ToString("X"));  // Write each ulong to a new line in the file
-                }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("An error occurred while writing to the file: " + ex.Message);
-            }
-            Console.WriteLine($"^^^^^BlockEnd_count :{uniqueBlocksEnd.Count} ");
-        }
+        // public void Fuzz_GetBlockEndCount(int i) // //--use it when replaying to get block start PCs for block coverage
+        // {
+        //     string filePath = $"uniqueBlocksEnd_{i}.txt";
+        //     try
+        //     {
+        //         using (StreamWriter writer = new StreamWriter(filePath))
+        //         {
+        //         foreach (var item in uniqueBlocksEnd)
+        //         {
+        //             writer.WriteLine(item.ToString("X"));  // Write each ulong to a new line in the file
+        //         }
+        //         }
+        //     }
+        //     catch (Exception ex)
+        //     {
+        //         Console.WriteLine("An error occurred while writing to the file: " + ex.Message);
+        //     }
+        //     Console.WriteLine($"^^^^^BlockEnd_count :{uniqueBlocksEnd.Count} ");
+        // }
 
         public void Fuzz_GetEdges(int i) // testing
         {
@@ -858,13 +859,15 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
-        public void Fuzz_GetEdgesCount(){
-            Console.WriteLine($"^^^^^ Fuzz_GetEdgesCount : {uniqueEdges.Count}");
+        public int Fuzz_GetEdgesCount(){
+            // Console.WriteLine($"^^^^^ Fuzz_GetEdgesCount : {uniqueEdges.Count}");
+            return uniqueEdges.Count;
         }
-        public void Fuzz_GetBlockCount(){
-            Console.WriteLine($"^^^^^ Fuzz_GetBlockCount : uniqueBlocks: {uniqueBlocks.Count}");
+        public int Fuzz_GetBlockCount(){
+            // Console.WriteLine($"^^^^^ Fuzz_GetBlockCount : uniqueBlocks: {uniqueBlocks.Count}");
             // Console.WriteLine($"^^^^^ Fuzz_GetBlockCount : uniqueBlocks_onTranslationFetch : {uniqueBlocks_onTranslationFetch.Count}");
             // Console.WriteLine($"^^^^^ Fuzz_GetBlockCount : uniqueBlocks_logDisassembly : {uniqueBlocks_logDisassembly.Count}");
+            return uniqueBlocks.Count;
         }
 
          public void Fuzz_ClearSets() //--use it when replaying to get block start PCs for block coverage
@@ -874,7 +877,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             uniqueBlocks.Clear();
             // uniqueBlocks_onTranslationFetch.Clear();
             // uniqueBlocks_logDisassembly.Clear();
-            // uniqueEdges.Clear();
+            uniqueEdges.Clear();
             // uniqueBlocksEnd.Clear();
             // indexHash.Clear();
             // Console.WriteLine($"^^^^^After cllear Block_count:{uniqueBlocks.Count}, edge_count : {uniqueEdges.Count} , indexHash : {indexHash.Count} ");
@@ -1518,7 +1521,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             {
                 info = " - " + info;
             }
-            uniqueBlocks_onTranslationFetch.Add(offset);
+            // uniqueBlocks_onTranslationFetch.Add(offset);
             this.Log(LogLevel.Info, "Fetching block @ 0x{0:X8}{1}", offset, info);
         }
 
@@ -2541,7 +2544,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         private void LogDisassembly(ulong pc, uint size, uint flags)
         {
-            uniqueBlocks_logDisassembly.Add(pc);
+            // uniqueBlocks_logDisassembly.Add(pc);
             if(LogFile == null)
             {
                 return;

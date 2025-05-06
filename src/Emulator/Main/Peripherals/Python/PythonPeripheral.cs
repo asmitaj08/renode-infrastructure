@@ -145,7 +145,7 @@ namespace Antmicro.Renode.Peripherals.Python
 
         public void Reset()
         {
-            Console.WriteLine("^^^^^^ PythonPeripheral.cs Reset()");
+            // Console.WriteLine("^^^^^^ PythonPeripheral.cs Reset()");
             inited = false;
             EnsureInit();
         }

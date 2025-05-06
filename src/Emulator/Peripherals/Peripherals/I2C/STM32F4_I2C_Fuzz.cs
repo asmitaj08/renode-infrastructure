@@ -113,11 +113,11 @@ namespace Antmicro.Renode.Peripherals.I2C
         }
 
         public void ReadFromFuzzer_PY(byte[] data){
-            // Console.WriteLine($"^^^^ReadFromFuzzer_i2c() in STM32F4_I2C_Fuzz.cs Len : {data.Length}");
+               Console.WriteLine($"^^^^Start ReadFromFuzzer_i2c() in STM32F4_I2C_Fuzz.cs Len : {data.Length}");
                 dataToReceive = new Queue<byte>(data);
                 // general_fuzz_data.Clear();
                 // general_fuzz_data.AddRange(data);
-                Console.WriteLine($"^^^^ReadFromFuzzer_i2c() in STM32F4_I2C_Fuzz.cs Len : {dataToReceive.Count}");
+                Console.WriteLine($"^^^^Done ReadFromFuzzer_i2c() in STM32F4_I2C_Fuzz.cs Len : {dataToReceive.Count}");
 
         }
         

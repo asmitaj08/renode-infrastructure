@@ -65,7 +65,7 @@ namespace Antmicro.Renode.Peripherals.GPIOPort
 
         public virtual void Reset()
         {
-            Console.WriteLine("^^^^^ BaseGPIOPort.cs Reset()");
+            // Console.WriteLine("^^^^^ BaseGPIOPort.cs Reset()");
             foreach(var connection in Connections.Values)
             {
                 connection.Unset();

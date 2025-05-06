@@ -819,6 +819,7 @@
     <Compile Include="Emulator/Peripherals/Peripherals/GPIOPort/EFR32_GPIOPort.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/I2C/EFR32_I2CController.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/UART/EFR32_USART.cs" />
+    <Compile Include="Emulator/Peripherals/Peripherals/UART/EFR32_USART_Fuzz.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/Sensors/MAX6682MUA.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/Sensors/SI70xx.cs" />
     <Compile Include="Emulator/Peripherals/Peripherals/Sensors/SI7210.cs" />

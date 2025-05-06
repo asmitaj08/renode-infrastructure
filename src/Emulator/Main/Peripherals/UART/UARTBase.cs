@@ -12,18 +12,40 @@ using Antmicro.Renode.Core.Structure;
 using Antmicro.Renode.Logging;
 using Antmicro.Migrant;
 using Antmicro.Migrant.Hooks;
+using System.Runtime.InteropServices;
 
 namespace Antmicro.Renode.Peripherals.UART
 {
     public abstract class UARTBase : NullRegistrationPointPeripheralContainer<IUART>, IUART
     {
+        // [DllImport("liblibafl_renode.so")]
+        // // public static extern IntPtr uart_get_input_ptr(); //multiInput - libafl
+        // public static extern IntPtr get_input_ptr(); //byteInput - libafl
+        // // public static extern IntPtr get_i2c_input_size_ptr(); //multipart - libafl
+        // [DllImport("liblibafl_renode.so")]
+        // // public static extern IntPtr uart_get_input_size_ptr(); //multiInput - libafl
+        // public static extern IntPtr get_input_size_ptr(); //byteInput
+        // // private static IntPtr inputPtr = uart_get_input_ptr(); //multi
+        // // private static IntPtr inputSizePtr = uart_get_input_size_ptr(); 
+        // private static IntPtr inputPtr = get_input_ptr(); //byteInput
+        // private static IntPtr inputSizePtr = get_input_size_ptr();
+        
         protected UARTBase(IMachine machine) : base(machine)
         {
             queue = new Queue<byte>();
             innerLock = new object();
         }
 
-        public virtual void WriteChar(byte value)
+        // public virtual void ReadFromFuzzer_PY(byte[] data){ //added fuzz for renodeAFL++ sample example
+        //         queue = new Queue<byte>(data);
+        //         //  WriteChar(0xaa); //dummy val, just setting  UART flags internaly
+        //         // general_fuzz_data.Clear();
+        //         // general_fuzz_data.AddRange(data);
+        //         Console.WriteLine($"^^^^ReadFromFuzzer_PY_uart() in STM32F4_UART_Fuzz.cs Len : {queue.Count}");
+
+        // }
+
+        public virtual void WriteChar(byte value) //orig
         {
             lock(innerLock)
             {
@@ -37,10 +59,50 @@ namespace Antmicro.Renode.Peripherals.UART
                 CharWritten();
             }
         }
+        //for fuzzing
+        // private int datasize_track=0;
+        // public virtual void WriteChar(byte value) //modified
+        // {
+        //     lock(innerLock)
+        //     {
+        //         if(!IsReceiveEnabled)
+        //         {
+        //             this.Log(LogLevel.Debug, "UART or receive disabled; dropping the character written: '{0}'", (char)value);
+        //             return;
+        //         }
+
+
+        //          int datasize = 0;
+        //     unsafe{
+        //             ulong* datasize_ptr = (ulong*)inputSizePtr;
+        //             datasize = (int)*datasize_ptr;
+        //         }
+        //    if(datasize!=datasize_track && datasize>0){
+        //         byte[] tempArray = new byte[datasize];
+        //         // lock (syncLock){
+        //             Marshal.Copy(inputPtr, tempArray, 0, datasize);
+        //         // }
+        //         queue = new Queue<byte>(tempArray);
+        //         datasize_track = datasize;
+        //         // general_fuzz_data.Clear();
+        //         // general_fuzz_data.AddRange(tempArray);
+        //     }
+        //     // else if(general_fuzz_data.Count > 0){
+        //     //     receiveFifo = new Queue<byte>(general_fuzz_data.ToArray());
+        //     // }
+        //     else if(datasize<=0){
+        //         queue.Enqueue(value); // if no fuzz data available
+        //     }
+        // //     //--------
+
+        //         // queue.Enqueue(value);
+        //         CharWritten();
+        //     }
+        // }
 
         public override void Reset()
         {
-            Console.WriteLine("^^^^^ UARTBase.cs Reset()");
+            // Console.WriteLine("^^^^^ UARTBase.cs Reset()");
             ClearBuffer();
         }
 
@@ -108,7 +170,8 @@ namespace Antmicro.Renode.Peripherals.UART
         }
 
         protected readonly object innerLock;
-        private readonly Queue<byte> queue;
+        private readonly Queue<byte> queue; //orig
+        // private  Queue<byte> queue;
 
         public abstract Bits StopBits { get; }
 

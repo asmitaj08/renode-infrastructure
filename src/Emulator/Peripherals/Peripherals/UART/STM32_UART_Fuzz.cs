@@ -32,7 +32,7 @@ namespace Antmicro.Renode.Peripherals.UART
         // private static IntPtr inputSizePtr = uart_get_input_size_ptr(); 
         private static IntPtr inputPtr = get_input_ptr(); //byteInput
         private static IntPtr inputSizePtr = get_input_size_ptr(); 
-        
+
         public STM32_UART_Fuzz(IMachine machine, uint frequency = 8000000) : base(machine)
         {
             this.frequency = frequency;
@@ -41,11 +41,13 @@ namespace Antmicro.Renode.Peripherals.UART
         }
 
          public void ReadFromFuzzer_PY(byte[] data){
+                Console.WriteLine($"^^^^Start ReadFromFuzzer_PY_uart() in STM32F4_UART_Fuzz.cs Len : {receiveFifo.Count}");
+
                 receiveFifo = new Queue<byte>(data);
-                 WriteChar(0xaa); //dummy val, just setting  UART flags internaly
+                //  WriteChar(0xaa); //dummy val, just setting  UART flags internaly
                 // general_fuzz_data.Clear();
                 // general_fuzz_data.AddRange(data);
-                Console.WriteLine($"^^^^ReadFromFuzzer_PY_uart() in STM32F4_UART_Fuzz.cs Len : {general_fuzz_data.Count}, data[0] :  {general_fuzz_data[0]}");
+                Console.WriteLine($"^^^^ Done ReadFromFuzzer_PY_uart() in STM32F4_UART_Fuzz.cs Len : {receiveFifo.Count}");
 
         }
 
@@ -71,10 +73,10 @@ namespace Antmicro.Renode.Peripherals.UART
        
         public void WriteChar(byte value)
         {
-             Console.WriteLine("****** UART WriteChar");
+            //  Console.WriteLine("****** UART WriteChar");
             if(!usartEnabled.Value && !receiverEnabled.Value)
             {
-                Console.WriteLine("****** Received a character, but the receiver is not enabled, dropping.");
+                // Console.WriteLine("****** Received a character, but the receiver is not enabled, dropping.");
                 this.Log(LogLevel.Warning, "Received a character, but the receiver is not enabled, dropping.");
                 return;
             }
@@ -203,7 +205,7 @@ namespace Antmicro.Renode.Peripherals.UART
                         // We can assume that USART_SR has already been read on the ISR.
                         idleLineDetected.Value = false;
                         // receiveFifo = new Queue<byte>(new byte[] { 0xD0, 0xAA, 0xCC, 0xDE, 0xFF,0x1A, 0xAA, 0xCC, 0xDE, 0xFF}); // if no fuzz data available
-                        Console.WriteLine($"****** UART DR....... read , receiveFifo Len : {receiveFifo.Count}");
+                        // Console.WriteLine($"****** UART DR....... read , receiveFifo Len : {receiveFifo.Count}");
                         if(receiveFifo.Count > 0)
                         {
                             value = receiveFifo.Dequeue();
@@ -238,7 +240,7 @@ namespace Antmicro.Renode.Peripherals.UART
                 .WithFlag(5, out receiverNotEmptyInterruptEnabled, name: "RXNEIE")
                 .WithFlag(6, out transmissionCompleteInterruptEnabled, name: "TCIE")
                 .WithFlag(7, out transmitDataRegisterEmptyInterruptEnabled, name: "TXEIE")
-                .WithTaggedFlag("PEIE", 8)
+                .WithFlag(8, name:"PEIE")
                 .WithEnumField(9, 1, out paritySelection, name: "PS")
                 .WithFlag(10, out parityControlEnabled, name: "PCE")
                 .WithTaggedFlag("WAKE", 11)
@@ -253,6 +255,9 @@ namespace Antmicro.Renode.Peripherals.UART
                     {
                         idleLineDetectedCancellationTokenSrc?.Cancel();
                     }
+                    // if(receiverEnabled.Value){ //added for fuzzing - cnc - it won't work for all target
+                    //     WriteChar(0xaa);
+                    // }
                     Update();
                 })
             ;
@@ -269,7 +274,24 @@ namespace Antmicro.Renode.Peripherals.UART
                 .WithTaggedFlag("LINEN", 14)
                 .WithReservedBits(15, 17)
             ;
+            Register.Control3.Define(this, name: "USART_CR3")
+                .WithFlag(0, name:"EIE")
+                .WithTaggedFlag("IREN", 1)
+                .WithTaggedFlag("IRLP", 2)
+                .WithTaggedFlag("HDSEL", 3)
+                .WithTaggedFlag("NACK", 4)
+                .WithTaggedFlag("DMAR", 6)
+                .WithTaggedFlag("DMAT", 7)
+                .WithTaggedFlag("RTSE", 8)
+                .WithTaggedFlag("CTSE", 9)
+                .WithTaggedFlag("CTSIE", 10)
+                .WithTaggedFlag("ONEBIT", 11)
+                .WithReservedBits(12, 20)
+            ;
+
+
         }
+        
 
         private void ReportIdleLineDetected(CancellationToken ct)
         {
