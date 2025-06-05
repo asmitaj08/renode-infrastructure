@@ -128,7 +128,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public void WriteByte(long offset, byte value)
         {
-            // Console.WriteLine($"^^^^^^******  MappedMemory WriteByte(), offset : 0x{offset:X},val : {value:X}");
+            Console.WriteLine($"^^^^^^******  MappedMemory WriteByte(), offset : 0x{offset:X},val : {value:X}");
             if(offset < 0 || offset >= size)
             {
                 this.Log(LogLevel.Error, "Tried to write byte value 0x{0:X} to offset 0x{1:X} outside the range of the peripheral 0x0 - 0x{2:X}", value, offset, size);
@@ -318,7 +318,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public void WriteBytes(long offset, byte[] array, int startingIndex, int count, ICPU context = null)
         {
-            // Console.WriteLine($"^^^^^^******  222222 MappedMemory WriteBytes(), offset : 0x{offset:X},count : {count}");
+            Console.WriteLine($"^^^^^^******  222222 MappedMemory WriteBytes(), offset : 0x{offset:X},count : {count}");
             if(offset < 0 || offset > size - count)
             {
                 this.Log(LogLevel.Error, "Tried to write {0} bytes at offset 0x{1:X} outside the range of the peripheral 0x0 - 0x{2:X}", count, offset, size);
@@ -385,9 +385,10 @@ namespace Antmicro.Renode.Peripherals.Memory
         }
 
         private List<IntPtr> allocatedPointers = new List<IntPtr>(); // for fuzzer
+        private readonly HashSet<int> allocatedSegments = new HashSet<int>(); // for fuzzer
         public void TouchSegment(int segmentNo)
         {
-            // Console.WriteLine($"^^^^^^^^ MappedMemory.cs TouchSegment() : {segmentNo}, current seg val : 0x{segments[segmentNo].ToInt64():X}");
+            // Console.WriteLine($"^^^^^^^^ MappedMemory.cs TouchSegment() : segmentNo : {segmentNo}, SegmentSize: {SegmentSize}, current seg val : 0x{segments[segmentNo].ToInt64():X}, allocatedSegments.Count : {allocatedSegments.Count}");
             CheckSegmentNo(segmentNo);
             if(segments[segmentNo] == IntPtr.Zero)
             {
@@ -395,6 +396,8 @@ namespace Antmicro.Renode.Peripherals.Memory
                 var originalPointer = (long)allocSeg;
                 var alignedPointer = (IntPtr)((originalPointer + Alignment) & ~(Alignment - 1));
                 segments[segmentNo] = alignedPointer;
+                allocatedSegments.Add(segmentNo);  // for fuzzer
+                Console.WriteLine($"^^^^^^^^ MappedMemory.cs TouchSegment() added segmentNo : {segmentNo}, alignedPointer : 0x{alignedPointer.ToInt64():X}, allocatedSegments.Count : {allocatedSegments.Count}");
                 if(UsingSharedMemory)
                 {
                     sharedSegments[segmentNo].AlignmentOffset = (ulong)alignedPointer - (ulong)allocSeg;
@@ -408,7 +411,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
 
                 // Track the allocated pointer globally (only tracking the original allocated segment) - Fuzz
-                allocatedPointers.Add(allocSeg); // I added it - fuzz
+                // allocatedPointers.Add(allocSeg); // I added it - fuzz
 
                 var segmentTouched = SegmentTouched;
                 if(segmentTouched != null)
@@ -480,10 +483,27 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public void ZeroAll()
         {
-            // Console.WriteLine($"^^^^^^^^ MappedMemory.cs ZeroAll(), ResetByte : 0x{ResetByte:X} ");
+            Console.WriteLine($"^^^^^^^^ MappedMemory.cs ZeroAll(), ResetByte : 0x{ResetByte:X}, SegmentSize : {SegmentSize}, lenofSegments : {segments.Length} ");
             foreach(var segment in segments.Where(x => x != IntPtr.Zero))
             {
+                Console.WriteLine($"MappedMmeory.cs ZeroAll , zeroing : segment : 0x{segment.ToInt64():X}");
                 MemSet(segment, ResetByte, SegmentSize);
+            }
+        }
+
+        public void ZeroForFuzz() //for fuzz, only clear what was allocated, hopefully it can save time
+        {
+            Console.WriteLine($"MappedMmeory.cs ZeroForFuzz , zeroing : {allocatedSegments.Count}, SegmentSize : {SegmentSize}, lenofSegments : {segments.Length}");
+            foreach(var i in allocatedSegments)
+            {
+                
+                var ptr = segments[i];
+                Console.WriteLine($"MappedMmeory.cs ZeroForFuzz , zeroing : index : {i}, ptr : 0x{ptr.ToInt64():X}");
+                MemSet(ptr, ResetByte, SegmentSize);
+                // if(ptr != IntPtr.Zero)
+                // {
+                //     MemSet(ptr, ResetByte, SegmentSize);
+                // }
             }
         }
 
@@ -866,7 +886,7 @@ namespace Antmicro.Renode.Peripherals.Memory
                     segments.Length
                 ));
             }
-            // Console.WriteLine($"^^^^^^^^ MappedMemory.cs GetSegmentNo(), offset : 0x{offset:X}");
+            Console.WriteLine($"^^^^^^^^ MappedMemory.cs GetSegmentNo(), offset : 0x{offset:X}");
 #endif
             // if such segment is not currently allocated,
             // allocate it
@@ -876,7 +896,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         private IntPtr AllocateSegment(int segmentNo)
         {
-            Console.WriteLine($"^^^^^^^^ MappedMemory.cs AllocateSegment()");
+            Console.WriteLine($"^^^^^^^^ MappedMemory.cs AllocateSegment(), segmentNo : {segmentNo},SegmentSize : {SegmentSize}  ");
             this.NoisyLog("Allocating segment of size {0}.", SegmentSize);
             if(UsingSharedMemory)
             {
@@ -890,7 +910,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         private void InvalidateMemoryFragment(long start, int length)
         {
-            // Console.WriteLine($"^^^^^^^^ MappedMemory.cs InvalidateMemoryFragment at start : 0x{start:X}, length : {length}");
+            Console.WriteLine($"^^^^^^^^ MappedMemory.cs InvalidateMemoryFragment at start : 0x{start:X}, length : {length}");
             if(machine == null)
             {
                 // this peripheral is not connected to any machine, so there is nothing we can do

@@ -121,7 +121,7 @@ namespace Antmicro.Renode.Core
 
         public void Start()
         {
-            Console.WriteLine("^^^^^ externalsManager.cs : Start()");
+            // Console.WriteLine("^^^^^ externalsManager.cs : Start()");
             lock(externals)
             {
                 if(!paused)
@@ -132,10 +132,10 @@ namespace Antmicro.Renode.Core
                 var ownLifeExternals = externals.Select(x => x.Value as IHasOwnLife).Where(x => x != null);
                 if(alreadyStarted)
                 {
-                    Console.WriteLine($"^^^^^ externalsManager.cs : Start() already started");
+                    // Console.WriteLine($"^^^^^ externalsManager.cs : Start() already started");
                     foreach(var external in ownLifeExternals)
                     {
-                        Console.WriteLine($"^^^^^ externalsManager.cs : Start() already started , external : {external}");
+                        // Console.WriteLine($"^^^^^ externalsManager.cs : Start() already started , external : {external}");
                         external.Resume();
                     }
                     foreach(var iHasOwnLife in registeredIHasOwnLifeObjects)
@@ -143,7 +143,7 @@ namespace Antmicro.Renode.Core
                         var target = iHasOwnLife.Target;
                         if(target != null)
                         {
-                            Console.WriteLine($"^^^^^ externalsManager.cs : Start() already started , target : {target}");
+                            // Console.WriteLine($"^^^^^ externalsManager.cs : Start() already started , target : {target}");
                             target.Resume();
                         }
                     }
@@ -152,7 +152,7 @@ namespace Antmicro.Renode.Core
 
                 foreach(var external in ownLifeExternals)
                 {
-                   Console.WriteLine($"^^^^^ externalsManager.cs : Start()  external : {external}");
+                //    Console.WriteLine($"^^^^^ externalsManager.cs : Start()  external : {external}");
                     external.Start();
                 }
 
@@ -161,7 +161,7 @@ namespace Antmicro.Renode.Core
                     var target = iHasOwnLife.Target;
                     if(target != null)
                     {
-                        Console.WriteLine($"^^^^^ externalsManager.cs : Start()  target : {target}");
+                        // Console.WriteLine($"^^^^^ externalsManager.cs : Start()  target : {target}");
                         target.Start();
                     }
                 }
@@ -172,7 +172,7 @@ namespace Antmicro.Renode.Core
 
         public void Pause()
         {
-            Console.WriteLine("\n^^^^^^^^^^^^^^PAUSE externalManer.cs^^^^^^^^^^^^\n");
+            // Console.WriteLine("\n^^^^^^^^^^^^^^PAUSE externalManer.cs^^^^^^^^^^^^\n");
             lock(externals)
             {
                 if(paused)
@@ -306,7 +306,7 @@ namespace Antmicro.Renode.Core
             lock(externals)
             {
                 registeredIHasOwnLifeObjects.Add(new SerializableWeakReference<IHasOwnLife>(own));
-                Console.WriteLine($"^^^^^ externalsManager.cs : RegisterIHasOwnLife()  registering : {own}, paused : {paused}");
+                // Console.WriteLine($"^^^^^ externalsManager.cs : RegisterIHasOwnLife()  registering : {own}, paused : {paused}");
                 if(!paused)
                 {
                     own.Start();

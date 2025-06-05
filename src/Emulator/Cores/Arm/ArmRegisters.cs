@@ -29,6 +29,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public override RegisterValue GetRegister(int register)
         {
+
             if(!mapping.TryGetValue((ArmRegisters)register, out var r))
             {
                 throw new RecoverableException($"Wrong register index: {register}");

@@ -15,6 +15,7 @@ using System.Linq;
 using Antmicro.Renode.Core.Structure.Registers;
 using Antmicro.Renode.Utilities;
 using System.Runtime.InteropServices;
+using System.IO;
 
 namespace Antmicro.Renode.Peripherals.I2C
 {
@@ -90,6 +91,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
             registers.Reset();
             data.Reset();
+            dataToReceive.Clear();
         }
 
         public GPIO EventInterrupt
@@ -112,22 +114,37 @@ namespace Antmicro.Renode.Peripherals.I2C
             }
         }
 
-        public void ReadFromFuzzer_PY(byte[] data){
-               Console.WriteLine($"^^^^Start ReadFromFuzzer_i2c() in STM32F4_I2C_Fuzz.cs Len : {data.Length}");
-                dataToReceive = new Queue<byte>(data);
+        public void ReadFromFuzzer_PY(byte[] data_in){
+               Console.WriteLine($"^^^^Start ReadFromFuzzer_i2c() in STM32F4_I2C_Fuzz.cs Len : {data_in.Length}");
+                dataToReceive = new Queue<byte>(data_in);
                 // general_fuzz_data.Clear();
-                // general_fuzz_data.AddRange(data);
+                // general_fuzz_data.AddRange(data_in);
+                current_fuzz_data.Clear();
+                current_fuzz_data.AddRange(data_in);
                 Console.WriteLine($"^^^^Done ReadFromFuzzer_i2c() in STM32F4_I2C_Fuzz.cs Len : {dataToReceive.Count}");
 
         }
+
+        public void DumpFuzzDataToFile(string filePath)
+        {
+            try
+            {
+                File.WriteAllBytes(filePath, current_fuzz_data.ToArray());
+                Console.WriteLine($"^^^ Fuzz data dumped to: {filePath}");
+            }
+            catch(Exception ex)
+            {
+                Console.WriteLine($"^^^^^ Error writing fuzz data to file: {ex.Message}");
+            }
+        }
         
 
-        // public static void ReadFromFuzzer_Internal(byte[] data){ //WHEN WAS SENT FROM MACHINE.CS BUT It's slow  
-        //         //if (data != null && data.Length > 0){ //already being checked inside machine.cs
-        //             dataToReceive = new Queue<byte>(data);
+        // public static void ReadFromFuzzer_Internal(byte[] data_in){ //WHEN WAS SENT FROM MACHINE.CS BUT It's slow  
+        //         //if (data_in != null && data_in.Length > 0){ //already being checked inside machine.cs
+        //             dataToReceive = new Queue<byte>(data_in);
         //         //}
         //         // general_fuzz_data.Clear();
-        //         // general_fuzz_data.AddRange(data);
+        //         // general_fuzz_data.AddRange(data_in);
         //         // Console.WriteLine($"^^^^ReadFromFuzzer_Internal_i2c() in STM32F4_I2C_Fuzz.cs Len : {dataToReceive.Count}");
         // }
 
@@ -271,6 +288,8 @@ namespace Antmicro.Renode.Peripherals.I2C
                             // }
                             dataToReceive = new Queue<byte>(tempArray);
                             datasize_track = datasize;
+                            current_fuzz_data.Clear();
+                            current_fuzz_data.AddRange(tempArray);
                             // general_fuzz_data.Clear();
                             // general_fuzz_data.AddRange(tempArray);
                             // Console.WriteLine($"^^^^^STM32f4_I2C_fuzz : datasize : {dataToReceive.Count}");
@@ -426,7 +445,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         // private byte[] general_fuzz_data ;
         private List<byte> general_fuzz_data = new List<byte>(1024); //size changes based on input from fuzzer
-        
+        private List<byte> current_fuzz_data = new List<byte>(1024);
 
         private enum Registers
         {

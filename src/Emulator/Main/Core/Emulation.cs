@@ -298,7 +298,7 @@ namespace Antmicro.Renode.Core
 
         public void StartAll()
         {
-             Console.WriteLine("^^^^^Emulation.cs StartAll() ");
+            //  Console.WriteLine("^^^^^Emulation.cs StartAll() ");
             lock(machLock)
             {
                 InnerStartAll();
@@ -315,7 +315,7 @@ namespace Antmicro.Renode.Core
             //during start up procedure. It might happen on rare occasions. E.g. when a script loads them, and user
             //hits the pause button.
             //Otherwise it would crash.
-            Console.WriteLine("^^^^^Emulation.cs InnerStartAll() ");
+            // Console.WriteLine("^^^^^Emulation.cs InnerStartAll() ");
             ExternalsManager.Start();
             foreach(var machine in Machines.ToList())
             {
@@ -325,7 +325,7 @@ namespace Antmicro.Renode.Core
 
         public void PauseAll()
         {
-            Console.WriteLine("^^^^^Emulation.cs PauseAll() ");
+            // Console.WriteLine("^^^^^Emulation.cs PauseAll() ");
             lock(machLock)
             {
                 MasterTimeSource.Stop();

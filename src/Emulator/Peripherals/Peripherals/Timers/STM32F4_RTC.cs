@@ -527,7 +527,7 @@ namespace Antmicro.Renode.Peripherals.Timers
 
         public void Reset()
         {
-            Console.WriteLine("****** STM32F4_RTC.cs Reset");
+            // Console.WriteLine("****** STM32F4_RTC.cs Reset");
             registers.Reset();
             AlarmIRQ.Unset();
             WakeupIRQ.Unset();

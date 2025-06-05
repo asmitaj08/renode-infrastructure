@@ -436,7 +436,7 @@ namespace Antmicro.Renode.Core
         /// Useful when unpausing the machine but we don't want to unpause what's already been paused before.</param>
         private void Start(Func<IHasOwnLife, bool> startFilter)
         {
-            Console.WriteLine("^^^^^Machine.cs Start() -- private func");
+            // Console.WriteLine("^^^^^Machine.cs Start() -- private func");
             lock(pausingSync)
             {
                 switch(state)
@@ -546,16 +546,17 @@ namespace Antmicro.Renode.Core
 
         public void Reset()
         {
-            Console.WriteLine("^^^ Machine.cs Machine Reset()");
+            // Console.WriteLine("^^^ Machine.cs Machine Reset()");
             lock(pausingSync)
             {
                 using(ObtainPausedState(true))
                 {
                     foreach(var resetable in registeredPeripherals.Distinct().ToList())
                     {
-                        Console.WriteLine($"^^^^^^Machine.cs registeredPeripherals : resetable : {resetable} ");
+                        // Console.WriteLine($"^^^^^^Machine.cs registeredPeripherals : resetable : {resetable.ToString()}, type :{resetable.GetType()} ");
                         if(resetable == this)
                         {
+                            // Console.WriteLine($"^^^^^^Machine.cs registeredPeripherals : resetable == this");
                             continue;
                         }
                         resetable.Reset();
@@ -596,11 +597,50 @@ namespace Antmicro.Renode.Core
         //     }
         //     Console.WriteLine($"^^^Machine.cs ConfigurePeripheralsToReset : peripheralsToReset.Count : {peripheralsToReset.Count}");
         // }
+        private  Dictionary<string, IPeripheral> localNames_reversed;
+        private HashSet<IPeripheral> peripheralsToReset_all = new HashSet<IPeripheral>();
+        private HashSet<string> peripheralsToReset_all_temp = new HashSet<string>();
 
-        public void ConfigurePeripheralsToReset(string[] peripheralNames)
+
+        public void fuzz_init_settings(){
+            localNames_reversed = localNames.ToDictionary(kvp=>kvp.Value, kvp=>kvp.Key);
+
+        }
+
+        public void ConfigurePeripheralsToReset(string[] peripheralNames = null)
         {
             // lock(collectionSync)
+            
+            if (peripheralNames == null || peripheralNames.Length == 0)
             {
+                peripheralsToReset_all.Clear();
+                // peripheralsToReset_all_temp.Clear();
+                // fuzz_init_settings();
+                foreach (var kvp in localNames)
+                {
+                    
+                    if(kvp.Value == "sysbus"){
+                        continue;
+                    }
+                    peripheralsToReset_all.Add(kvp.Key);  // even if it's hash; kvp.Key (is of Iperipheral type which does not overirde Equals(), and can't get hashcode, hence it repeats)
+                    // peripheralsToReset_all_temp.Add(kvp.Value);  // values are marked differrent like timer1, timer2, etc; so no point
+                    Console.WriteLine($"Configure To Reset Key: {kvp.Key}, Value: {kvp.Value}");
+                }
+
+                // Console.WriteLine($"************");
+
+                // foreach(var name in peripheralsToReset_all_temp)
+                // {
+                //     Console.WriteLine($"Adding Reset for: {name}");
+                //     if(localNames_reversed.TryGetValue(name, out var val)){
+                //         peripheralsToReset_all.Add(val);
+                //     }
+                // }
+                Console.WriteLine($"^^^Machine.cs ConfigurePeripheralsToReset : peripheralsToReset.Count : {peripheralsToReset_all.Count}");
+            }
+            
+            else{
+                fuzz_init_settings();
                 peripheralsToReset_k.Clear();
                 foreach(var name in peripheralNames)
                 {
@@ -617,16 +657,12 @@ namespace Antmicro.Renode.Core
                 //         peripheralsToReset_k.Add(kvp.Key);
                 //     }
                 // }
-            }
+            
             Console.WriteLine($"^^^Machine.cs ConfigurePeripheralsToReset : peripheralsToReset.Count : {peripheralsToReset_k.Count}");
+            }
         }
 
-        private  Dictionary<string, IPeripheral> localNames_reversed;
-
-        public void fuzz_init_settings(){
-            localNames_reversed = localNames.ToDictionary(kvp=>kvp.Value, kvp=>kvp.Key);
-
-        }
+       
 
         private HashSet<string> peripheralsToFuzz = new HashSet<string>();
 
@@ -663,10 +699,20 @@ namespace Antmicro.Renode.Core
         public void FuzzReset()
         {
             
-            foreach(var p in peripheralsToReset_k) 
-            {
-                p.Reset();
-            }
+            // if (peripheralsToReset_k.Count == 0)
+            // {
+            //     // HashSet is empty
+            //     Console.WriteLine("****** peripheralsToReset_k is empty. Pass the peripheral to reset via ConfigurePeripheralsToReset()");
+            // }
+            // else{
+                // fuzz_init_settings();
+                foreach(var p in peripheralsToReset_k) 
+                {
+                    p.Reset();
+                }
+
+            // }
+            
             //Reading Fuzz input , comment these if providing input via python script using ReadFromFuzzer_PY during replay
             // int datasize = 0;
             // byte[] fuzzDataIn;
@@ -689,6 +735,22 @@ namespace Antmicro.Renode.Core
             //         STM32_UART_Fuzz.ReadFromFuzzer_Internal(fuzzDataIn);
             //     }
             // }
+        }
+
+
+        public void FuzzResetAll(){
+
+            // foreach(var p in localNames.Keys) 
+            // {
+            //     Console.WriteLine($"Resetting : {p}");
+            //     p.Reset();
+            // }
+                foreach(var p in peripheralsToReset_all) 
+                {
+                    // Console.WriteLine($"Resetting : {p}");
+                    p.Reset();
+                }
+
         }
 
         public bool InternalPause { get; private set; }

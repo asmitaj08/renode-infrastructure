@@ -826,7 +826,7 @@ restart:
 
         private void StartCPUThreadTimeHandle()
         {
-            Console.WriteLine("^^^^^ BaseCPUStartCPUThreadTimeHandle()");
+            // Console.WriteLine("^^^^^ BaseCPUStartCPUThreadTimeHandle()");
             this.Trace();
             pauseLockTimeHandleMarker = true;
             lock(pauseLock)

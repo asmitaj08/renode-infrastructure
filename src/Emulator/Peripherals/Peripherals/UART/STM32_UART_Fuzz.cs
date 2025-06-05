@@ -73,10 +73,10 @@ namespace Antmicro.Renode.Peripherals.UART
        
         public void WriteChar(byte value)
         {
-            //  Console.WriteLine("****** UART WriteChar");
+             Console.WriteLine("****** UART WriteChar");
             if(!usartEnabled.Value && !receiverEnabled.Value)
             {
-                // Console.WriteLine("****** Received a character, but the receiver is not enabled, dropping.");
+                Console.WriteLine("****** Received a character, but the receiver is not enabled, dropping.");
                 this.Log(LogLevel.Warning, "Received a character, but the receiver is not enabled, dropping.");
                 return;
             }
@@ -100,11 +100,12 @@ namespace Antmicro.Renode.Peripherals.UART
             // else if(general_fuzz_data.Count > 0){
             //     receiveFifo = new Queue<byte>(general_fuzz_data.ToArray());
             // }
-            else if(datasize<=0){
-                receiveFifo.Enqueue(value); // if no fuzz data available
-            }
+            // else if(datasize<=0){
+            //     receiveFifo.Enqueue(value); // if no fuzz data available
+            // }
         //     //--------
 
+            Console.WriteLine($"****** UART WriteChar, receiveFifo Len : {receiveFifo.Count}");
             readFifoNotEmpty.Value = true;
            
 

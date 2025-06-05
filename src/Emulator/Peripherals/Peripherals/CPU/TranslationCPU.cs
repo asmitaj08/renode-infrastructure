@@ -492,10 +492,12 @@ namespace Antmicro.Renode.Peripherals.CPU
         {
             get
             {
+                // Console.WriteLine($"^^^^TranslationCPU.cs.. get PC");
                 throw new NotImplementedException();
             }
             set
             {
+                // Console.WriteLine($"^^^^TranslationCPU.cs.. set PC");
                 throw new NotImplementedException();
             }
         }
@@ -859,11 +861,11 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
-        public int Fuzz_GetEdgesCount(){
+        public int Fuzz_GetEdgesCount(){ // for replaying 
             // Console.WriteLine($"^^^^^ Fuzz_GetEdgesCount : {uniqueEdges.Count}");
             return uniqueEdges.Count;
         }
-        public int Fuzz_GetBlockCount(){
+        public int Fuzz_GetBlockCount(){ // for replaying
             // Console.WriteLine($"^^^^^ Fuzz_GetBlockCount : uniqueBlocks: {uniqueBlocks.Count}");
             // Console.WriteLine($"^^^^^ Fuzz_GetBlockCount : uniqueBlocks_onTranslationFetch : {uniqueBlocks_onTranslationFetch.Count}");
             // Console.WriteLine($"^^^^^ Fuzz_GetBlockCount : uniqueBlocks_logDisassembly : {uniqueBlocks_logDisassembly.Count}");

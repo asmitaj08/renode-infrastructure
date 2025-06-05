@@ -88,7 +88,7 @@ namespace Antmicro.Renode.Peripherals.Analog
 
       public override void Reset()
       {
-         Console.WriteLine("^^^^ADC_Fuzz.cs Reset()");
+         // Console.WriteLine("^^^^ADC_Fuzz.cs Reset()");
          base.Reset();
          foreach(var c in channels)
          {

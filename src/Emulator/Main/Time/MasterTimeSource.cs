@@ -34,7 +34,7 @@ namespace Antmicro.Renode.Time
         public override void Dispose()
         {
             this.Trace("Disposing...");
-            Console.WriteLine("^^^^^ MasterTimeSource.cs Dispose()");
+            // Console.WriteLine("^^^^^ MasterTimeSource.cs Dispose()");
             lock(locker)
             {
                 if(isDisposed)
@@ -112,7 +112,7 @@ namespace Antmicro.Renode.Time
         public new void Start()
         {
             this.Trace("Starting...");
-            Console.WriteLine("^^^^^ MasterTimeSource.cs start()");
+            // Console.WriteLine("^^^^^ MasterTimeSource.cs start()");
             lock(locker)
             {
                 if(!base.Start())
@@ -142,7 +142,7 @@ namespace Antmicro.Renode.Time
         public new void Stop()
         {
             this.Trace("Stopping...");
-            Console.WriteLine("^^^^^ MasterTimeSource.cs Stop()");
+            // Console.WriteLine("^^^^^ MasterTimeSource.cs Stop()");
             lock(locker)
             {
                 base.Stop();
