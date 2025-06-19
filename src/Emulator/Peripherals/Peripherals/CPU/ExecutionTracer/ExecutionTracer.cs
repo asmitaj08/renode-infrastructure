@@ -172,6 +172,8 @@ namespace Antmicro.Renode.Peripherals.CPU
             {
                 if(operation != MemoryOperation.InsnFetch)
                 {
+                    // Console.WriteLine($"^^^^^ ExecutionTracer.cs SetHookAtMemoryAccess() pc : 0x{pc.ToString("X")}, operation : {operation}, virtualAddress : 0x{virtualAddress.ToString("X")}, physicalAddress : {physicalAddress.ToString("X")}, value : 0x{value:X}");
+
                     currentAdditionalData.Enqueue(new MemoryAccessAdditionalData(pc, operation, virtualAddress, physicalAddress, value));
                 }
             });

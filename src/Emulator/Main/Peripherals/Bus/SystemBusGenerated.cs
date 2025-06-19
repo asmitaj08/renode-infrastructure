@@ -67,7 +67,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void WriteByte(ulong address, byte value, ICPU context = null)
         {
-            // Console.WriteLine($"^^^^^ SystemBusGenerated.cs WriteByte(), address : {address}");
+            // Console.WriteLine($"^^^^^ SystemBusGenerated.cs WriteByte(), address : 0x{address:X}");
             var accessWidth = SysbusAccessWidth.Byte;
             if(IsAddressRangeLocked(address.By((ulong)accessWidth), context))
             {
@@ -251,7 +251,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void WriteDoubleWord(ulong address, uint value, ICPU context = null)
         {
-            // Console.WriteLine($"^^^^^ SystemBusGenerated.cs WriteDoubleWord(), address : {address}");
+            // Console.WriteLine($"^^^^^ SystemBusGenerated.cs WriteDoubleWord(), address : 0x{address:X}");
             var accessWidth = SysbusAccessWidth.DoubleWord;
             if(IsAddressRangeLocked(address.By((ulong)accessWidth), context))
             {

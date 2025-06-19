@@ -76,6 +76,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             hooks = new Dictionary<ulong, HookDescriptor>();
             // Console.WriteLine("^^^^^^ TranslationCPU currentMappings");
             currentMappings = new List<SegmentMapping>();
+            currentMappings_ram_fuzz = new List<SegmentMapping>(); //fuzz
             Console.WriteLine("^^^^^^ TranslationCPU InitializeRegisters");
             InitializeRegisters();
             Console.WriteLine("^^^^^^ TranslationCPU Init");
@@ -232,35 +233,9 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
-    //     private byte[] cpuState_test;
-    //     public void testStatePtr(){
-    //         Console.WriteLine($"**** Inside testStatePtr : [CPU: {this.GetCPUThreadName(machine)}]");
-    //         var statePtr = TlibExportState();
-    //         Console.WriteLine($"\n*****statePtr : {statePtr}");
-    //         Console.WriteLine($"\n*****TlibGetStateSize : {TlibGetStateSize()}");
-
-    //         cpuState_test = new byte[TlibGetStateSize()];
-    //         Marshal.Copy(statePtr, cpuState_test, 0, cpuState_test.Length);
-    //         Console.WriteLine($"\n*****cpuState_test length : {cpuState_test.Length}");
-
-    // //          // Print the contents of cpuState_test (byte array)
-    // // Console.WriteLine($"\n*****cpuState_test (byte array) : [{string.Join(", ", cpuState_test)}]");
-
-    // // // Optionally, if the state is an array of integers, you can convert the byte array to integers and print them
-    // // Console.WriteLine("\n*****cpuState_test as int values:");
-    // // for (int i = 0; i < cpuState_test.Length; i += sizeof(int))
-    // // {
-    // //     if (i + sizeof(int) <= cpuState_test.Length)
-    // //     {
-    // //         int intValue = BitConverter.ToInt32(cpuState_test, i);
-    // //         Console.WriteLine($"Index {i / sizeof(int)}: {intValue}");
-    // //     }
-    // // }
-    //     }
-        
         private byte[] cpuState_fuzz;
         // private IntPtr statePtr_fuzz;
-        public void Fuzz_PrepareState()
+        public void Fuzz_PrepareState() // not needed as of now
         {
               // InitializeRegisters();
             using(machine?.ObtainPausedState(true))
@@ -278,7 +253,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
-
+        //not needed as of now
         public void Fuzz_LoadState() //bool arg to decide whetehr to load from snapshot state or reset state
         {
             // Console.WriteLine("^^^^^^^^^^^ Fuzz_LoadState - Translation CPU 000 ^^^^^^^^^^^^^^");
@@ -339,7 +314,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         [LatePostDeserialization]
         // private void RestoreState()
-        public void RestoreState()
+        public void RestoreState() //fuzz
         {
            Console.WriteLine("^^^^ Translation CPU - RestoreState");
             Init();
@@ -443,7 +418,6 @@ namespace Antmicro.Renode.Peripherals.CPU
             TlibReset();
             ResetOpcodesCounters();
             profiler?.Dispose();
-            // Antmicro.Renode.Peripherals.IRQControllers.NVIC.Reset();
         //    Console.WriteLine("^^^^^^^ TranslationalCPU.cs Reset() Done!!");
         }
 
@@ -517,7 +491,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
             this.NoisyLog("Registered memory at 0x{0:X}, size 0x{1:X}.", segment.StartingOffset, segment.Size);
 
-            Console.WriteLine($"^^^^ TranslationCPU.cs MapMemory() Registered memory at 0x{segment.StartingOffset:X}, size 0x{segment.Size:X}, pointer : 0x{segment.Pointer.ToInt64():X}." );
+            Console.WriteLine($"^^^^ TranslationCPU.cs MapMemory() Registered memory at, startOffset : 0x{segment.StartingOffset:X}, size 0x{segment.Size:X}, pointer : 0x{segment.Pointer.ToInt64():X}." );
         }
 
         public void RegisterAccessFlags(ulong startAddress, ulong size, bool isIoMemory = false)
@@ -757,7 +731,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             });
         }
 
-        public int CountNonZeroElements_COVMAP()
+        public int CountNonZeroElements_COVMAP() //fuzz
         {
             int nonZeroCount = 0;
             unsafe{
@@ -926,6 +900,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public void SetHookAtMemoryAccess(Action<ulong, MemoryOperation, ulong, ulong, ulong> hook)
         {
+            Console.WriteLine($"^^^^^ TranslationCPU.cs SetHookAtMemoryAccess() ");
             TlibOnMemoryAccessEventEnabled(hook != null ? 1 : 0);
             memoryAccessHook = hook;
         }
@@ -1474,11 +1449,21 @@ namespace Antmicro.Renode.Peripherals.CPU
             interruptEndHook?.Invoke(interruptIndex);
         }
 
+        private HashSet<ulong> ramAccessedSet = new HashSet<ulong>(); //fuzz
+        private ulong ram_address = 0x20000000; //change to auto_fetch //fuzz
+        private ulong ram_size = 0x10000000; //change to auto fetch //fuzz
+        private ulong ram_segment_size = 0x1000000; //fuzz
+
         [Export]
         private void OnMemoryAccess(ulong pc, uint operation, ulong virtualAddress, ulong value)
         {
             // We don't care if translation fails here (the address is unchanged in this case)
             TryTranslateAddress(virtualAddress, Misc.MemoryOperationToMpuAccess((MemoryOperation)operation), out var physicalAddress);
+            //Added for fuzz
+            if((MemoryOperation)operation == MemoryOperation.MemoryWrite && physicalAddress>=ram_address){
+                            ramAccessedSet.Add(physicalAddress);
+                    }
+            //this was from before
             memoryAccessHook?.Invoke(pc, (MemoryOperation)operation, virtualAddress, physicalAddress, value);
         }
 
@@ -1786,16 +1771,21 @@ namespace Antmicro.Renode.Peripherals.CPU
         [Export]
         private void TouchHostBlock(ulong offset)
         {
-            Console.WriteLine($"^^^^^^^^ TranslationCPU.cs export TouchHostBlock : offset : 0x{offset:X} at [PC=0x{PC.RawValue:X}]");
+            // Console.WriteLine($"^^^^^^^^ TranslationCPU.cs export TouchHostBlock : offset : 0x{offset:X} at [PC=0x{PC.RawValue:X}]");
             this.NoisyLog("Trying to find the mapping for offset 0x{0:X}.", offset);
             var mapping = currentMappings.FirstOrDefault(x => x.Segment.StartingOffset <= offset && offset < x.Segment.StartingOffset + x.Segment.Size);
-            Console.WriteLine($"^^^^^^^^ TranslationCPU.cs export TouchHostBlock , mapping : seg_pointer : 0x{mapping.Segment.Pointer.ToInt64():X}");
+   
+            Console.WriteLine($"^^^^^^^^ TranslationCPU.cs export TouchHostBlock , mapping: seg_pointer : 0x{mapping.Segment.Pointer.ToInt64():X}, Segment.StartingOffset : 0x{mapping.Segment.StartingOffset:X}");
             if(mapping == null)
             {
                 throw new InvalidOperationException(string.Format("Could not find mapped segment for offset 0x{0:X}.", offset));
             }
             mapping.Segment.Touch(); //MappedMemory.cs TouchSegment()
             mapping.Touched = true;
+            //fuzz - not needed as of now
+            // if(mapping.Segment.StartingOffset >= ram_address && mapping.Segment.StartingOffset <= (ram_address+ram_size) ){
+            //     currentMappings_ram_fuzz.Add(mapping);
+            // }
             RebuildMemoryMappings();
         }
 
@@ -1808,14 +1798,18 @@ namespace Antmicro.Renode.Peripherals.CPU
                 // It iterates through the currentMappings and selects only the ones marked as "Touched."
                 // For each touched segment, it creates a new HostMemoryBlock object, which contains:
                 var hostBlocks = currentMappings.Where(x => x.Touched).Select(x => x.Segment)
-                    .Select(x => new HostMemoryBlock { Start = x.StartingOffset, Size = x.Size, HostPointer = x.Pointer })
+                    .Select(x => new HostMemoryBlock { Start = x.StartingOffset, Size = x.Size, HostPointer = x.Pointer})
                     .OrderBy(x => x.HostPointer.ToInt64()).ToArray();
                 
-                 // Print each member of the HostMemoryBlock for each element
-                foreach (var block in hostBlocks)
-                {
-                    Console.WriteLine($"^^^TranslationCPU.cs RebuildMemoryMappings : HostMemoryBlock - Start: 0x{block.Start:X}, Size: 0x{block.Size:X}, HostPointer: 0x{block.HostPointer.ToInt64():X}");
-                }
+                 // Print each member of the HostMemoryBlock for each element -fuzz
+                // foreach (var block in hostBlocks)
+                // {
+                //     Console.WriteLine($"^^^TranslationCPU.cs RebuildMemoryMappings : HostMemoryBlock -  Start: 0x{block.Start:X}, Size: 0x{block.Size:X}, HostPointer: 0x{block.HostPointer.ToInt64():X}");
+                //     if(block.Start==ram_address){
+                //         ram_address_pointer = block.HostPointer.ToInt64();
+                //         ram_segment_size = block.Size;
+                //     }
+                // }
                 if(hostBlocks.Length > 0)
                 {
                     //Allocate memory for host blocks
@@ -1832,34 +1826,38 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
             
         }
-        //Fuzz added externally for testing
-        private void mark_currenMapping_false_for_ram(){
-            // Assuming IMappedSegment has properties for Start and Size
-            foreach (var mapping in currentMappings)
-            {
-                // Assuming Segment has properties `Start` and `Size` to get offset and size
-                var segment = mapping.Segment;
-    
-                // Check if the segment starts at or after the specified offset
-                // and if the offset is within its size range
-                if (segment.StartingOffset >= 0x20000000 && segment.StartingOffset <= 0x20030000)
-                {
-                    // if(segment.Pointer != IntPtr.Zero)
-                    // {
-                    //     Console.WriteLine($"^^^^^ TranslationCPU.cs mark_currenMapping_false_for_ram() segment : 0x{segment.Pointer.ToInt64():X}");
-                    //     var temp = segment.Pointer;
-                    //     Marshal.FreeHGlobal(temp);
-                    //     temp = IntPtr.Zero;
-                    //     // segments[i] = IntPtr.Zero;
-                    //     // this.NoisyLog("Segment {0} freed.", i);
-                        // mapping.Touched = false;
-                    // }
-                    // Mark the mapping as not touched
-                    mapping.Touched = false;
-                }
-            }
+        // //Fuzz added externally for testing
+        // public void mark_currenMapping_false_for_ram(){ //fuzz - not needed as of now
+        //     // Assuming IMappedSegment has properties for Start and Size
+        //     Console.WriteLine($"^^^^^ TranslationCPU.cs mark_currenMapping_false_for_ram() currentMappings_ram_fuzz.Count : {currentMappings_ram_fuzz.Count}");
 
-        }
+        //     foreach (var mapping in currentMappings_ram_fuzz)
+        //     {
+        //         // Assuming Segment has properties `Start` and `Size` to get offset and size
+        //         var segment = mapping.Segment;
+    
+        //         // Check if the segment starts at or after the specified offset
+        //         // and if the offset is within its size range
+        //         Console.WriteLine($"^^^^^ TranslationCPU.cs mark_currenMapping_false_for_ram() segment pointer : 0x{segment.Pointer.ToInt64():X}, segment.StartingOffset : 0x{segment.StartingOffset:X}");
+        //         // if (segment.StartingOffset >= 0x20000000 && segment.StartingOffset < 0x40000000)
+        //         // {
+        //             if(segment.Pointer != IntPtr.Zero)
+        //             {
+        //                 Console.WriteLine($"^^^^^ TranslationCPU.cs mark_currenMapping_false_for_ram() segment : 0x{segment.Pointer.ToInt64():X}");
+        //                 // var temp = segment.Pointer;//this is aligned pointer, need original pointer
+        //                 // Marshal.FreeHGlobal(segment.Pointer_orig_fuzz);
+        //                 // temp = IntPtr.Zero;
+        //                 // segments[i] = IntPtr.Zero;
+        //                 // this.NoisyLog("Segment {0} freed.", i);
+        //                 mapping.Touched = false;
+        //             }
+        //             // Mark the mapping as not touched
+        //             // mapping.Touched = false;
+        //             // Console.WriteLine($"^^^^^ TranslationCPU.cs mark_currenMapping_false_for_ram() marked False");
+        //         // }
+        //     }
+
+        // }
 
         private void BlitArray(IntPtr targetPointer, dynamic[] structures)
         {
@@ -1946,6 +1944,8 @@ namespace Antmicro.Renode.Peripherals.CPU
         private Action<bool> wfiStateChangeHook;
 
         private List<SegmentMapping> currentMappings;
+
+        private List<SegmentMapping> currentMappings_ram_fuzz;
 
         private readonly MinimalRangesCollection disabledMemory = new MinimalRangesCollection();
         private readonly MinimalRangesCollection mappedMemory = new MinimalRangesCollection();
@@ -2747,6 +2747,76 @@ namespace Antmicro.Renode.Peripherals.CPU
                 }
             });
         }
+ 
+        
+        // public void Fuzz_TrackMemoryAccess(ulong ram_address = 0x20000000) //not needed, added directly in OnMemoryAccess()
+        // {
+        //     SetHookAtMemoryAccess((pc, operation, virtualAddress, physicalAddress, value) =>
+        //     {
+                
+        //         if(operation == MemoryOperation.MemoryWrite && virtualAddress>=ram_address){
+        //                     ramAccessedSet.Add(virtualAddress);
+        //             }
+        //     });
+        // }
+
+        public void Fuzz_TlibOnMemoryAccessEventEnabled(){ // for on memory access hooks, not needed as of now
+            TlibOnMemoryAccessEventEnabled(1);
+        }
+
+        public void Fuzz_Clear_ramAccessedSet(){ //not needed as of now
+            ramAccessedSet.Clear();
+        }
+
+        public void Fuzz_Set_ramAddress(ulong ram_address){ //not needed as of now
+            ram_address = ram_address;
+        }
+
+        public void Fuzz_Set_ramSize(ulong ram_size){ //not needed as of now
+            ram_size = ram_size;
+        }
+
+        public int Fuzz_Get_ramAccessedSet_count(){ //not needed as of now
+            // Console.WriteLine($"^^^^TranslationCPU.cs Fuzz_Get_ramAccessedSet(), count : {ramAccessedSet.Count} ");
+            return ramAccessedSet.Count;
+        }
+
+        public ulong[] Fuzz_Get_ramAccessedSet_addresses() //not needed as of now
+        {
+            return ramAccessedSet.ToArray();
+        }
+
+        public void Fuzz_Print_ramAccessedSet() //not needed as of now
+        {
+            Console.WriteLine($"^^^^TranslationCPU.cs Fuzz_Print_ramAccessedSet(), count : {ramAccessedSet.Count} ");
+
+            foreach (var addr in ramAccessedSet)
+            {
+                Console.WriteLine($"0x{addr:X}");
+            }
+        }
+
+        // public void Fuzz_Reset_Val_ramAccessedSet() //not needed as of now
+        // {
+        //     // Console.WriteLine($"^^^^TranslationCPU.cs Fuzz_Reset_Val_ramAccessedSet(), count : {ramAccessedSet.Count} ");
+
+        //     // foreach (var addr in ramAccessedSet)
+        //     // {
+        //     //     // Console.WriteLine($" TranslationCPU.cs Fuzz_Reset_Val_ramAccessedSet() 0x{addr:X}");
+        //     //     // machine.SystemBus.WriteDoubleWord_Fuzz(addr, 0x00, this);
+
+        //     //     // var localOffset = (long)addr % ram_size;
+        //     //     // var segment_pointer = ram_address_pointer;
+        //     //     // var segment = segments[GetSegmentNo(offset)];
+        //     //     // Marshal.WriteInt32(new IntPtr(segment.ToInt64() + localOffset), unchecked((int)value));
+        //     //     // Marshal.WriteInt32(new IntPtr(segment_pointer + localOffset), unchecked((int)0x00));
+
+        //     // }
+
+        //     // ramAccessedSet.Clear();
+        //     // Console.WriteLine($"^^^^TranslationCPU.cs Fuzz_Reset_Val_ramAccessedSet() Done : , count : {ramAccessedSet.Count} ");
+
+        // }
 
         protected override bool ExecutionFinished(ExecutionResult result)
         {

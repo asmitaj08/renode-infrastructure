@@ -34,6 +34,7 @@ using Microsoft.CSharp.RuntimeBinder;
 using Monitor = System.Threading.Monitor;
 using Antmicro.Renode.Peripherals.I2C;
 using Antmicro.Renode.Peripherals.UART;
+using Antmicro.Renode.Peripherals.Memory;
 
 namespace Antmicro.Renode.Core
 {
@@ -597,9 +598,10 @@ namespace Antmicro.Renode.Core
         //     }
         //     Console.WriteLine($"^^^Machine.cs ConfigurePeripheralsToReset : peripheralsToReset.Count : {peripheralsToReset.Count}");
         // }
-        private  Dictionary<string, IPeripheral> localNames_reversed;
-        private HashSet<IPeripheral> peripheralsToReset_all = new HashSet<IPeripheral>();
-        private HashSet<string> peripheralsToReset_all_temp = new HashSet<string>();
+        private  Dictionary<string, IPeripheral> localNames_reversed; //fuzz
+        private HashSet<IPeripheral> peripheralsToReset_all = new HashSet<IPeripheral>(); //fuzz
+        private HashSet<string> peripheralsToReset_all_temp = new HashSet<string>(); //fuzz
+        private IPeripheral peripheral_ram;
 
 
         public void fuzz_init_settings(){
@@ -607,7 +609,7 @@ namespace Antmicro.Renode.Core
 
         }
 
-        public void ConfigurePeripheralsToReset(string[] peripheralNames = null)
+        public void Fuzz_ConfigurePeripheralsToReset(string[] peripheralNames = null)
         {
             // lock(collectionSync)
             
@@ -621,6 +623,9 @@ namespace Antmicro.Renode.Core
                     
                     if(kvp.Value == "sysbus"){
                         continue;
+                    }
+                     if(kvp.Value == "ram"){
+                        peripheral_ram = kvp.Key;
                     }
                     peripheralsToReset_all.Add(kvp.Key);  // even if it's hash; kvp.Key (is of Iperipheral type which does not overirde Equals(), and can't get hashcode, hence it repeats)
                     // peripheralsToReset_all_temp.Add(kvp.Value);  // values are marked differrent like timer1, timer2, etc; so no point
@@ -636,7 +641,7 @@ namespace Antmicro.Renode.Core
                 //         peripheralsToReset_all.Add(val);
                 //     }
                 // }
-                Console.WriteLine($"^^^Machine.cs ConfigurePeripheralsToReset : peripheralsToReset.Count : {peripheralsToReset_all.Count}");
+                Console.WriteLine($"^^^Machine.cs Fuzz_ConfigurePeripheralsToReset : peripheralsToReset.Count : {peripheralsToReset_all.Count}");
             }
             
             else{
@@ -658,7 +663,7 @@ namespace Antmicro.Renode.Core
                 //     }
                 // }
             
-            Console.WriteLine($"^^^Machine.cs ConfigurePeripheralsToReset : peripheralsToReset.Count : {peripheralsToReset_k.Count}");
+            Console.WriteLine($"^^^Machine.cs Fuzz_ConfigurePeripheralsToReset : peripheralsToReset.Count : {peripheralsToReset_k.Count}");
             }
         }
 
@@ -666,7 +671,7 @@ namespace Antmicro.Renode.Core
 
         private HashSet<string> peripheralsToFuzz = new HashSet<string>();
 
-        public void ConfigurePeripheralsToFuzz(string[] peripheralNames)
+        public void Fuzz_ConfigurePeripheralsToFuzz(string[] peripheralNames)
         {
             {
                 // peripheralsToFuzz_k.Clear();
@@ -702,7 +707,7 @@ namespace Antmicro.Renode.Core
             // if (peripheralsToReset_k.Count == 0)
             // {
             //     // HashSet is empty
-            //     Console.WriteLine("****** peripheralsToReset_k is empty. Pass the peripheral to reset via ConfigurePeripheralsToReset()");
+            //     Console.WriteLine("****** peripheralsToReset_k is empty. Pass the peripheral to reset via Fuzz_ConfigurePeripheralsToReset()");
             // }
             // else{
                 // fuzz_init_settings();
@@ -737,6 +742,11 @@ namespace Antmicro.Renode.Core
             // }
         }
 
+        private ulong ram_address = 0x20000000; //change to auto_fetch //fuzz
+
+        public void Fuzz_Set_ramAddress(ulong ram_address_update){
+            ram_address = ram_address_update;
+        }
 
         public void FuzzResetAll(){
 
@@ -750,7 +760,13 @@ namespace Antmicro.Renode.Core
                     // Console.WriteLine($"Resetting : {p}");
                     p.Reset();
                 }
-
+                //this works
+                var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
+                // Console.WriteLine($"Resetting mem : {mem}");
+                var mapped_mem = mem?.Peripheral;
+                // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
+                mapped_mem.Fuzz_zeroRam();
+       
         }
 
         public bool InternalPause { get; private set; }

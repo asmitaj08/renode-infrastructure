@@ -56,6 +56,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public uint ReadDoubleWord(long offset)
         {
+            // Console.WriteLine($"^^^^^ ArrayMemory.cs ReadDoubleWord(), offset : {offset}");
             if(!IsCorrectOffset(offset, sizeof(uint)))
             {
                 return 0;
@@ -67,6 +68,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public virtual void WriteDoubleWord(long offset, uint value)
         {
+            // Console.WriteLine($"^^^^^ ArrayMemory.cs WriteDoubleWord(), offset : {offset}, value : {value}");
             if(!IsCorrectOffset(offset, sizeof(uint)))
             {
                 return;
@@ -78,11 +80,13 @@ namespace Antmicro.Renode.Peripherals.Memory
         public void Reset()
         {
             // nothing happens
-            Console.WriteLine($"^^^^^ ArrayMemory.cs Reset()");
+            // Console.WriteLine($"^^^^^ ArrayMemory.cs Reset()");
         }
 
         public ushort ReadWord(long offset)
         {
+            //  Console.WriteLine($"^^^^^ ArrayMemory.cs ReadWord(), offset : {offset}");
+
             if(!IsCorrectOffset(offset, sizeof(ushort)))
             {
                 return 0;
@@ -94,6 +98,8 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public virtual void WriteWord(long offset, ushort value)
         {
+            // Console.WriteLine($"^^^^^ ArrayMemory.cs WriteWord(), offset : {offset}, value : {value}");
+
             if(!IsCorrectOffset(offset, sizeof(ushort)))
             {
                 return;
@@ -104,6 +110,8 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public byte ReadByte(long offset)
         {
+            // Console.WriteLine($"^^^^^ ArrayMemory.cs ReadByte(), offset : {offset}");
+
             if(!IsCorrectOffset(offset, sizeof(byte)))
             {
                 return 0;
@@ -115,6 +123,8 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public virtual void WriteByte(long offset, byte value)
         {
+            // Console.WriteLine($"^^^^^ ArrayMemory.cs WriteByte(), offset : {offset}, value : {value}");
+
             if(!IsCorrectOffset(offset, sizeof(byte)))
             {
                 return;
@@ -125,7 +135,9 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public byte[] ReadBytes(long offset, int count, ICPU context = null)
         {
-            if(!IsCorrectOffset(offset, count))
+            // Console.WriteLine($"^^^^^ ArrayMemory.cs ReadBytes(), offset : {offset}, count: {count}");
+
+           if(!IsCorrectOffset(offset, count))
             {
                 return new byte[count];
             }
@@ -136,6 +148,8 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public void WriteBytes(long offset, byte[] bytes, int startingIndex, int count, ICPU context = null)
         {
+            // Console.WriteLine($"^^^^^ ArrayMemory.cs WriteBytes(), offset : {offset}, bytes : {bytes}");
+
             if(!IsCorrectOffset(offset, count))
             {
                 return;

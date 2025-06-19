@@ -2149,7 +2149,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
             public override string ToString()
             {
-                return string.Format("[MappedSegmentWrapper: StartingOffset=0x{0:X}, Size=0x{1:X}, OriginalStartingOffset=0x{2:X}, PeripheralOffset=0x{3:X}, Context={4}]",
+                return string.Format("sysbus.cs [MappedSegmentWrapper: StartingOffset=0x{0:X}, Size=0x{1:X}, OriginalStartingOffset=0x{2:X}, PeripheralOffset=0x{3:X}, Context={4}]",
                     StartingOffset, Size, OriginalStartingOffset, PeripheralOffset, context);
             }
 
@@ -2166,6 +2166,7 @@ namespace Antmicro.Renode.Peripherals.Bus
                 get
                 {
                     
+                    // Console.WriteLine($"Sysbus.cs MappedSegmentWrapper : Get StartingOffset :peripheralOffset : 0x{peripheralOffset:X}, wrappedSegment.StartingOffset : 0x{wrappedSegment.StartingOffset:X}, return :  0x{(peripheralOffset + wrappedSegment.StartingOffset):X}");
                     return peripheralOffset + wrappedSegment.StartingOffset;
                 }
             }
@@ -2190,7 +2191,7 @@ namespace Antmicro.Renode.Peripherals.Bus
             {
                 get
                 {
-                    // Console.WriteLine($"Sysbus.cs : MappedSegmentwrapper : OriginalStartingOffset : {wrappedSegment.StartingOffset}");
+                    Console.WriteLine($"Sysbus.cs : MappedSegmentwrapper : OriginalStartingOffset : {wrappedSegment.StartingOffset}");
                     return wrappedSegment.StartingOffset;
                 }
             }
@@ -2199,7 +2200,7 @@ namespace Antmicro.Renode.Peripherals.Bus
             {
                 get
                 {
-                    // Console.WriteLine($"Sysbus.cs : MappedSegmentwrapper : PeripheralOffset : {peripheralOffset}");
+                    Console.WriteLine($"Sysbus.cs : MappedSegmentwrapper : PeripheralOffset : {peripheralOffset}");
                     return peripheralOffset;
                 }
             }
