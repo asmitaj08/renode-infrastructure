@@ -214,7 +214,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         public void WriteDoubleWord(long offset, uint value)
         {
-            Console.WriteLine($"^^^^^^******  MappedMemory WriteDoubleWord(), offset : 0x{offset:X},value : {value}");
+            // Console.WriteLine($"^^^^^^******  MappedMemory WriteDoubleWord(), offset : 0x{offset:X},value : {value}");
 
             if(offset < 0 || offset > size - sizeof(uint))
             {
@@ -224,7 +224,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
             var localOffset = GetLocalOffset(offset);
             var segment = segments[GetSegmentNo(offset)];
-            Console.WriteLine($"^^^^^^******  MappedMemory WriteDoubleWord(), localOffset : 0x{localOffset:X},segment : {segment}");
+            // Console.WriteLine($"^^^^^^******  MappedMemory WriteDoubleWord(), localOffset : 0x{localOffset:X},segment : {segment}");
             if(localOffset > SegmentSize - sizeof(uint)) // cross segment write
             {
                 var bytes = BitConverter.GetBytes(value);
@@ -448,7 +448,7 @@ namespace Antmicro.Renode.Peripherals.Memory
                 this.NoisyLog(string.Format("Segment no {1} allocated at 0x{0:X} (aligned to 0x{2:X}).",
                     allocSeg.ToInt64(), segmentNo, alignedPointer.ToInt64()));
 
-                Console.WriteLine($"Segment no {segmentNo} allocated at 0x{allocSeg.ToInt64():X} (aligned to 0x{alignedPointer.ToInt64():X}).");
+                // Console.WriteLine($"Segment no {segmentNo} allocated at 0x{allocSeg.ToInt64():X} (aligned to 0x{alignedPointer.ToInt64():X}).");
                 originalPointers[segmentNo] = allocSeg; // for fuzz
 
                 MemSet(alignedPointer, ResetByte, SegmentSize);
@@ -853,7 +853,7 @@ namespace Antmicro.Renode.Peripherals.Memory
                         }
                     }
                 }
-            Console.WriteLine($"^^^^^^^^ MappedMemory.cs Free(), disposed : {disposed}");
+            // Console.WriteLine($"^^^^^^^^ MappedMemory.cs Free(), disposed : {disposed}");
             if(!disposed )
             {
                 for(var i = 0; i < segments.Length; i++)
@@ -902,15 +902,15 @@ namespace Antmicro.Renode.Peripherals.Memory
                 segmentsNo, size, SegmentSize));
             
             segments = new IntPtr[segmentsNo];
-            Console.WriteLine($"^^^^^^ MappedMemeory.cs Preparing {segmentsNo} segments for {size:X} bytes of memory, each {SegmentSize} bytes long.");
+            // Console.WriteLine($"^^^^^^ MappedMemeory.cs Preparing {segmentsNo} segments for {size:X} bytes of memory, each {SegmentSize} bytes long.");
             originalPointers = new IntPtr[segmentsNo];
             // segments are not allocated until they are used by read, write, load etc (or touched)
             describedSegments = new IMappedSegment[segmentsNo];
-            Console.WriteLine($"^^^^^^ MappedMemeory.cs Preparing seg : describedSegments len : {describedSegments.Length}");
+            // Console.WriteLine($"^^^^^^ MappedMemeory.cs Preparing seg : describedSegments len : {describedSegments.Length}");
             for(var i = 0; i < describedSegments.Length - 1; i++)
             {
                 describedSegments[i] = new MappedSegment(this, i, (uint)SegmentSize);
-                Console.WriteLine($"^^^^^^ MappedMemeory.cs Preparing seg : describedSegments[{i}] val :{describedSegments[i]}, pointer : 0x{describedSegments[i].Pointer.ToInt64():X}");
+                // Console.WriteLine($"^^^^^^ MappedMemeory.cs Preparing seg : describedSegments[{i}] val :{describedSegments[i]}, pointer : 0x{describedSegments[i].Pointer.ToInt64():X}");
             }
             var last = describedSegments.Length - 1;
             var sizeOfLast = (uint)(size % SegmentSize);
@@ -924,7 +924,7 @@ namespace Antmicro.Renode.Peripherals.Memory
             {
                 sharedSegments[i] = new SharedSegment(sharedMemoryFileRoot);
             }
-             Console.WriteLine($"^^^^^^ MappedMemeory.cs Preparing seg : describedSegments[{last}] val : 0x{describedSegments[last]:X}");
+            //  Console.WriteLine($"^^^^^^ MappedMemeory.cs Preparing seg : describedSegments[{last}] val : 0x{describedSegments[last]:X}");
         }
 
         private int GetSegmentNo(long offset)
@@ -950,7 +950,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
         private IntPtr AllocateSegment(int segmentNo)
         {
-            Console.WriteLine($"^^^^^^^^ MappedMemory.cs AllocateSegment(), segmentNo : {segmentNo},SegmentSize : {SegmentSize}  ");
+            // Console.WriteLine($"^^^^^^^^ MappedMemory.cs AllocateSegment(), segmentNo : {segmentNo},SegmentSize : {SegmentSize}  ");
             this.NoisyLog("Allocating segment of size {0}.", SegmentSize);
             if(UsingSharedMemory)
             {
@@ -1087,7 +1087,7 @@ namespace Antmicro.Renode.Peripherals.Memory
 
             public void Touch()
             {
-                Console.WriteLine($"******Mapped Memory.cs Touch() : class MappedSegment, index : {index}");
+                // Console.WriteLine($"******Mapped Memory.cs Touch() : class MappedSegment, index : {index}");
                 parent.TouchSegment(index);
             }
 

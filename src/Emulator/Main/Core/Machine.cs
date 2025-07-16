@@ -609,7 +609,7 @@ namespace Antmicro.Renode.Core
 
         }
 
-        public void Fuzz_ConfigurePeripheralsToReset(string[] peripheralNames = null)
+        public void Fuzz_ConfigurePeripheralsToReset_Partial(string[] peripheralNames = null)
         {
             // lock(collectionSync)
             
@@ -621,27 +621,19 @@ namespace Antmicro.Renode.Core
                 foreach (var kvp in localNames)
                 {
                     
-                    if(kvp.Value == "sysbus"){
+                    // if(kvp.Value == "sysbus"|| kvp.Value == "ram" || kvp.Value == "cpu"||kvp.Value == "flash"){
+                    if(kvp.Value == "sysbus"|| kvp.Value == "cpu"||kvp.Value == "flash"){
+                        Console.WriteLine($"^^^^ Configure To Reset Skipping {kvp.Value}");
                         continue;
                     }
-                     if(kvp.Value == "ram"){
+                     if(kvp.Value == "ram"){ //not needed
                         peripheral_ram = kvp.Key;
                     }
                     peripheralsToReset_all.Add(kvp.Key);  // even if it's hash; kvp.Key (is of Iperipheral type which does not overirde Equals(), and can't get hashcode, hence it repeats)
                     // peripheralsToReset_all_temp.Add(kvp.Value);  // values are marked differrent like timer1, timer2, etc; so no point
                     Console.WriteLine($"Configure To Reset Key: {kvp.Key}, Value: {kvp.Value}");
                 }
-
-                // Console.WriteLine($"************");
-
-                // foreach(var name in peripheralsToReset_all_temp)
-                // {
-                //     Console.WriteLine($"Adding Reset for: {name}");
-                //     if(localNames_reversed.TryGetValue(name, out var val)){
-                //         peripheralsToReset_all.Add(val);
-                //     }
-                // }
-                Console.WriteLine($"^^^Machine.cs Fuzz_ConfigurePeripheralsToReset : peripheralsToReset.Count : {peripheralsToReset_all.Count}");
+                Console.WriteLine($"^^^Machine.cs Fuzz_ConfigurePeripheralsToReset_Partial : peripheralsToReset.Count : {peripheralsToReset_all.Count}");
             }
             
             else{
@@ -654,16 +646,49 @@ namespace Antmicro.Renode.Core
                         peripheralsToReset_k.Add(val);
                     }
                 }
-                // foreach(var kvp in localNames) // kvp = KeyValuePair<IPeripheral, string>
-                // {
-                //     // Console.WriteLine($"^^^ Machine.cs  localNames : val : {kvp.Value}, key : {kvp.Key}");
-                //     if(peripheralsToReset.Contains(kvp.Value))
-                //     {
-                //         peripheralsToReset_k.Add(kvp.Key);
-                //     }
-                // }
             
-            Console.WriteLine($"^^^Machine.cs Fuzz_ConfigurePeripheralsToReset : peripheralsToReset.Count : {peripheralsToReset_k.Count}");
+            Console.WriteLine($"^^^Machine.cs Fuzz_ConfigurePeripheralsToReset_Partial : peripheralsToReset.Count : {peripheralsToReset_k.Count}");
+            }
+        }
+
+        public void Fuzz_ConfigurePeripheralsToReset_All(string[] peripheralNames = null)
+        {
+            // lock(collectionSync)
+            
+            if (peripheralNames == null || peripheralNames.Length == 0)
+            {
+                peripheralsToReset_all.Clear();
+                // peripheralsToReset_all_temp.Clear();
+                // fuzz_init_settings();
+                foreach (var kvp in localNames)
+                {
+                    
+                    if(kvp.Value == "sysbus"){
+                        Console.WriteLine($"^^^^ Configure To Reset Skipping {kvp.Value}");
+                        continue;
+                    }
+                     if(kvp.Value == "ram"){
+                        peripheral_ram = kvp.Key;
+                    }
+                    peripheralsToReset_all.Add(kvp.Key);  // even if it's hash; kvp.Key (is of Iperipheral type which does not overirde Equals(), and can't get hashcode, hence it repeats)
+                    // peripheralsToReset_all_temp.Add(kvp.Value);  // values are marked differrent like timer1, timer2, etc; so no point
+                    Console.WriteLine($"Configure To Reset Key: {kvp.Key}, Value: {kvp.Value}");
+                }
+                Console.WriteLine($"^^^Machine.cs Fuzz_ConfigurePeripheralsToReset_All : peripheralsToReset.Count : {peripheralsToReset_all.Count}");
+            }
+            
+            else{
+                fuzz_init_settings();
+                peripheralsToReset_k.Clear();
+                foreach(var name in peripheralNames)
+                {
+                    
+                    if(localNames_reversed.TryGetValue(name, out var val)){
+                        peripheralsToReset_k.Add(val);
+                    }
+                }
+            
+            Console.WriteLine($"^^^Machine.cs Fuzz_ConfigurePeripheralsToReset_All : peripheralsToReset.Count : {peripheralsToReset_k.Count}");
             }
         }
 
@@ -742,6 +767,8 @@ namespace Antmicro.Renode.Core
             // }
         }
 
+
+
         private ulong ram_address = 0x20000000; //change to auto_fetch //fuzz
 
         public void Fuzz_Set_ramAddress(ulong ram_address_update){
@@ -750,11 +777,6 @@ namespace Antmicro.Renode.Core
 
         public void FuzzResetAll(){
 
-            // foreach(var p in localNames.Keys) 
-            // {
-            //     Console.WriteLine($"Resetting : {p}");
-            //     p.Reset();
-            // }
                 foreach(var p in peripheralsToReset_all) 
                 {
                     // Console.WriteLine($"Resetting : {p}");
@@ -766,8 +788,576 @@ namespace Antmicro.Renode.Core
                 var mapped_mem = mem?.Peripheral;
                 // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
                 mapped_mem.Fuzz_zeroRam();
+                // 2. Reset random number generator to a known state
+                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
+    
+                var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
+                cpu.ClearTranslationCache();
+                // // 3. Reset virtual time to zero using MasterTimeSource
+                // currentEmulation.MasterTimeSource.ResetVirtualTime(TimeInterval.Empty);
        
         }
+
+
+        public void FuzzReset_memTrack(){
+
+                foreach(var p in peripheralsToReset_all) 
+                {
+                    // Console.WriteLine($"Resetting : {p}");
+                    p.Reset();
+                }
+                //this works
+                // var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
+                // // Console.WriteLine($"Resetting mem : {mem}");
+                // var mapped_mem = mem?.Peripheral;
+                // // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
+                // mapped_mem.Fuzz_zeroRam();
+                // 2. Reset random number generator to a known state
+                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
+    
+                var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
+                // cpu.ClearTranslationCache();
+                cpu.Fuzz_PartialResetForFunctionRerun();
+                // // 3. Reset virtual time to zero using MasterTimeSource
+                // currentEmulation.MasterTimeSource.ResetVirtualTime(TimeInterval.Empty);
+
+                // restore changed CPU registers
+                cpu.Fuzz_UpdateChangedRegValues();
+                // restore changed Memory values
+                cpu.Fuzz_Restore_All_Mem_Track_Dict();
+       
+        }
+
+
+        //fuzz - mem dump start ----------------------------------------------------
+       public class MemoryRegion
+      {
+        public ulong Address { get; set; }
+        public ulong Size { get; set; }
+        public byte[] Data { get; set; }
+        public string Name { get; set; }
+      }
+
+      public static MemoryRegion DumpMemoryRegion(ulong address, ulong size, string name = "")
+     {
+        
+        var machine = EmulationManager.Instance.CurrentEmulation.Machines.First();
+        var sysbus = machine.SystemBus;
+       
+        var region = new MemoryRegion
+        {
+            Address = address,
+            Size = size,
+            Name = string.IsNullOrEmpty(name) ? $"0x{address:X8}" : name,
+            Data = new byte[size]
+        };
+        ulong curr_offset = 0;
+        try
+        {
+            // Read memory byte by byte
+            for (ulong offset = 0; offset < region.Size; offset++)
+            {
+                var currentAddress = address + offset;
+                region.Data[offset] = sysbus.ReadByte(currentAddress);
+                curr_offset = offset;
+            }
+            
+            Console.WriteLine($"Successfully dumped {name} at 0x{address:X} (size: 0x{size:X})");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error dumping memory at 0x{address:X},size: 0x{size:X},  offset : 0x{curr_offset:X}, i.e. : 0x{(address + curr_offset):X}: {ex.Message}");
+        }
+
+        return region;
+    }
+
+    public class MemoryRegionInfo
+{
+    public ulong Address { get; set; }
+    public ulong Size { get; set; }
+    public string Name { get; set; }
+}
+
+// public static List<MemoryRegion> DumpAllSTM32F4Regions() //stm32f429 - currently hardcoded, change later
+// {
+//     var regions = new List<MemoryRegionInfo>
+//     {
+//         new MemoryRegionInfo { Address = 0x08000000, Size = 0x200000, Name = "Flash" },
+//         new MemoryRegionInfo { Address = 0x20000000, Size = 0x40000, Name = "SRAM" },
+//         new MemoryRegionInfo { Address = 0x60000000, Size = 0x10000000, Name = "FSMC_Bank1" },
+//         new MemoryRegionInfo { Address = 0x1FFF0000, Size = 0xC000, Name = "ROM1" },
+//         new MemoryRegionInfo { Address = 0x1FFFC400, Size = 0x3C00, Name = "ROM2" },
+//         new MemoryRegionInfo { Address = 0x22000000, Size = 0x200000, Name = "BitBand_SRAM" },
+//         new MemoryRegionInfo { Address = 0x42000000, Size = 0x2000000, Name = "BitBand_Peripherals" },
+//         new MemoryRegionInfo { Address = 0x50000000, Size = 0x1000, Name = "USB_OTG_FS" },
+//         new MemoryRegionInfo { Address = 0x50000400, Size = 0x1000, Name = "USB_OTG_HS" },
+//         new MemoryRegionInfo { Address = 0x50000800, Size = 0x1000, Name = "USB_OTG_FS_GLOBAL" },
+//         new MemoryRegionInfo { Address = 0x50000C00, Size = 0x1000, Name = "USB_OTG_HS_GLOBAL" },
+//         new MemoryRegionInfo { Address = 0x50001000, Size = 0x1000, Name = "USB_OTG_FS_HOST" },
+//         new MemoryRegionInfo { Address = 0x50001400, Size = 0x1000, Name = "USB_OTG_HS_HOST" },
+//         new MemoryRegionInfo { Address = 0x50001800, Size = 0x1000, Name = "USB_OTG_FS_DEVICE" },
+//         new MemoryRegionInfo { Address = 0x50001C00, Size = 0x1000, Name = "USB_OTG_HS_DEVICE" },
+//         new MemoryRegionInfo { Address = 0x50002000, Size = 0x1000, Name = "USB_OTG_FS_PWRCLK" },
+//         new MemoryRegionInfo { Address = 0x50002400, Size = 0x1000, Name = "USB_OTG_HS_PWRCLK" },
+//         new MemoryRegionInfo { Address = 0x50002800, Size = 0x1000, Name = "USB_OTG_FS_END_PT" },
+//         new MemoryRegionInfo { Address = 0x50002C00, Size = 0x1000, Name = "USB_OTG_HS_END_PT" },
+//         new MemoryRegionInfo { Address = 0x40000000, Size = 0x1000, Name = "Timer2" },
+//         new MemoryRegionInfo { Address = 0x40000400, Size = 0x1000, Name = "Timer3" },
+//         new MemoryRegionInfo { Address = 0x40000800, Size = 0x1000, Name = "Timer4" },
+//         new MemoryRegionInfo { Address = 0x40000C00, Size = 0x1000, Name = "Timer5" },
+//         new MemoryRegionInfo { Address = 0x40001000, Size = 0x1000, Name = "Timer6" },
+//         new MemoryRegionInfo { Address = 0x40001400, Size = 0x1000, Name = "Timer7" },
+//         new MemoryRegionInfo { Address = 0x40001800, Size = 0x1000, Name = "Timer12" },
+//         new MemoryRegionInfo { Address = 0x40001C00, Size = 0x1000, Name = "Timer13" },
+//         new MemoryRegionInfo { Address = 0x40002000, Size = 0x1000, Name = "Timer14" },
+//         new MemoryRegionInfo { Address = 0x40003000, Size = 0x1000, Name = "IWDG" },
+//         new MemoryRegionInfo { Address = 0x40002800, Size = 0x1000, Name = "RTC" },
+//         new MemoryRegionInfo { Address = 0x40003800, Size = 0x1000, Name = "SPI2" },
+//         new MemoryRegionInfo { Address = 0x40003C00, Size = 0x1000, Name = "SPI3" },
+//         new MemoryRegionInfo { Address = 0x40004400, Size = 0x1000, Name = "USART2" },
+//         new MemoryRegionInfo { Address = 0x40004800, Size = 0x1000, Name = "USART3" },
+//         new MemoryRegionInfo { Address = 0x40004C00, Size = 0x1000, Name = "UART4" },
+//         new MemoryRegionInfo { Address = 0x40005000, Size = 0x1000, Name = "UART5" },
+//         new MemoryRegionInfo { Address = 0x40005400, Size = 0x1000, Name = "I2C1" },
+//         new MemoryRegionInfo { Address = 0x40005800, Size = 0x1000, Name = "I2C2" },
+//         new MemoryRegionInfo { Address = 0x40005C00, Size = 0x1000, Name = "I2C3" },
+//         new MemoryRegionInfo { Address = 0x40006400, Size = 0x400, Name = "CAN1" },
+//         new MemoryRegionInfo { Address = 0x40006800, Size = 0x400, Name = "CAN2" },
+//         new MemoryRegionInfo { Address = 0x40007000, Size = 0x1000, Name = "PWR" },
+//         new MemoryRegionInfo { Address = 0x40010000, Size = 0x1000, Name = "Timer1" },
+//         new MemoryRegionInfo { Address = 0x40010400, Size = 0x1000, Name = "Timer8" },
+//         new MemoryRegionInfo { Address = 0x40011000, Size = 0x1000, Name = "USART1" },
+//         new MemoryRegionInfo { Address = 0x40013000, Size = 0x1000, Name = "SPI1" },
+//         new MemoryRegionInfo { Address = 0x40013C00, Size = 0x1000, Name = "EXTI" },
+//         new MemoryRegionInfo { Address = 0x40014000, Size = 0x1000, Name = "Timer9" },
+//         new MemoryRegionInfo { Address = 0x40014400, Size = 0x1000, Name = "Timer10" },
+//         new MemoryRegionInfo { Address = 0x40014800, Size = 0x1000, Name = "Timer11" },
+//         new MemoryRegionInfo { Address = 0x40020000, Size = 0x400, Name = "GPIOA" },
+//         new MemoryRegionInfo { Address = 0x40020400, Size = 0x400, Name = "GPIOB" },
+//         new MemoryRegionInfo { Address = 0x40020800, Size = 0x400, Name = "GPIOC" },
+//         new MemoryRegionInfo { Address = 0x40020C00, Size = 0x400, Name = "GPIOD" },
+//         new MemoryRegionInfo { Address = 0x40021000, Size = 0x400, Name = "GPIOE" },
+//         new MemoryRegionInfo { Address = 0x40021400, Size = 0x400, Name = "GPIOF" },
+//         new MemoryRegionInfo { Address = 0x40023000, Size = 0x1000, Name = "CRC" },
+//         new MemoryRegionInfo { Address = 0x40023800, Size = 0x1000, Name = "RCC" },
+//         new MemoryRegionInfo { Address = 0x40023C00, Size = 0x1000, Name = "Flash_Controller" },
+//         new MemoryRegionInfo { Address = 0x40026000, Size = 0x1000, Name = "DMA1" },
+//         new MemoryRegionInfo { Address = 0x40026400, Size = 0x1000, Name = "DMA2" },
+//         new MemoryRegionInfo { Address = 0x40028000, Size = 0x1000, Name = "Ethernet" },
+//         new MemoryRegionInfo { Address = 0x50060800, Size = 0x1000, Name = "RNG" },
+//         new MemoryRegionInfo { Address = 0xE000E000, Size = 0x1000, Name = "NVIC" }
+//     };
+
+//     var dumpedRegions = new List<MemoryRegion>();
+    
+//     foreach (var regionInfo in regions)
+//     {
+//         var region = DumpMemoryRegion(regionInfo.Address, regionInfo.Size, regionInfo.Name);
+//         dumpedRegions.Add(region);
+//     }
+
+//     return dumpedRegions;
+// }
+
+public static List<MemoryRegion> DumpAllSTM32F4Regions() //stm32f103 - currently hardcoded, change later
+{
+    var regions = new List<MemoryRegionInfo>
+    {
+        
+        // new MemoryRegionInfo { Address = 0x20000000, Size = 0x40000000, Name = "SRAM" } //--just testing 
+        // Flash memory (different address than F4!)
+        // new MemoryRegionInfo { Address = 0x00000000, Size = 0x20000000, Name = "Flash" },
+        
+        // // RAM (different size than F4!)
+        // new MemoryRegionInfo { Address = 0x20000000, Size = 0x10000000, Name = "RAM" },
+        
+        // // FSMC Bank1
+        // new MemoryRegionInfo { Address = 0x60000000, Size = 0x10000000, Name = "FSMC_Bank1" },
+        
+        // // Bit-banding regions
+        // new MemoryRegionInfo { Address = 0x42000000, Size = 0x2000000, Name = "BitBand_Peripherals" },
+        // // Note: BitBand_SRAM is commented out in the .repl file
+        
+        // // Timer regions
+        // new MemoryRegionInfo { Address = 0x40000000, Size = 0x1000, Name = "Timer2" },
+        // new MemoryRegionInfo { Address = 0x40000400, Size = 0x1000, Name = "Timer3" },
+        // new MemoryRegionInfo { Address = 0x40000800, Size = 0x1000, Name = "Timer4" },
+        // new MemoryRegionInfo { Address = 0x40000C00, Size = 0x1000, Name = "Timer5" },
+        // new MemoryRegionInfo { Address = 0x40001000, Size = 0x1000, Name = "Timer6" },
+        // new MemoryRegionInfo { Address = 0x40001400, Size = 0x1000, Name = "Timer7" },
+        // new MemoryRegionInfo { Address = 0x40001800, Size = 0x1000, Name = "Timer12" },
+        // new MemoryRegionInfo { Address = 0x40001C00, Size = 0x1000, Name = "Timer13" },
+        // new MemoryRegionInfo { Address = 0x40002000, Size = 0x1000, Name = "Timer14" },
+        // new MemoryRegionInfo { Address = 0x40012C00, Size = 0x1000, Name = "Timer1" },
+        // new MemoryRegionInfo { Address = 0x40013400, Size = 0x1000, Name = "Timer8" },
+        // new MemoryRegionInfo { Address = 0x40014C00, Size = 0x1000, Name = "Timer9" },
+        // new MemoryRegionInfo { Address = 0x40015000, Size = 0x1000, Name = "Timer10" },
+        // new MemoryRegionInfo { Address = 0x40015400, Size = 0x1000, Name = "Timer11" },
+        
+        // // UART regions
+        // new MemoryRegionInfo { Address = 0x40004400, Size = 0x100, Name = "USART2" },
+        // new MemoryRegionInfo { Address = 0x40004800, Size = 0x100, Name = "USART3" },
+        // new MemoryRegionInfo { Address = 0x40004C00, Size = 0x100, Name = "USART4" },
+        // new MemoryRegionInfo { Address = 0x40005000, Size = 0x100, Name = "USART5" },
+        // new MemoryRegionInfo { Address = 0x40013800, Size = 0x100, Name = "USART1" },
+        
+        // // I2C regions
+        // new MemoryRegionInfo { Address = 0x40005400, Size = 0x1000, Name = "I2C1" },
+        // new MemoryRegionInfo { Address = 0x40005800, Size = 0x1000, Name = "I2C2" },
+        
+        // // GPIO regions
+        // new MemoryRegionInfo { Address = 0x40010800, Size = 0x400, Name = "GPIOA" },
+        // new MemoryRegionInfo { Address = 0x40010C00, Size = 0x400, Name = "GPIOB" },
+        // new MemoryRegionInfo { Address = 0x40011000, Size = 0x400, Name = "GPIOC" },
+        // new MemoryRegionInfo { Address = 0x40011400, Size = 0x400, Name = "GPIOD" },
+        // new MemoryRegionInfo { Address = 0x40011800, Size = 0x400, Name = "GPIOE" },
+        // new MemoryRegionInfo { Address = 0x40011C00, Size = 0x400, Name = "GPIOF" },
+        // new MemoryRegionInfo { Address = 0x40012000, Size = 0x400, Name = "GPIOG" },
+        
+        // // Other peripherals
+        // new MemoryRegionInfo { Address = 0x40010400, Size = 0x1000, Name = "EXTI" },
+        // new MemoryRegionInfo { Address = 0x40012400, Size = 0x1000, Name = "ADC1" },
+        // new MemoryRegionInfo { Address = 0x40021000, Size = 0x400, Name = "RCC" },
+        // new MemoryRegionInfo { Address = 0x40022000, Size = 0x1000, Name = "Flash_Controller" },
+        // new MemoryRegionInfo { Address = 0xE000E000, Size = 0x400, Name = "NVIC" },
+        // new MemoryRegionInfo { Address = 0xE000ED00, Size = 0x400, Name = "dummy" }
+    };
+
+    var dumpedRegions = new List<MemoryRegion>();
+    
+    foreach (var regionInfo in regions)
+    {
+        var region = DumpMemoryRegion(regionInfo.Address, regionInfo.Size, regionInfo.Name);
+        dumpedRegions.Add(region);
+    }
+
+    return dumpedRegions;
+}
+
+     public static void SaveMemoryDumpToFile(List<MemoryRegion> regions, string filename)
+    {
+        using (var writer = new StreamWriter(filename))
+        {
+            foreach (var region in regions)
+            {
+                writer.WriteLine($"=== {region.Name} at 0x{region.Address:X8} (size: 0x{region.Size:X8}) ===");
+                
+                // Write hex dump
+                for (ulong offset = 0; offset < region.Size; offset += 16)
+                {
+                    var line = $"{region.Address + offset:X8}: ";
+                    
+                    for (int i = 0; i < 16 && offset + (ulong)i < region.Size; i++)
+                    {
+                        line += $"{region.Data[offset + (ulong)i]:X2} ";
+                    }
+                    
+                    // Add ASCII representation
+                    line += " ";
+                    for (int i = 0; i < 16 && offset + (ulong)i < region.Size; i++)
+                    {
+                        var c = (char)region.Data[offset + (ulong)i];
+                        line += char.IsControl(c) ? '.' : c;
+                    }
+                    
+                    writer.WriteLine(line);
+                }
+                writer.WriteLine();
+            }
+        }
+        
+        Console.WriteLine($"Memory dump saved to {filename}");
+    }
+    
+    public class MemoryDifference
+    {
+        public ulong Address { get; set; }
+        public byte BeforeValue { get; set; }
+        public byte AfterValue { get; set; }
+        public string RegionName { get; set; }
+    }
+
+    public static List<MemoryDifference> CompareMemoryRegions(
+        List<MemoryRegion> before, 
+        List<MemoryRegion> after)
+    {
+        var differences = new List<MemoryDifference>();
+        
+        // Create lookup dictionaries for faster comparison
+        var beforeDict = before.ToDictionary(r => r.Address);
+        var afterDict = after.ToDictionary(r => r.Address);
+
+        // Compare regions that exist in both dumps
+        foreach (var beforeRegion in before)
+        {
+            if (!afterDict.ContainsKey(beforeRegion.Address))
+            {
+                Console.WriteLine($"Warning: Region {beforeRegion.Name} not found in 'after' dump");
+                continue;
+            }
+
+            var afterRegion = afterDict[beforeRegion.Address];
+            
+            if (beforeRegion.Size != afterRegion.Size)
+            {
+                Console.WriteLine($"Warning: Size mismatch for {beforeRegion.Name}: before={beforeRegion.Size:X8}, after={afterRegion.Size:X8}");
+                continue;
+            }
+
+            // Compare each byte
+            for (ulong offset = 0; offset < beforeRegion.Size; offset++)
+            {
+                var beforeByte = beforeRegion.Data[offset];
+                var afterByte = afterRegion.Data[offset];
+                
+                if (beforeByte != afterByte)
+                {
+                    differences.Add(new MemoryDifference
+                    {
+                        Address = beforeRegion.Address + offset,
+                        BeforeValue = beforeByte,
+                        AfterValue = afterByte,
+                        RegionName = beforeRegion.Name
+                    });
+                }
+            }
+        }
+
+        return differences;
+    }
+
+    public static void PrintMemoryDifferences(List<MemoryDifference> differences, string filename = null)
+    {
+        if (differences.Count == 0)
+        {
+            Console.WriteLine("No memory differences found!");
+            return;
+        }
+
+        Console.WriteLine($"Found {differences.Count} memory differences:");
+        Console.WriteLine();
+
+        var groupedDifferences = differences.GroupBy(d => d.RegionName).ToList();
+        
+        foreach (var group in groupedDifferences)
+        {
+            Console.WriteLine($"=== Changes in {group.Key} ===");
+            
+            foreach (var diff in group.Take(20)) // Limit to first 20 per region
+            {
+                Console.WriteLine($"  0x{diff.Address:X8}: {diff.BeforeValue:X2} -> {diff.AfterValue:X2}");
+            }
+            
+            if (group.Count() > 20)
+            {
+                Console.WriteLine($"  ... and {group.Count() - 20} more changes");
+            }
+            Console.WriteLine();
+        }
+
+        // Save detailed report to file if requested
+        if (!string.IsNullOrEmpty(filename))
+        {
+            SaveDifferencesToFile(differences, filename);
+        }
+    }
+
+    private static void SaveDifferencesToFile(List<MemoryDifference> differences, string filename)
+    {
+        using (var writer = new StreamWriter(filename))
+        {
+            writer.WriteLine($"Memory Differences Report - {DateTime.Now}");
+            writer.WriteLine($"Total differences: {differences.Count}");
+            writer.WriteLine();
+
+            var groupedDifferences = differences.GroupBy(d => d.RegionName).ToList();
+            
+            foreach (var group in groupedDifferences)
+            {
+                writer.WriteLine($"=== Changes in {group.Key} ({group.Count()} differences) ===");
+                
+                foreach (var diff in group)
+                {
+                    writer.WriteLine($"  0x{diff.Address:X8}: {diff.BeforeValue:X2} -> {diff.AfterValue:X2}");
+                }
+                writer.WriteLine();
+            }
+        }
+        
+        Console.WriteLine($"Detailed differences saved to {filename}");
+    }
+
+    // Global variables to store memory dumps
+    public static List<MemoryRegion> MemoryBefore = new List<MemoryRegion>();
+    public static List<MemoryRegion> MemoryAfter = new List<MemoryRegion>();
+
+    public static void DumpMemoryBeforeReset()
+    {
+        Console.WriteLine("=== Dumping memory BEFORE reset ===");
+        MemoryBefore = DumpAllSTM32F4Regions();
+        Console.WriteLine($"Stored {MemoryBefore.Count} regions in global MemoryBefore");
+    }
+    
+    public static void DumpMemoryAfterReset()
+    {
+        Console.WriteLine("=== Dumping memory AFTER reset ===");
+        MemoryAfter = DumpAllSTM32F4Regions();
+        Console.WriteLine($"Stored {MemoryAfter.Count} regions in global MemoryAfter");
+    }
+
+    public static List<MemoryDifference> CompareGlobalDumps()
+    {
+        if (MemoryBefore == null || MemoryAfter == null)
+        {
+            Console.WriteLine("Error: Need to dump memory before and after first");
+            return new List<MemoryDifference>();
+        }
+        
+        Console.WriteLine("=== Comparing global memory dumps ===");
+        var differences = CompareMemoryRegions(MemoryBefore, MemoryAfter);
+        Console.WriteLine($"Found {differences.Count} differences");
+        PrintMemoryDifferences(differences);
+        return differences;
+    }
+
+    public static void ClearGlobalDumps()
+    {
+        MemoryBefore?.Clear();
+        MemoryAfter?.Clear();
+        Console.WriteLine("Cleared global memory dumps");
+    }
+
+// fuzz - mem dump stop ----------------------------------------------------
+
+
+        /// For fuzzing
+    /// Dumps all CPU registers and stack memory to console and optionally to file
+    /// <param name="inputFilename">Input filename that caused the crash</param>
+    /// <param name="saveToFile">Whether to save to file (default: true)</param>
+    /// <param name="stackSize">Number of bytes to dump from stack (default: 256)</param>
+    public void Fuzz_DumpRegistersAndStack(string inputFilename="default_name", bool saveToFile = true, int stackSize = 256)
+    {
+        var machine = EmulationManager.Instance.CurrentEmulation.Machines.First();
+        var sysbus = machine.SystemBus;
+        var cpu = sysbus.GetCPUs().OfType<ICPUWithRegisters>().First();
+        // var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
+        var dump = new StringBuilder();
+        ulong spValue = 0;
+    
+        // Header
+        dump.AppendLine("=".PadRight(80, '='));
+        dump.AppendLine($"CRASH DUMP - Input: {inputFilename}");
+        dump.AppendLine($"Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}");
+        dump.AppendLine("=".PadRight(80, '='));
+    
+        // Dump registers using GetRegistersValues()
+        dump.AppendLine("\nCPU REGISTERS:");
+        dump.AppendLine("-".PadRight(80, '-'));
+    
+        try
+        {
+            var registerTable = cpu.GetRegistersValues();
+        
+            // Get table dimensions
+            int rows = registerTable.GetLength(0);
+            int cols = registerTable.GetLength(1);
+        
+            // Print the table as returned by GetRegistersValues()
+            for (int i = 0; i < rows; i++)
+            {
+                var row = new StringBuilder();
+                for (int j = 0; j < cols; j++)
+                {
+                    row.Append(registerTable[i, j]);
+                }
+                dump.AppendLine(row.ToString());
+                // Check if this row contains SP register and capture its value
+                var rowText = row.ToString();
+                if (rowText.Contains(" SP ") || rowText.Contains("R13"))
+                {
+                    // Extract the hex value from the row
+                    var hexMatch = System.Text.RegularExpressions.Regex.Match(rowText, @"0x([0-9A-Fa-f]+)");
+                    if (hexMatch.Success)
+                    {
+                        spValue = Convert.ToUInt64(hexMatch.Groups[1].Value, 16);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            dump.AppendLine($"Error reading registers: {ex.Message}");
+        }
+    
+        // Dump stack memory
+        dump.AppendLine("\nSTACK MEMORY:");
+        dump.AppendLine("-".PadRight(80, '-'));
+    
+        try
+        {
+            // var spValue = cpu.GetRegisterUnsafe(13); // SP register
+            dump.AppendLine($"Stack Pointer (SP): 0x{spValue:X8}\n");
+            dump.AppendLine("Address     Value");
+            dump.AppendLine("--------    --------");
+        
+            for (int offset = 0; offset < stackSize; offset += 4)
+            {
+                var address = spValue + (ulong)offset;
+                var value = 0u;
+            
+                try
+                {
+                    value = sysbus.ReadWord(address);
+                }
+                catch
+                {
+                    value = 0xDEADBEEF;
+                }
+            
+                dump.AppendLine($"0x{address:X8}  0x{value:X8}");
+            }
+        }
+        catch (Exception ex)
+        {
+            dump.AppendLine($"Error reading stack memory: {ex.Message}");
+        }
+    
+        // Print to console
+        Console.WriteLine(dump.ToString());
+    
+        // Save to file if requested
+        if (saveToFile)
+        {
+            try
+            {
+                var crashesDir = "crashes_context_dump";
+                if (!Directory.Exists(crashesDir))
+                {
+                    Directory.CreateDirectory(crashesDir);
+                }
+            
+                var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
+                var safeInputName = Path.GetFileNameWithoutExtension(inputFilename)
+                    .Replace(":", "_")
+                    .Replace("+", "_")
+                    .Replace(",", "_");
+            
+                var filename = Path.Combine(crashesDir, $"crash_{safeInputName}_{timestamp}.txt");
+                File.WriteAllText(filename, dump.ToString());
+                Console.WriteLine($"Crash dump saved to: {filename}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error saving crash dump: {ex.Message}");
+            }
+        }
+    }
+        
+
+
 
         public bool InternalPause { get; private set; }
 

@@ -19,6 +19,9 @@ using Antmicro.Renode.Exceptions;
 using Antmicro.Renode.Time;
 using Antmicro.Renode.Utilities.Collections;
 using System.Threading;
+using Antmicro.Renode.Core;
+using Antmicro.Renode.Peripherals.Bus;
+using Antmicro.Renode.Peripherals.CPU;
 
 namespace Antmicro.Renode.Core
 {
@@ -308,6 +311,224 @@ namespace Antmicro.Renode.Core
 
             System.Threading.Thread.Sleep(100);
         }
+
+        public void Fuzz_Save_EmulationManager(string path){
+            Console.WriteLine($"Emulation.cs Fuzz_Save_EmulationManager : Saving emulation : {path}");
+            // EmulationManager.Instance.Save(path);
+             try
+            {
+                using(EmulationManager.Instance.CurrentEmulation.ObtainSafeState())
+                {
+                    EmulationManager.Instance.Save(path);
+                    // EmulationManager.Instance.Fuzz_SaveToMemory();
+                }
+            }
+            catch(Exception ex)
+            {
+                Console.WriteLine($"Save failed: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                throw;
+            }
+            Console.WriteLine($"Emulation.cs Fuzz_Save_EmulationManager : Done Saving emulation : {path}");
+
+        }
+
+        public void Fuzz_Save_EmulationManager_ToMem(){
+            Console.WriteLine($"Emulation.cs Fuzz_Save_EmulationManager_ToMem");
+            // EmulationManager.Instance.Save(path);
+             try
+            {
+                using(EmulationManager.Instance.CurrentEmulation.ObtainSafeState())
+                {
+                    // EmulationManager.Instance.Save(path);
+                    EmulationManager.Instance.Fuzz_SaveToMemory();
+                }
+            }
+            catch(Exception ex)
+            {
+                Console.WriteLine($"Save failed: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                throw;
+            }
+            Console.WriteLine($"Emulation.cs Fuzz_Save_EmulationManager_ToMem : Done Saving emulation");
+
+        }
+
+        public void Fuzz_Load(string path){
+            // Console.WriteLine($"Emulation.cs Fuzz_Load_EmulationManager : Loading emulation : {path}");
+            // Convert string to ReadFilePath
+            var filePath = new ReadFilePath(path);
+            EmulationManager.Instance.Load(filePath);
+            // Console.WriteLine($"Emulation.cs Fuzz_Load_EmulationManager : Done Loading emulation : {path}");
+            // EmulationManager.Instance.CurrentEmulation.StartAll();
+        }
+
+        //fuzz
+        private static List<Tuple<ulong, Action<ICpuSupportingGdb, ulong>>> savedHooks_fuzz = new List<Tuple<ulong, Action<ICpuSupportingGdb, ulong>>>();
+        private static Action<ulong> savedExceptionHook_fuzz = null;
+        
+
+        public static void Fuzz_SaveHook(ulong address, Action<ICpuSupportingGdb, ulong> hookAction)
+        {
+            savedHooks_fuzz.Add(new Tuple<ulong, Action<ICpuSupportingGdb, ulong>>(address, hookAction));
+            Console.WriteLine($"Saved hook at address 0x{address:X}");
+        }
+
+        public static void Fuzz_SaveExceptionHook(Action<ulong> exceptionHookAction)
+        {
+            savedExceptionHook_fuzz = exceptionHookAction;
+            Console.WriteLine("Saved exception hook");
+        }
+
+        public static void Fuzz_RestoreAllHooks(TranslationCPU translationCpu){
+            // Console.WriteLine($"Restoring {savedHooks_fuzz.Count} hooks...");
+            foreach (var hook in savedHooks_fuzz)
+            {
+                ulong address = hook.Item1;
+                Action<ICpuSupportingGdb, ulong> hookAction = hook.Item2;
+                translationCpu.AddHook(address, hookAction);
+                // Console.WriteLine($"Restored hook at address 0x{address:X}");
+            }
+
+            if (savedExceptionHook_fuzz != null)
+            {
+                translationCpu.AddHookOnException(savedExceptionHook_fuzz);
+                // Console.WriteLine("Restored exception hook");
+            }
+            // Console.WriteLine("Hook restoration completed");
+
+        }
+
+        public static void Fuzz_ClearSavedHooks()
+        {
+            savedHooks_fuzz.Clear();
+            savedExceptionHook_fuzz = null;
+            Console.WriteLine("Cleared all saved hooks");
+        }
+
+        public static int Fuzz_GetSavedHookCount()
+        {
+            return savedHooks_fuzz.Count;
+        }
+
+        public static bool Fuzz_HasExceptionHook()
+        {
+            return savedExceptionHook_fuzz != null;
+        }
+
+        public void Fuzz_Load_Setup(ReadFilePath path){
+            // Console.WriteLine($"Emulation.cs Fuzz_Load_EmulationManager : Loading emulation : {path}");
+            // Convert string to ReadFilePath
+            // var filePath = new ReadFilePath(path);
+            EmulationManager.Instance.Load(path);
+            // EmulationManager.Instance.Fuzz_LoadFromMemory();
+            var machine = (Machine)EmulationManager.Instance.CurrentEmulation.Machines.First();
+            var sysbus = machine.SystemBus;
+            var cpu = sysbus.GetCPUs().First(); 
+            var translationCpu = (TranslationCPU)cpu;
+            Fuzz_RestoreAllHooks(translationCpu);
+
+            // Console.WriteLine($"CPU type: {cpu.GetType()}");
+            // Console.WriteLine($"CPU type name: {cpu.GetType().Name}");
+            // Console.WriteLine($"CPU full type: {cpu.GetType().FullName}");
+            // Console.WriteLine($"translationCpu type: {translationCpu.GetType()}");
+
+            translationCpu.Fuzz_SetHookAtBlockBegin();
+
+            // Console.WriteLine($"Emulation.cs Fuzz_Load_EmulationManager : Done Loading emulation : {path}");
+            // EmulationManager.Instance.CurrentEmulation.StartAll();
+        }
+
+        public void Fuzz_Load_Setup_FromMem(){
+            // Console.WriteLine($"Emulation.cs Fuzz_Load_EmulationManager : Loading emulation : {path}");
+            // Convert string to ReadFilePath
+            // var filePath = new ReadFilePath(path);
+            // EmulationManager.Instance.Load(filePath);
+            EmulationManager.Instance.Fuzz_LoadFromMemory();
+            var machine = (Machine)EmulationManager.Instance.CurrentEmulation.Machines.First();
+            var sysbus = machine.SystemBus;
+            var cpu = sysbus.GetCPUs().First(); 
+            var translationCpu = (TranslationCPU)cpu;
+            Fuzz_RestoreAllHooks(translationCpu);
+
+            // Console.WriteLine($"CPU type: {cpu.GetType()}");
+            // Console.WriteLine($"CPU type name: {cpu.GetType().Name}");
+            // Console.WriteLine($"CPU full type: {cpu.GetType().FullName}");
+            // Console.WriteLine($"translationCpu type: {translationCpu.GetType()}");
+
+            translationCpu.Fuzz_SetHookAtBlockBegin();
+
+            // Console.WriteLine($"Emulation.cs Fuzz_Load_EmulationManager : Done Loading emulation : {path}");
+            // EmulationManager.Instance.CurrentEmulation.StartAll();
+        }
+
+        public void Fuzz_Load_Setup_StartAll(ReadFilePath path){
+            // Console.WriteLine($"Emulation.cs Fuzz_Load_EmulationManager : Loading emulation : {path}");
+            // Convert string to ReadFilePath
+            // var filePath = new ReadFilePath(path);
+            EmulationManager.Instance.Load(path);
+            // EmulationManager.Instance.Fuzz_LoadFromMemory();
+            var machine = (Machine)EmulationManager.Instance.CurrentEmulation.Machines.First();
+            var sysbus = machine.SystemBus;
+            var cpu = sysbus.GetCPUs().First(); 
+            var translationCpu = (TranslationCPU)cpu;
+            Fuzz_RestoreAllHooks(translationCpu);
+
+            // Console.WriteLine($"CPU type: {cpu.GetType()}");
+            // Console.WriteLine($"CPU type name: {cpu.GetType().Name}");
+            // Console.WriteLine($"CPU full type: {cpu.GetType().FullName}");
+            // Console.WriteLine($"translationCpu type: {translationCpu.GetType()}");
+
+            translationCpu.Fuzz_SetHookAtBlockBegin();
+
+            // Console.WriteLine($"Emulation.cs Fuzz_Load_EmulationManager : Done Loading emulation : {path}");
+            EmulationManager.Instance.CurrentEmulation.StartAll();
+        }
+
+        public void Fuzz_Load_Setup_FromMem_StartAll(){
+            // Console.WriteLine($"Emulation.cs Fuzz_Load_EmulationManager : Loading emulation : {path}");
+            // Convert string to ReadFilePath
+            // var filePath = new ReadFilePath(path);
+            // EmulationManager.Instance.Load(filePath);
+            EmulationManager.Instance.Fuzz_LoadFromMemory();
+            // Cache references to avoid repeated property access
+            var emulation = EmulationManager.Instance.CurrentEmulation;
+            var machine = (Machine)emulation.Machines.First();
+            var sysbus = machine.SystemBus;
+            var cpu = sysbus.GetCPUs().First(); 
+            var translationCpu = (TranslationCPU)cpu;
+            Fuzz_RestoreAllHooks(translationCpu);
+
+            // Console.WriteLine($"CPU type: {cpu.GetType()}");
+            // Console.WriteLine($"CPU type name: {cpu.GetType().Name}");
+            // Console.WriteLine($"CPU full type: {cpu.GetType().FullName}");
+            // Console.WriteLine($"translationCpu type: {translationCpu.GetType()}");
+
+            translationCpu.Fuzz_SetHookAtBlockBegin();
+
+            // Console.WriteLine($"Emulation.cs Fuzz_Load_EmulationManager : Done Loading emulation : {path}");
+            emulation.StartAll();
+        }
+       
+    //    public static dynamic Fuzz_LoadAndGetCPU(string state_file)
+    //    {
+    //         // Convert string to ReadFilePath
+    //         var filePath = new ReadFilePath(state_file);
+    //         // Load the saved state
+    //         EmulationManager.Instance.Load(filePath);
+    //         // Get the first machine
+    //         var machine = (Machine)EmulationManager.Instance.CurrentEmulation.Machines.First();
+    //         var sysbus = machine.SystemBus;
+    //         var cpu = (ICPU)sysbus.GetCPUs().First(); 
+    //         // var cpu = sysbus.CPU; 
+    //         return cpu;
+    //     }
+        // public void Fuzz_StartAll_EmulationManager(){
+        //     Console.WriteLine($"Emulation.cs Fuzz_StartAll_EmulationManager : Starting all emulations");
+        //     // EmulationManager.Instance.Load(path);
+        //     // Console.WriteLine($"TranslationCPU.cs Fuzz_Load_EmulationManager : Done Loading emulation : {path}");
+        //     EmulationManager.Instance.CurrentEmulation.StartAll();
+        // }
 
         private void InnerStartAll()
         {

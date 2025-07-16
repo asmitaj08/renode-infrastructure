@@ -206,7 +206,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public uint ReadDoubleWord(ulong address, ICPU context = null)
         {
-            // Console.WriteLine($"^^^^^ SystemBusGenerated.cs ReadDoubleWord(), address : {address}");
+            // Console.WriteLine($"^^^^^ SystemBusGenerated.cs ReadDoubleWord(), address : 0x{address:X}");
             var accessWidth = SysbusAccessWidth.DoubleWord;
             if(IsAddressRangeLocked(address.By((ulong)accessWidth), context))
             {
@@ -485,6 +485,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void SetHookBeforePeripheralWrite<T>(IBusPeripheral peripheral, Func<T, long, T> hook, Range? subrange = null)
         {
+            // Console.WriteLine($"Setting hook before peripheral write: {peripheral}, type : {typeof(T)}");
             if(!Machine.IsRegistered(peripheral))
             {
                 throw new RecoverableException(string.Format("Cannot set hook on peripheral {0}, it is not registered.", peripheral));
@@ -532,8 +533,10 @@ namespace Antmicro.Renode.Peripherals.Bus
             {
                 foreach(var peripherals in allPeripherals)
                 {
+                    // Console.WriteLine($"*****peripherals : {peripherals}");
                     peripherals.VisitAccessMethods(peripheral, pam =>
                     {
+                        // Console.WriteLine($"Setting hook on double word write : peripheral : {peripheral} ");
                         if(pam.WriteDoubleWord.Target is WriteHookWrapper<uint>)
                         {
                             pam.WriteDoubleWord = new BusAccess.DoubleWordWriteMethod(((WriteHookWrapper<uint>)pam.WriteDoubleWord.Target).OriginalMethod);

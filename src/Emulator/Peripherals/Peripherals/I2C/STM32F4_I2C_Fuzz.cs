@@ -43,7 +43,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public byte ReadByte(long offset)
         {
-            Console.WriteLine($"^^^^^STM32F4_I2C_Fuzz.cs ReadByte : offset : 0x{offset:X}");
+            // Console.WriteLine($"^^^^^STM32F4_I2C_Fuzz.cs ReadByte : offset : 0x{offset:X}");
             if((Registers)offset == Registers.Data)
             {
                 byteTransferFinished.Value = false;
@@ -59,7 +59,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public void WriteByte(long offset, byte value)
         {
-            Console.WriteLine($"^^^^^STM32F4_I2C_Fuzz.cs WriteByte : offset : 0x{offset:X}, value : {value}");
+            // Console.WriteLine($"^^^^^STM32F4_I2C_Fuzz.cs WriteByte : offset : 0x{offset:X}, value : {value}");
             if((Registers)offset == Registers.Data)
             {
                 data.Write(offset, value);
@@ -85,7 +85,7 @@ namespace Antmicro.Renode.Peripherals.I2C
         public override void Reset()
         {
             // Console.WriteLine($"^^^^^ STM32F4_I2C_Fuzz.cs. Reset()");
-            state = State.Idle;
+            // state = State.Idle; //or fuzz from func
             EventInterrupt.Unset();
             ErrorInterrupt.Unset();
 

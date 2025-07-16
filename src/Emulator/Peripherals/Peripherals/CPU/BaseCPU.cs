@@ -794,8 +794,8 @@ restart:
                     //Console.WriteLine($"BaseCPU.cs CpuThreadBodyInner : reporting break : instructionsLeft : {instructionsLeft}, instructionsToSkip : {instructionsToSkip} thread ID: {cpuThread.ManagedThreadId}");
                     //ReportProgress(instructionsToSkip); //fuzz change - it works even without this
                     timeLeft = TimeInterval.Empty; //fuzz change, it is needed to same coverage trace after reset
-                    // TimeHandle.ReportBackAndBreak(timeLeft); //orig
-                    TimeHandle.ReportBackAndContinue(timeLeft); //fuzz change
+                    TimeHandle.ReportBackAndBreak(timeLeft); //orig
+                    // TimeHandle.ReportBackAndContinue(timeLeft); //fuzz change
                     executedResiduum = 0; //fuzz chnage
                     // Console.WriteLine($"^^^ BaseCPU.cs sent ReportBackAndContinue for fuzz task instead of ReportBackAndBreak  ");
                     

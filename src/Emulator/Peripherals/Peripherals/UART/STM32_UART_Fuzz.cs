@@ -73,7 +73,7 @@ namespace Antmicro.Renode.Peripherals.UART
        
         public void WriteChar(byte value)
         {
-             Console.WriteLine("****** UART WriteChar");
+            //  Console.WriteLine("****** UART WriteChar");
             if(!usartEnabled.Value && !receiverEnabled.Value)
             {
                 Console.WriteLine("****** Received a character, but the receiver is not enabled, dropping.");
@@ -105,7 +105,7 @@ namespace Antmicro.Renode.Peripherals.UART
             // }
         //     //--------
 
-            Console.WriteLine($"****** UART WriteChar, receiveFifo Len : {receiveFifo.Count}");
+            // Console.WriteLine($"****** UART WriteChar, receiveFifo Len : {receiveFifo.Count}");
             readFifoNotEmpty.Value = true;
            
 

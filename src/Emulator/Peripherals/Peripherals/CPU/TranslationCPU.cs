@@ -232,6 +232,26 @@ namespace Antmicro.Renode.Peripherals.CPU
                 TlibInvalidateTranslationCache();
             }
         }
+        // public void Fuzz_Save_EmulationManager(string path){ // added corresponding func in Emulation.cs
+        //     Console.WriteLine($"TranslationCPU.cs Fuzz_Save_EmulationManager : Saving emulation : {path}");
+        //     EmulationManager.Instance.Save(path);
+        //     Console.WriteLine($"TranslationCPU.cs Fuzz_Save_EmulationManager : Done Saving emulation : {path}");
+
+        // }
+
+        // public void Fuzz_Load_EmulationManager(ReadFilePath path){
+        //     Console.WriteLine($"TranslationCPU.cs Fuzz_Load_EmulationManager : Loading emulation : {path}");
+        //     EmulationManager.Instance.Load(path);
+        //     Console.WriteLine($"TranslationCPU.cs Fuzz_Load_EmulationManager : Done Loading emulation : {path}");
+        //     // EmulationManager.Instance.CurrentEmulation.StartAll();
+        // }
+
+        // public void Fuzz_StartAll_EmulationManager(){
+        //     Console.WriteLine($"TranslationCPU.cs Fuzz_StartAll_EmulationManager : Starting all emulations");
+        //     // EmulationManager.Instance.Load(path);
+        //     // Console.WriteLine($"TranslationCPU.cs Fuzz_Load_EmulationManager : Done Loading emulation : {path}");
+        //     EmulationManager.Instance.CurrentEmulation.StartAll();
+        // }
 
         private byte[] cpuState_fuzz;
         // private IntPtr statePtr_fuzz;
@@ -308,25 +328,25 @@ namespace Antmicro.Renode.Peripherals.CPU
         [PostSerialization]
         private void FreeState()
         {
-            cpuState = null;
-            Console.WriteLine("^^^^^^^^^^^ Free state - Translation CPU ^^^^^^^^^^^^^^");
+            cpuState = null; 
+            // Console.WriteLine($"^^^^^^^^^^^ Free state - Translation CPU ^^^^^^^^^^^^^^ cpuState : {cpuState}");
         }
 
         [LatePostDeserialization]
-        // private void RestoreState()
+        // private void RestoreState() //orig
         public void RestoreState() //fuzz
         {
-           Console.WriteLine("^^^^ Translation CPU - RestoreState");
+        //    Console.WriteLine("^^^^ Translation CPU - RestoreState");
             Init();
             // TODO: state of the reset events
             FreeState();
             if(memoryAccessHook != null)
             {
-                Console.WriteLine("^^^^ Translation CPU - RestoreState : memoryAccessHook != null");
+                // Console.WriteLine("^^^^ Translation CPU - RestoreState : memoryAccessHook != null");
                 // Repeat memory hook enable to make sure that the tcg context is set not to use the tlb
                 TlibOnMemoryAccessEventEnabled(1);
             }
-             Console.WriteLine("^^^^ Translation CPU - RestoreState Done!!!^^^^");
+            //  Console.WriteLine("^^^^ Translation CPU - RestoreState Done!!!^^^^");
         }
 
         public override ExecutionMode ExecutionMode
@@ -412,7 +432,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         
         public override void Reset()
         {
-        //    Console.WriteLine("^^^^^^^ TranslationalCPU.cs Reset()");
+           Console.WriteLine("^^^^^^^ TranslationalCPU.cs Reset()");
             base.Reset();
             isInterruptLoggingEnabled = false;
             TlibReset();
@@ -647,11 +667,11 @@ namespace Antmicro.Renode.Peripherals.CPU
                 Item2 = item2;
             }
         }
-        private HashSet<ULongPair> uniqueEdges = new HashSet<ULongPair>(); 
+        private HashSet<ULongPair> uniqueEdges = new HashSet<ULongPair>(); //fuzz
         int covMap_nonzero_count = 0;// just for testing
         int c = 0;// just for testing
         bool isInterrupt = false;
-        public void zeroOutCovMap(){
+        public void zeroOutCovMap(){ //fuzz
             PREV_LOC = 0;
             PREV_PC = 0;
             unsafe{
@@ -667,7 +687,11 @@ namespace Antmicro.Renode.Peripherals.CPU
         
         public void Fuzz_SetHookAtBlockBegin()
         {
-            // Console.WriteLine($"^^^^^^^^^^^Fuzz_SetHookAtBlockBegin() : CovPointer : 0x{unsafe{((Byte*)covMapPtr).ToInt64()}:X}");
+            // Console.WriteLine($"^^^^^^^^^^^Fuzz_SetHookAtBlockBegin() : CovPointer : 0x{((Byte*)covMapPtr).ToInt64():X}");
+           // Use IntPtr methods instead of pointer casting
+            // long address = covMapPtr.ToInt64();
+            // Console.WriteLine($"^^^^^^^^^^^Fuzz_SetHookAtBlockBegin() : CovPointer : 0x{address:X}");            // Console.WriteLine($"^^^^^^^^^^^Fuzz_SetHookAtBlockBegin()");
+            // Console.WriteLine("^^^^^^^^^^^Fuzz_SetHookAtBlockBegin()");
             SetInternalHookAtBlockBegin((pc, size) =>
             {
                 // CountNonZeroElements_COVMAP();
@@ -712,7 +736,7 @@ namespace Antmicro.Renode.Peripherals.CPU
                     PREV_LOC = pc >> 1;
 
 
-                    // Console.WriteLine("Written at covmap");
+                    // Console.WriteLine("*******Written at covmap");
                 // }
                 // else{
                 //     Console.WriteLine($"Interupt ,  skip covmap, PC : 0x{pc:X}");
@@ -860,6 +884,97 @@ namespace Antmicro.Renode.Peripherals.CPU
         }
 
 
+        //fuzz
+        private Dictionary<int, ulong> initialRegValues_Fuzz = new Dictionary<int, ulong>();
+        private Dictionary<int, ulong> curentRegValues_Fuzz = new Dictionary<int, ulong>();
+        private Dictionary<int, ulong> changedRegValues_Fuzz = new Dictionary<int, ulong>();
+
+        private void Fuzz_CaptureRegSnapshot(Dictionary<int, ulong> snapshot)
+        {
+            snapshot.Clear();
+            var registers = GetRegisters();
+            foreach (var reg in registers)
+            {
+                snapshot[reg.Index] = GetRegister(reg.Index).RawValue;
+                // Console.WriteLine($"^^^^^ Fuzz_CaptureRegSnapshot : index : {reg.Index}, val: 0x{snapshot[reg.Index]:X}");
+            }
+        }
+
+        public void Fuzz_CaptureRegSnapshot_Before()
+        {
+            Console.WriteLine($"^^^^^ Fuzz_CaptureRegSnapshot_Before");
+            Fuzz_CaptureRegSnapshot(initialRegValues_Fuzz);
+        }
+
+        public void Fuzz_CaptureRegSnapshot_After()
+        {
+            Console.WriteLine($"^^^^^ Fuzz_CaptureRegSnapshot_After : Fetching current RegValues");
+            Fuzz_CaptureRegSnapshot(curentRegValues_Fuzz);
+            Console.WriteLine($"^^^^^ Fuzz_CaptureRegSnapshot_After : Fetching changed RegValues");
+            foreach (var kvp in curentRegValues_Fuzz)
+            {
+                if (!initialRegValues_Fuzz.ContainsKey(kvp.Key) || 
+                    initialRegValues_Fuzz[kvp.Key] != kvp.Value)
+                {
+                    changedRegValues_Fuzz[kvp.Key] = kvp.Value;
+                    Console.WriteLine($"^^^^^ Fuzz_CaptureRegSnapshot_After : Changed RegValues: index : {kvp.Key}, val: 0x{kvp.Value:X}");
+                }
+            }
+        
+        }
+
+        public void Fuzz_UpdateChangedRegValues()
+        {
+            // Console.WriteLine($"^^^^^ Fuzz_UpdateChangedRegValues : Fetching current RegValues");
+            Fuzz_CaptureRegSnapshot(curentRegValues_Fuzz);
+            // Console.WriteLine($"^^^^^ Fuzz_UpdateChangedRegValues : Fetching changed RegValues");
+            foreach (var kvp in curentRegValues_Fuzz)
+            {
+                if (initialRegValues_Fuzz.TryGetValue(kvp.Key, out ulong initialValue))
+                {
+                    // Register exists in initial snapshot
+                    if (initialValue != kvp.Value)
+                    {
+                        // SetRegisterUnsafe(kvp.Key, new RegisterValue(initialValue));
+                        SetRegisterUnsafe(kvp.Key, initialValue);
+                        // Console.WriteLine($"^^^^^ Fuzz_UpdateChangedRegValues : Restored Reg index: {kvp.Key}, from 0x{kvp.Value:X} to 0x{initialValue:X}");
+                    }
+                }
+                else
+                {
+                    // Register doesn't exist in initial snapshot - set to default
+                    // SetRegisterUnsafe(kvp.Key, new RegisterValue(0x0));
+                    SetRegisterUnsafe(kvp.Key, 0x0);
+                    Console.WriteLine($"^^^^^ Fuzz_UpdateChangedRegValues :**NOT FOUND Set missing Reg index: {kvp.Key} to 0x0 (was {kvp.Value})");
+                }
+            }
+        
+        }
+
+
+        public void Fuzz_PartialResetForFunctionRerun()
+        {
+            // Stop execution
+            Pause();
+    
+            // Clear abort state
+            isAborted = false;
+    
+            // Disable interrupt logging
+            isInterruptLoggingEnabled = false;
+            // Reset CPU hardware state
+            TlibReset();
+    
+            // Reset performance counters
+            // ResetOpcodesCounters();
+    
+            // Clean up profiler
+            // profiler?.Dispose();
+    
+            // Clear translation cache (CRITICAL for deterministic replay)
+            ClearTranslationCache();
+        }
+
         // TODO: improve this when backend/analyser stuff is done
 
         public bool UpdateContextOnLoadAndStore { get; set; }
@@ -902,7 +1017,8 @@ namespace Antmicro.Renode.Peripherals.CPU
         {
             Console.WriteLine($"^^^^^ TranslationCPU.cs SetHookAtMemoryAccess() ");
             TlibOnMemoryAccessEventEnabled(hook != null ? 1 : 0);
-            memoryAccessHook = hook;
+            memoryAccessHook = hook;//orig
+            // memoryAccessHook += hook;
         }
 
         public void AddHookAtInterruptBegin(Action<ulong> hook)
@@ -917,6 +1033,12 @@ namespace Antmicro.Renode.Peripherals.CPU
         public void AddHookOnMmuFault(Action<ulong, AccessType, int> hook)
         {
             mmuFaultHook += hook;
+        }
+
+
+        public void AddHookOnException(Action<ulong> hook) //fuzz
+        {
+            exceptionHook += hook;
         }
 
         public void AddHookAtInterruptEnd(Action<ulong> hook)
@@ -1145,7 +1267,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void SetInternalHookAtBlockBegin(Action<ulong, uint> hook)
         {
-            Console.WriteLine("^^^^^^^^ SetInternalHookAtBlockBegin : Inside TranslationCPU.cs TranslationCPU, blockBeginInternalHook");
+            // Console.WriteLine("^^^^^^^^ SetInternalHookAtBlockBegin : Inside TranslationCPU.cs TranslationCPU, blockBeginInternalHook");
             using(machine?.ObtainPausedState(true))
             {
                 if((hook == null) ^ (blockBeginInternalHook == null))
@@ -1454,15 +1576,19 @@ namespace Antmicro.Renode.Peripherals.CPU
         private ulong ram_size = 0x10000000; //change to auto fetch //fuzz
         private ulong ram_segment_size = 0x1000000; //fuzz
 
+
+
         [Export]
         private void OnMemoryAccess(ulong pc, uint operation, ulong virtualAddress, ulong value)
         {
             // We don't care if translation fails here (the address is unchanged in this case)
             TryTranslateAddress(virtualAddress, Misc.MemoryOperationToMpuAccess((MemoryOperation)operation), out var physicalAddress);
-            //Added for fuzz
-            if((MemoryOperation)operation == MemoryOperation.MemoryWrite && physicalAddress>=ram_address){
-                            ramAccessedSet.Add(physicalAddress);
-                    }
+            //Added for fuzz // comment it, added separately
+            // if((MemoryOperation)operation == MemoryOperation.MemoryWrite && physicalAddress>=ram_address){
+            //                 ramAccessedSet.Add(physicalAddress);
+            //         }
+           
+            // Console.WriteLine($"^^^^ TranslationCPU.cs : OnMemoryAccess export : pc : 0x{pc:X}, operation : {(MemoryOperation)operation}, virtualAddress : 0x{virtualAddress:X}, physicalAddress : 0x{physicalAddress:X}, value : 0x{value:X}");
             //this was from before
             memoryAccessHook?.Invoke(pc, (MemoryOperation)operation, virtualAddress, physicalAddress, value);
         }
@@ -1520,7 +1646,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void HandleRamSetup()
         {
-            Console.WriteLine("^^^^^ TranslationCPU - HandleRamSetup ^^^^^^^^");
+            // Console.WriteLine("^^^^^ TranslationCPU - HandleRamSetup ^^^^^^^^");
             foreach(var mapping in currentMappings)
             {
                 var range = mapping.Segment.GetRange();
@@ -1615,7 +1741,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         protected override void DisposeInner(bool silent = false)
         {
-            Console.WriteLine("^^^^^ TranslationCPU.cs DisposeInner()");
+            // Console.WriteLine("^^^^^ TranslationCPU.cs DisposeInner()");
             base.DisposeInner(silent);
             TimeHandle.Dispose();
             RemoveAllHooks();
@@ -1638,6 +1764,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         {
             this.Log(LogLevel.Error, "CPU abort [PC=0x{0:X}]: {1}.", PC.RawValue, message);
             Console.WriteLine($"^^^^^^ TranslationalCPU.cs ReportAbort CPU abort [PC=0x{PC.RawValue:X}]: {message}");
+            exceptionHook?.Invoke(PC.RawValue); //fuzz
             throw new CpuAbortException(message);
         }
 
@@ -1665,7 +1792,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void Init()
         {
-           Console.WriteLine("^^^^^ TranslationCPU - Init ^^^^^^^^");
+        //    Console.WriteLine("^^^^^ TranslationCPU - Init ^^^^^^^^");
             memoryManager = new SimpleMemoryManager(this);
             isPaused = true;
             // Console.WriteLine("^^^^^ TranslationCPU - Init - SimpleMemoryManager done ^^^^^^^^");
@@ -1699,9 +1826,9 @@ namespace Antmicro.Renode.Peripherals.CPU
             var translationCacheSizeMin = (ulong)ConfigurationManager.Instance.Get("translation", "min-tb-size", DefaultMinimumTranslationCacheSize);
             var translationCacheSizeMax = (ulong)ConfigurationManager.Instance.Get("translation", "max-tb-size", DefaultMaximumTranslationCacheSize);
             TlibSetTranslationCacheConfiguration(translationCacheSizeMin, translationCacheSizeMax);
-            Console.WriteLine($"^^^^^ TranslationCPU - Init - TlibInit start : model : {Model} ^^^^^^^^");
+            // Console.WriteLine($"^^^^^ TranslationCPU - Init - TlibInit start : model : {Model} ^^^^^^^^");
             var result = TlibInit(Model); // This allocates  a bunch of memory, internally calls Allocate() which internally si  return memoryManager.Allocate(size);
-            Console.WriteLine($"^^^^^ TranslationCPU - Init - TlibInit start : model : {Model} Done!!!^^^^^^^^");
+            // Console.WriteLine($"^^^^^ TranslationCPU - Init - TlibInit start : model : {Model} Done!!!^^^^^^^^");
             if(result == -1)
             {
                 throw new ConstructionException("Unknown CPU type");
@@ -1710,12 +1837,12 @@ namespace Antmicro.Renode.Peripherals.CPU
             {
                 var statePtr = TlibExportState();
                 Marshal.Copy(cpuState, 0, statePtr, cpuState.Length);
-                Console.WriteLine("^^^^^ TranslationCPU - Init - cpuState!=null, calling afterLoad ^^^^^^^^");
+                // Console.WriteLine("^^^^^ TranslationCPU - Init - cpuState!=null, calling afterLoad ^^^^^^^^");
                 AfterLoad(statePtr);
             }
             if(machine != null)
             {
-                Console.WriteLine("^^^^^ TranslationCPU - Init - TlibAtomicMemoryStateInit start ^^^^^^^^");
+                // Console.WriteLine("^^^^^ TranslationCPU - Init - TlibAtomicMemoryStateInit start ^^^^^^^^");
                 atomicId = TlibAtomicMemoryStateInit(machine.AtomicMemoryStatePointer, atomicId);
                 if(atomicId == -1)
                 {
@@ -1729,7 +1856,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
             CyclesPerInstruction = 1;
 
-             Console.WriteLine("^^^^^ TranslationCPU - Init Done!!^^^^^^^^");
+            //  Console.WriteLine("^^^^^ TranslationCPU - Init Done!!^^^^^^^^");
         }
 
         public override ulong SkipInstructions
@@ -1775,7 +1902,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             this.NoisyLog("Trying to find the mapping for offset 0x{0:X}.", offset);
             var mapping = currentMappings.FirstOrDefault(x => x.Segment.StartingOffset <= offset && offset < x.Segment.StartingOffset + x.Segment.Size);
    
-            Console.WriteLine($"^^^^^^^^ TranslationCPU.cs export TouchHostBlock , mapping: seg_pointer : 0x{mapping.Segment.Pointer.ToInt64():X}, Segment.StartingOffset : 0x{mapping.Segment.StartingOffset:X}");
+            // Console.WriteLine($"^^^^^^^^ TranslationCPU.cs export TouchHostBlock , mapping: seg_pointer : 0x{mapping.Segment.Pointer.ToInt64():X}, Segment.StartingOffset : 0x{mapping.Segment.StartingOffset:X}");
             if(mapping == null)
             {
                 throw new InvalidOperationException(string.Format("Could not find mapped segment for offset 0x{0:X}.", offset));
@@ -1791,7 +1918,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void RebuildMemoryMappings()
         {
-            Console.WriteLine($"^^^^^^^^ TranslationCPU.cs RebuildMemoryMappings Start ");
+            // Console.WriteLine($"^^^^^^^^ TranslationCPU.cs RebuildMemoryMappings Start ");
             checked
             {
                 
@@ -1816,13 +1943,13 @@ namespace Antmicro.Renode.Peripherals.CPU
                     
                     var blockBuffer = memoryManager.Allocate(new IntPtr(Marshal.SizeOf(typeof(HostMemoryBlock)) * hostBlocks.Length));
                     BlitArray(blockBuffer, hostBlocks.OrderBy(x => x.HostPointer.ToInt64()).Cast<dynamic>().ToArray());
-                    Console.WriteLine($"^^^TranslationCPU.cs RebuildMemoryMappings HostBlocks len : {hostBlocks.Length}, blockbuffer : 0x{blockBuffer.ToInt64():X}");
+                    // Console.WriteLine($"^^^TranslationCPU.cs RebuildMemoryMappings HostBlocks len : {hostBlocks.Length}, blockbuffer : 0x{blockBuffer.ToInt64():X}");
                     RenodeSetHostBlocks(blockBuffer, hostBlocks.Length);
-                    Console.WriteLine("^^TranslationCPU.cs RebuildMemoryMappings : RenodeSetHostBlocks done");
+                    // Console.WriteLine("^^TranslationCPU.cs RebuildMemoryMappings : RenodeSetHostBlocks done");
                     memoryManager.Free(blockBuffer);
                     this.NoisyLog("Memory mappings rebuilt, there are {0} host blocks now.", hostBlocks.Length);
                 }
-            Console.WriteLine($"^^^^^^^^ TranslationCPU.cs RebuildMemoryMappings Done with {hostBlocks.Length} host blocks now!!!!");
+            // Console.WriteLine($"^^^^^^^^ TranslationCPU.cs RebuildMemoryMappings Done with {hostBlocks.Length} host blocks now!!!!");
             }
             
         }
@@ -1940,6 +2067,7 @@ namespace Antmicro.Renode.Peripherals.CPU
         private Action<ulong> interruptBeginHook;
         private Action<ulong> interruptEndHook;
         private Action<ulong, AccessType, int> mmuFaultHook;
+        private Action<ulong> exceptionHook; //fuzz
         private Action<ulong, MemoryOperation, ulong, ulong, ulong> memoryAccessHook;
         private Action<bool> wfiStateChangeHook;
 
@@ -2026,7 +2154,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
             public void CheckIfAllIsFreed()
             {
-                Console.WriteLine("^^^^^^^ TranslationCPU.cs CheckIfAllIsFreed()");
+                // Console.WriteLine("^^^^^^^ TranslationCPU.cs CheckIfAllIsFreed()");
                 if(!ourPointers.IsEmpty)
                 {
                     parent.Log(LogLevel.Warning, "Some memory allocated by the translation library was not freed - {0}B left allocated. This might indicate a memory leak. Cleaning up...", Misc.NormalizeBinary(allocated));
@@ -2749,17 +2877,18 @@ namespace Antmicro.Renode.Peripherals.CPU
         }
  
         
-        // public void Fuzz_TrackMemoryAccess(ulong ram_address = 0x20000000) //not needed, added directly in OnMemoryAccess()
-        // {
-        //     SetHookAtMemoryAccess((pc, operation, virtualAddress, physicalAddress, value) =>
-        //     {
+        public void Fuzz_Track_RAM_Write(ulong ram_address = 0x20000000) 
+        {
+            SetHookAtMemoryAccess((pc, operation, virtualAddress, physicalAddress, value) =>
+            {
                 
-        //         if(operation == MemoryOperation.MemoryWrite && virtualAddress>=ram_address){
-        //                     ramAccessedSet.Add(virtualAddress);
-        //             }
-        //     });
-        // }
+                if(operation == MemoryOperation.MemoryWrite && virtualAddress>=ram_address){
+                            ramAccessedSet.Add(virtualAddress);
+                    }
+            });
+        }
 
+        //not needed, set when we call SetHookAtMemoryAccess() internally within functions like Fuzz_Track_RAM_Write
         public void Fuzz_TlibOnMemoryAccessEventEnabled(){ // for on memory access hooks, not needed as of now
             TlibOnMemoryAccessEventEnabled(1);
         }
@@ -2817,6 +2946,164 @@ namespace Antmicro.Renode.Peripherals.CPU
         //     // Console.WriteLine($"^^^^TranslationCPU.cs Fuzz_Reset_Val_ramAccessedSet() Done : , count : {ramAccessedSet.Count} ");
 
         // }
+        
+        private struct MemWriteInfo_Fuzz
+        {
+            public ulong PrevValue;
+            public int AccessSize; // 1, 2, 4, or 8
+        }
+        // private Dictionary<ulong, MemWriteInfo_Fuzz> changedMemValues_Fuzz = new Dictionary<ulong, MemWriteInfo_Fuzz>();
+        private Dictionary<ulong, uint> changedMemValues_Fuzz = new Dictionary<ulong, uint>();
+
+     
+        public void Fuzz_Set_Track_All_Mem_Write() 
+        {
+            SetHookAtMemoryAccess((pc, operation, virtualAddress, physicalAddress, value) => // no use as OnMemAccessHook occurs, only after read/write operation is done, hence not feasible to store prev value. 
+            {
+                // Console.WriteLine($"^^^^^ Fuzz_Set_Track_All_Mem_Write() :Accessing address 0x0 : virtual  0x{virtualAddress:X}, physical :  0x{physicalAddress:X} , operation : {(MemoryOperation)operation} , value : 0x{value:X}, pc : 0x{pc:X}");
+                if((MemoryOperation)operation == MemoryOperation.MemoryWrite || (MemoryOperation)operation == MemoryOperation.MemoryIOWrite){
+                            
+                    // Console.WriteLine($"^^^^^ Fuzz_Set_Track_All_Mem_Write() : operation : {(MemoryOperation)operation}");
+                    // Only track the first write to each address
+                    if(!changedMemValues_Fuzz.ContainsKey(virtualAddress))
+                    {
+                        // Read the value currently at that address before the write
+                        uint prevValue = machine.SystemBus.ReadDoubleWord(virtualAddress);
+                        changedMemValues_Fuzz[virtualAddress] = prevValue;
+                        Console.WriteLine($"First write to 0x{virtualAddress:X}: previous value = 0x{prevValue:X}, current_val : 0x{value:X}, count : {changedMemValues_Fuzz.Count()}");
+                    }
+                    
+                }
+
+                if(virtualAddress==0x0 || physicalAddress==0x0){
+                    Console.WriteLine($"^^^^^ Fuzz_Set_Track_All_Mem_Write() :Accessing address 0x0x : virtual  0x{virtualAddress:X}, physical :  0x{physicalAddress:X} , operation : {(MemoryOperation)operation} , value : 0x{value:X}, pc : 0x{pc:X}");
+                }   
+            });
+
+            // //attcah hook to every peripheral
+            // foreach(var reg in machine.SystemBus.GetRegisteredPeripherals())
+            // {
+            //     var peripheral = reg.Peripheral;
+            //     ulong baseAddress = reg.RegistrationPoint.Range.StartAddress;
+            //     Console.WriteLine($"^^^^^ Fuzz_Set_Track_All_Mem_Write() :peripheral :  {peripheral}, isIMapeed : {peripheral is IMapped}, isIperipheral : {peripheral is IPeripheral}");
+                
+            //     // For each access size you care about:
+            // //     machine.SystemBus.SetHookBeforePeripheralWrite<byte>(peripheral, (valueToWrite, offset) =>
+            // //     {
+            // //         // ulong absAddress = reg.Registration.Start + (ulong)offset;
+            // //         ulong absAddress = baseAddress + (ulong)offset;
+            // //         Console.WriteLine($"^^^^^ HookBeforePeripheralWrite :Accessing address (byte) :  0x{absAddress:X} , value : 0x{valueToWrite:X}");
+                    
+            // //         // Only if not already stored (to track first write)
+            // //         if(!changedMemValues_Fuzz.ContainsKey(absAddress))
+            // //         {
+            // //             byte prevValue = machine.SystemBus.ReadByte(absAddress);
+
+            // //             changedMemValues_Fuzz[absAddress] = new MemWriteInfo_Fuzz { PrevValue = prevValue, AccessSize = 1 };
+            // //             Console.WriteLine($"(Byte) First write to 0x{absAddress:X}: previous value = 0x{prevValue:X}, current_val : 0x{valueToWrite:X}, count : {changedMemValues_Fuzz.Count()}");
+            // //         }
+            // //         return valueToWrite; // Must return the value to actually write
+            // // });
+            // // machine.SystemBus.SetHookBeforePeripheralWrite<ushort>(peripheral, (valueToWrite, offset) =>
+            // //     {
+            // //         // ulong absAddress = reg.Registration.Start + (ulong)offset;
+            // //         ulong absAddress = baseAddress + (ulong)offset;
+            // //         Console.WriteLine($"^^^^^ HookBeforePeripheralWrite :Accessing address (Word) :  0x{absAddress:X} , value : 0x{valueToWrite:X}");
+                    
+            // //         // Only if not already stored (to track first write)
+            // //         if(!changedMemValues_Fuzz.ContainsKey(absAddress))
+            // //         {
+            // //             ushort prevValue = machine.SystemBus.ReadWord(absAddress);
+
+            // //             changedMemValues_Fuzz[absAddress] = new MemWriteInfo_Fuzz { PrevValue = prevValue, AccessSize = 2 };
+            // //             Console.WriteLine($"(Word) First write to 0x{absAddress:X}: previous value = 0x{prevValue:X}, current_val : 0x{valueToWrite:X}, count : {changedMemValues_Fuzz.Count()}");
+            // //         }
+            // //         return valueToWrite; // Must return the value to actually write
+            // // });
+            // // machine.SystemBus.SetHookBeforePeripheralWrite<uint>(peripheral, (valueToWrite, offset) =>
+            // //     {
+            // //         // ulong absAddress = reg.Registration.Start + (ulong)offset;
+            // //         ulong absAddress = baseAddress + (ulong)offset;
+            // //         Console.WriteLine($"^^^^^ HookBeforePeripheralWrite :Accessing address (doubleWord) :  0x{absAddress:X} , value : 0x{valueToWrite:X}");
+                    
+            // //         // Only if not already stored (to track first write)
+            // //         if(!changedMemValues_Fuzz.ContainsKey(absAddress))
+            // //         {
+            // //             uint prevValue = machine.SystemBus.ReadDoubleWord(absAddress);
+
+            // //             changedMemValues_Fuzz[absAddress] = new MemWriteInfo_Fuzz { PrevValue = prevValue, AccessSize = 4 };
+            // //             Console.WriteLine($"(doubleWord) First write to 0x{absAddress:X}: previous value = 0x{prevValue:X}, current_val : 0x{valueToWrite:X}, count : {changedMemValues_Fuzz.Count()}");
+            // //         }
+            // //         return valueToWrite; // Must return the value to actually write
+            // // });
+            // // machine.SystemBus.SetHookBeforePeripheralWrite<ulong>(peripheral, (valueToWrite, offset) =>
+            // //     {
+            // //         // ulong absAddress = reg.Registration.Start + (ulong)offset;
+            // //         ulong absAddress = baseAddress + (ulong)offset;
+            // //         Console.WriteLine($"^^^^^ HookBeforePeripheralWrite :Accessing address (Quad) :  0x{absAddress:X} , value : 0x{valueToWrite:X}");
+                    
+            // //         // Only if not already stored (to track first write)
+            // //         if(!changedMemValues_Fuzz.ContainsKey(absAddress))
+            // //         {
+            // //             ulong prevValue = machine.SystemBus.ReadQuadWord(absAddress);
+
+            // //             changedMemValues_Fuzz[absAddress] = new MemWriteInfo_Fuzz { PrevValue = prevValue, AccessSize = 8};
+            // //             Console.WriteLine($"(Quad) First write to 0x{absAddress:X}: previous value = 0x{prevValue:X}, current_val : 0x{valueToWrite:X}, count : {changedMemValues_Fuzz.Count()}");
+            // //         }
+            // //         return valueToWrite; // Must return the value to actually write
+            // // });
+            // // Repeat for byte, ushort, ulong as needed
+            // }
+        }
+
+        public void Fuzz_Clear_All_Mem_Track_Dict(){
+            changedMemValues_Fuzz.Clear();
+        }
+
+        public int Fuzz_Count_All_Mem_Track_Dict(){
+            return changedMemValues_Fuzz.Count();
+        }
+
+        public void Fuzz_Restore_All_Mem_Track_Dict(){
+            // Console.WriteLine($"^^^^^ Fuzz_Restore_All_Mem_Track_Dict : changedMemValues_Fuzz.Count() : {changedMemValues_Fuzz.Count()} ");
+            foreach (var kvp in changedMemValues_Fuzz)
+            {
+                var virtualAddress = kvp.Key;
+                var prevValue = kvp.Value;
+                // Console.WriteLine($"Restoring 0x{virtualAddress:X} to 0x{prevValue:X}");
+                machine.SystemBus.WriteDoubleWord(virtualAddress, prevValue);
+            }
+            
+            // foreach(var kvp in changedMemValues_Fuzz)
+            // {
+            //     ulong addr = kvp.Key;
+            //     var info = kvp.Value;
+            //     switch(info.AccessSize)
+            //     {
+            //         case 1:
+            //             machine.SystemBus.WriteByte(addr, (byte)info.PrevValue);
+            //             break;
+            //         case 2:
+            //             Console.WriteLine($"^^^^^ Fuzz_Restore_All_Mem_Track_Dict : Accessing address (WriteWord) :  0x{addr:X} , value : 0x{info.PrevValue:X}");
+
+            //             machine.SystemBus.WriteWord(addr, (ushort)info.PrevValue);
+            //             break;
+            //         case 4:
+            //             Console.WriteLine($"^^^^^ Fuzz_Restore_All_Mem_Track_Dict : Accessing address (doubleWord) :  0x{addr:X} , value : 0x{info.PrevValue:X}");
+            //             machine.SystemBus.WriteDoubleWord(addr, (uint)info.PrevValue);
+            //             break;
+            //         case 8:
+            //             machine.SystemBus.WriteQuadWord(addr, info.PrevValue);
+            //             break;
+            //         default:
+            //             throw new Exception($"Unknown access size {info.AccessSize} for address 0x{addr:X}");
+            //     }
+            // }
+            // changedMemValues_Fuzz.Clear();
+            // Console.WriteLine($"^^^^^ Done Fuzz_Restore_All_Mem_Track_Dict : changedMemValues_Fuzz.Count() : {changedMemValues_Fuzz.Count()} ");
+            
+        }
+
 
         protected override bool ExecutionFinished(ExecutionResult result)
         {

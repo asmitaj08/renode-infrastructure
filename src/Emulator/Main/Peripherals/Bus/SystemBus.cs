@@ -110,6 +110,7 @@ namespace Antmicro.Renode.Peripherals.Bus
         {
             Console.WriteLine($"^^^ SystemBus.cs Register 1111 : ibus_Peripheral : {peripheral}, BusRangeRegistration : 0x{registrationPoint:X}");
             var methods = PeripheralAccessMethods.CreateWithLock();
+            // Console.WriteLine($"^^^ SystemBus.cs Register 1111 : ibus_Peripheral : {peripheral}, BusRangeRegistration : 0x{registrationPoint:X}");
             if(registrationPoint is BusParametrizedRegistration parametrizedRegistrationPoint)
             {
                 parametrizedRegistrationPoint.RegisterForEachContext((contextRegistration) =>
@@ -124,6 +125,7 @@ namespace Antmicro.Renode.Peripherals.Bus
             }
             else if(registrationPoint is BusMultiRegistration multiRegistrationPoint)
             {
+
                 if(peripheral is IMapped)
                 {
                     throw new ConstructionException(string.Format("It is not allowed to register `{0}` peripheral using `{1}`", typeof(IMapped).Name, typeof(BusMultiRegistration).Name));
@@ -133,6 +135,8 @@ namespace Antmicro.Renode.Peripherals.Bus
             }
             else
             {
+                // Console.WriteLine($"^^^ SystemBus.cs Register 1111 : ibus_Peripheral : {peripheral}, regConditions : **None**");
+
                 FillAccessMethodsWithDefaultMethods(peripheral, ref methods);
                 registrationPoint.RegisterForEachContext((contextRegistration) => RegisterInner(peripheral, methods, contextRegistration, context: contextRegistration.CPU));
             }
@@ -667,6 +671,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void ZeroRange(Range range, ICPU context = null)
         {
+            // Console.WriteLine($"^^^^^^ systembus.cs: ZeroRange : offset: {range.StartAddress:X}, size : {range.Size}");
             var zeroBlock = new byte[1024 * 1024];
             var blocksNo = range.Size / (ulong)zeroBlock.Length;
             for(var i = 0UL; i < blocksNo; i++)
@@ -2143,7 +2148,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
             public void Touch()
             {
-                Console.WriteLine("Sysbus.cs MappedSegmentWrapper : Touch() ");
+                // Console.WriteLine("Sysbus.cs MappedSegmentWrapper : Touch() ");
                 wrappedSegment.Touch();
             }
 

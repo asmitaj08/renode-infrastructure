@@ -31,6 +31,9 @@ namespace Antmicro.Renode.Core
         public static EmulationManager Instance { get; private set; }
 
         // private static MemoryStream stream ;
+        // In-memory state storage
+        private static byte[] savedState = null; //fuzz
+        private static string savedStateVersion = null; //fuzz
 
         static EmulationManager()
         {
@@ -113,7 +116,7 @@ namespace Antmicro.Renode.Core
                                 : (Stream) fstream)
             {
                 var deserializationResult = serializer.TryDeserialize<string>(stream, out var version);
-                Console.WriteLine("^^^^^^^Load in EmulationManager trydeserialize string ^^^^^^^");
+                // Console.WriteLine("^^^^^^^Load in EmulationManager trydeserialize string ^^^^^^^");
                 if(deserializationResult != DeserializationResult.OK)
                 {
                     throw new RecoverableException($"There was an error when deserializing the emulation: {deserializationResult}\n Underlying exception: {serializer.LastException.Message}\n{serializer.LastException.StackTrace}");
@@ -125,7 +128,7 @@ namespace Antmicro.Renode.Core
                 deserializationResult = serializer.TryDeserialize<Emulation>(stream, out var emulation); //*****
                 // Stop the stopwatch
                 //stopwatch.Stop();
-                Console.WriteLine($"^^^^^^^Load in EmulationManager serilaize current Emulation : {stream.Length} bytes*, Serialization took {stopwatch.ElapsedMilliseconds} ms***^^^^^^^");
+                // Console.WriteLine($"^^^^^^^Load in EmulationManager serilaize current Emulation : {stream.Length} bytes*, Serialization took {stopwatch.ElapsedMilliseconds} ms***^^^^^^^");
             //    Console.WriteLine("^^^^^^^Load in EmulationManager trydeserialize emulation ^^^^^^^");
                 if(deserializationResult != DeserializationResult.OK)
                 {
@@ -212,6 +215,223 @@ namespace Antmicro.Renode.Core
             }
         }
 
+
+        public void Fuzz_LoadFromMemory()
+        {
+            if (savedState == null)
+            {
+                throw new RecoverableException("No saved state available in memory. Call SaveToMemory() first.");
+            }
+
+            // Console.WriteLine("^^^^^^^LoadFromMemory in EmulationManager - Loading from memory^^^^^^^");
+            
+            using (var stream = new MemoryStream(savedState))
+            {
+                var deserializationResult = serializer.TryDeserialize<string>(stream, out var version);
+                if(deserializationResult != DeserializationResult.OK)
+                {
+                    throw new RecoverableException($"There was an error when deserializing the emulation from memory: {deserializationResult}\n Underlying exception: {serializer.LastException.Message}\n{serializer.LastException.StackTrace}");
+                }
+
+                deserializationResult = serializer.TryDeserialize<Emulation>(stream, out var emulation);
+                if(deserializationResult != DeserializationResult.OK)
+                {
+                    throw new RecoverableException($"There was an error when deserializing the emulation from memory: {deserializationResult}\n Underlying exception: {serializer.LastException.Message}\n{serializer.LastException.StackTrace}");
+                }
+
+                CurrentEmulation = emulation;
+                // For in-memory load, we need to handle BlobManager differently
+                // since it expects a file name for temporary files
+                CurrentEmulation.BlobManager.Load(stream, "memory_snapshot");
+
+                if(version != VersionString)
+                {
+                    // Logger.Log(LogLevel.Warning, "Version of deserialized emulation ({0}) does not match current one {1}. Things may go awry!", version, VersionString);
+                    Console.WriteLine($"Version of deserialized emulation ({version}) does not match current one {VersionString}. Things may go awry!");
+
+                }
+            }
+            
+            // Console.WriteLine($"^^^^^^^LoadFromMemory in EmulationManager - Loaded {savedState.Length} bytes from memory^^^^^^^");
+        }
+
+        public void Fuzz_SaveToMemory()
+        {
+            Console.WriteLine("^^^^^^^SaveToMemory in EmulationManager - Saving to memory^^^^^^^");
+            try
+            {
+                using (var stream = new MemoryStream())
+                {
+                    using(CurrentEmulation.ObtainSafeState())
+                    {
+                        try
+                        {
+                            // Note: SnapshotTracker.Save requires a file path, so we skip it for in-memory save
+                            // CurrentEmulation.SnapshotTracker.Save(CurrentEmulation.MasterTimeSource.ElapsedVirtualTime, "memory_snapshot");
+                            
+                            serializer.Serialize(VersionString, stream);
+                            Console.WriteLine("^^^^^^^SaveToMemory in EmulationManager serialize version string^^^^^^^");
+                            
+                            serializer.Serialize(CurrentEmulation, stream);
+                            Console.WriteLine($"^^^^^^^SaveToMemory in EmulationManager serialize current Emulation : {stream.Length} bytes^^^^^^^");
+                            
+                            CurrentEmulation.BlobManager.Save(stream);
+                            Console.WriteLine("^^^^^^^SaveToMemory in EmulationManager blobmanager save done^^^^^^^");
+                            
+                            // Store the serialized data in memory
+                            savedState = stream.ToArray();
+                            savedStateVersion = VersionString;
+                            
+                            Console.WriteLine($"^^^^^^^SaveToMemory in EmulationManager - Saved {savedState.Length} bytes to memory^^^^^^^");
+                        }
+                        catch(InvalidOperationException e)
+                        {
+                            var message = string.Format("Error encountered during saving to memory: {0}", e.Message);
+                            if(e is NonSerializableTypeException && serializer.Settings.SerializationMethod == Migrant.Customization.Method.Generated)
+                            {
+                                message += "\nHint: Set 'serialization-mode = Reflection' in the Renode config file for detailed information.";
+                            }
+                            else if(e is NonSerializableTypeException && e.Data.Contains("nonSerializableObject") && e.Data.Contains("parentsObjects"))
+                            {
+                                if(TryFindPath(e.Data["nonSerializableObject"], (Dictionary<object, IEnumerable<object>>)e.Data["parentsObjects"], typeof(Emulation), out List<object> parentsPath))
+                                {
+                                    var pathText = new StringBuilder();
+
+                                    parentsPath.Reverse();
+                                    foreach(var o in parentsPath)
+                                    {
+                                        pathText.Append(o.GetType().Name);
+                                        pathText.Append(" => ");
+                                    }
+                                    pathText.Remove(pathText.Length - 4, 4);
+                                    pathText.Append("\n");
+
+                                    message += "The class path that led to it was:\n" + pathText;
+                                }
+                            }
+
+                            throw new RecoverableException(message);
+                        }
+                    }
+                }
+                Console.WriteLine("^^^^^^^SaveToMemory in EmulationManager Done!!^^^^^^^");
+            }
+            catch(Exception)
+            {
+                // Clear saved state on error
+                savedState = null;
+                savedStateVersion = null;
+                throw;
+            }
+        }
+        
+
+        public enum Fuzz_SaveMode
+        {
+            FileOnly,
+            MemoryOnly,
+            Both
+        }
+
+
+        // public void Save(string path, SaveMode mode = SaveMode.FileOnly)
+        // {
+        //     bool saveToFile = mode == SaveMode.FileOnly || mode == SaveMode.Both;
+        //     bool saveToMemory = mode == SaveMode.MemoryOnly || mode == SaveMode.Both;
+
+        //     // Save to file if requested
+        //     if(saveToFile)
+        //     {
+        //         Console.WriteLine("^^^^^^^Save in EmulationManager (file)^^^^^^^");
+        //         try
+        //         {
+        //             using(var stream = new FileStream(path, FileMode.Create))
+        //             {
+        //                 using(CurrentEmulation.ObtainSafeState())
+        //                 {
+        //                     try
+        //                     {
+        //                         CurrentEmulation.SnapshotTracker.Save(CurrentEmulation.MasterTimeSource.ElapsedVirtualTime, path);
+        //                         serializer.Serialize(VersionString, stream);
+        //                         serializer.Serialize(CurrentEmulation, stream);
+        //                         CurrentEmulation.BlobManager.Save(stream);
+        //                     }
+        //                     catch(InvalidOperationException e)
+        //                     {
+        //                         // ... (existing error handling)
+        //                     throw new RecoverableException("Error during file save: " + e.Message);
+        //                     }
+        //                 }
+        //             }
+        //             Console.WriteLine("^^^^^^^Save in EmulationManager (file) Done!!^^^^^^^");
+        //         }
+        //         catch(Exception)
+        //         {
+        //             File.Delete(path);
+        //             throw;
+        //         }
+        //     }
+
+        //     // Save to memory if requested
+        //     if(saveToMemory)
+        //     {
+        //         Console.WriteLine("^^^^^^^Save in EmulationManager (memory)^^^^^^^");
+        //         try
+        //         {
+        //             using(var stream = new MemoryStream())
+        //             {
+        //                 using(CurrentEmulation.ObtainSafeState())
+        //                 {
+        //                     try
+        //                     {
+        //                         // Optionally skip SnapshotTracker for memory
+        //                         // CurrentEmulation.SnapshotTracker.Save(CurrentEmulation.MasterTimeSource.ElapsedVirtualTime, "memory_snapshot");
+        //                         serializer.Serialize(VersionString, stream);
+        //                         serializer.Serialize(CurrentEmulation, stream);
+        //                         CurrentEmulation.BlobManager.Save(stream);
+
+        //                         // Store in static variable
+        //                         savedState = stream.ToArray();
+        //                         savedStateVersion = VersionString;
+        //                     }
+        //                     catch(InvalidOperationException e)
+        //                     {
+        //                         throw new RecoverableException("Error during memory save: " + e.Message);
+        //                     }
+        //                 }
+        //             }
+        //             Console.WriteLine("^^^^^^^Save in EmulationManager (memory) Done!!^^^^^^^");
+        //         }
+        //         catch(Exception)
+        //         {
+        //             savedState = null;
+        //             savedStateVersion = null;
+        //             throw;
+        //         }
+        //  }
+        // }
+
+        // Method to check if there's saved state in memory
+        public bool Fuzz_HasSavedState()
+        {
+            return savedState != null;
+        }
+
+        // Method to get the size of saved state
+        public long Fuzz_GetSavedStateSize()
+        {
+            return savedState?.Length ?? 0;
+        }
+
+        // Method to clear saved state from memory
+        public void Fuzz_ClearSavedState()
+        {
+            savedState = null;
+            savedStateVersion = null;
+            Console.WriteLine("^^^^^^^Cleared saved state from memory^^^^^^^");
+        }
+
+        
         public void Clear()
         {
             CurrentEmulation = new Emulation();
@@ -334,8 +554,11 @@ namespace Antmicro.Renode.Core
 
         private EmulationManager()
         {
+            //orig 
             var serializerMode = ConfigurationManager.Instance.Get("general", "serialization-mode", Antmicro.Migrant.Customization.Method.Generated);
-            
+            //fuzz
+            // var serializerMode = ConfigurationManager.Instance.Get("general", "serialization-mode", Antmicro.Migrant.Customization.Method.Reflection);
+
             var settings = new Antmicro.Migrant.Customization.Settings(serializerMode, serializerMode,
                 Antmicro.Migrant.Customization.VersionToleranceLevel.AllowGuidChange, disableTypeStamping: true);
             serializer = new Serializer(settings);
