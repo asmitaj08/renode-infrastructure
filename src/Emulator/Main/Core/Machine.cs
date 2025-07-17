@@ -800,7 +800,7 @@ namespace Antmicro.Renode.Core
         }
 
 
-        public void FuzzReset_memTrack(){
+        public void FuzzReset_memTrack(byte[] data_in){
 
                 foreach(var p in peripheralsToReset_all) 
                 {
@@ -827,6 +827,27 @@ namespace Antmicro.Renode.Core
                 cpu.Fuzz_UpdateChangedRegValues();
                 // restore changed Memory values
                 cpu.Fuzz_Restore_All_Mem_Track_Dict();
+
+                 //this works too
+                // var i2cPeripherals = GetPeripheralsOfType<STM32F4_I2C_Fuzz>();
+                // var i2c1 = i2cPeripherals.FirstOrDefault(p => GetLocalName(p) == "i2c1");
+                // if (i2c1 != null)
+                // {
+                //     i2c1.ReadFromFuzzer_PY(data_in);
+                // }
+
+
+                // Pass data_in to I2C1 peripheral
+                if (data_in != null && data_in.Length > 0)
+                {
+                    STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //this works too
+                    // foreach(var p in peripheralsToFuzz)  // commented for now, later add condition if name=='i2c1'..STM32F4_I2C_Fuzz
+                    // {
+                    //     p.ReadFromFuzzer_Internal(data_in);
+                    //     // STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //hardcoding for now, later make it more configurable
+                    //     // STM32_UART_Fuzz.ReadFromFuzzer_Internal(data_in);
+                    // }
+                }
        
         }
 

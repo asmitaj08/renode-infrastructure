@@ -21,17 +21,17 @@ namespace Antmicro.Renode.Peripherals.UART
     [AllowedTranslations(AllowedTranslation.WordToDoubleWord | AllowedTranslation.ByteToDoubleWord)]
     public class STM32_UART_Fuzz : BasicDoubleWordPeripheral, IUART
     {
-        [DllImport("liblibafl_renode.so")]
-        // public static extern IntPtr uart_get_input_ptr(); //multiInput - libafl
-        public static extern IntPtr get_input_ptr(); //byteInput - libafl
-        // public static extern IntPtr get_i2c_input_size_ptr(); //multipart - libafl
-        [DllImport("liblibafl_renode.so")]
-        // public static extern IntPtr uart_get_input_size_ptr(); //multiInput - libafl
-        public static extern IntPtr get_input_size_ptr(); //byteInput
-        // private static IntPtr inputPtr = uart_get_input_ptr(); //multi
-        // private static IntPtr inputSizePtr = uart_get_input_size_ptr(); 
-        private static IntPtr inputPtr = get_input_ptr(); //byteInput
-        private static IntPtr inputSizePtr = get_input_size_ptr(); 
+        // [DllImport("liblibafl_renode.so")]
+        // // public static extern IntPtr uart_get_input_ptr(); //multiInput - libafl
+        // public static extern IntPtr get_input_ptr(); //byteInput - libafl
+        // // public static extern IntPtr get_i2c_input_size_ptr(); //multipart - libafl
+        // [DllImport("liblibafl_renode.so")]
+        // // public static extern IntPtr uart_get_input_size_ptr(); //multiInput - libafl
+        // public static extern IntPtr get_input_size_ptr(); //byteInput
+        // // private static IntPtr inputPtr = uart_get_input_ptr(); //multi
+        // // private static IntPtr inputSizePtr = uart_get_input_size_ptr(); 
+        // private static IntPtr inputPtr = get_input_ptr(); //byteInput
+        // private static IntPtr inputSizePtr = get_input_size_ptr(); 
 
         public STM32_UART_Fuzz(IMachine machine, uint frequency = 8000000) : base(machine)
         {
@@ -51,15 +51,15 @@ namespace Antmicro.Renode.Peripherals.UART
 
         }
 
-        // public static void ReadFromFuzzer_Internal(byte[] data){ //WHEN WAS SENT FROM MACHINE.CS BUT It's slow  
-        //         //if (data != null && data.Length > 0){ //already being checked inside machine.cs
-        //             receiveFifo = new Queue<byte>(data);
-        //             WriteChar_st(0xaa); //dummy val, just setting  UART flags  // issue with static method here
-        //         //}
-        //         // general_fuzz_data.Clear();
-        //         // general_fuzz_data.AddRange(data);
-        //         // Console.WriteLine($"^^^^ReadFromFuzzer_Internal_i2c() in STM32F4_I2C_Fuzz.cs Len : {dataToReceive.Count}");
-        // }
+        public static void ReadFromFuzzer_Internal(byte[] data){  
+                //if (data != null && data.Length > 0){ //already being checked inside machine.cs
+                    receiveFifo = new Queue<byte>(data);
+                    // WriteChar(0xaa); //dummy val, just setting  UART flags  // issue with static method here
+                //}
+                // general_fuzz_data.Clear();
+                // general_fuzz_data.AddRange(data);
+                // Console.WriteLine($"^^^^ReadFromFuzzer_Internal_i2c() in STM32F4_I2C_Fuzz.cs Len : {dataToReceive.Count}");
+        }
 
         public void SetRXNE_Fuzz(){
             readFifoNotEmpty.Value=true;
@@ -82,21 +82,21 @@ namespace Antmicro.Renode.Peripherals.UART
             }
             // receiveFifo.Enqueue(value);
         //     //---Fuzzing
-            int datasize = 0;
-            unsafe{
-                    ulong* datasize_ptr = (ulong*)inputSizePtr;
-                    datasize = (int)*datasize_ptr;
-                }
-           if(datasize!=datasize_track && datasize>0){
-                byte[] tempArray = new byte[datasize];
-                // lock (syncLock){
-                    Marshal.Copy(inputPtr, tempArray, 0, datasize);
-                // }
-                receiveFifo = new Queue<byte>(tempArray);
-                datasize_track = datasize;
-                // general_fuzz_data.Clear();
-                // general_fuzz_data.AddRange(tempArray);
-            }
+        //     int datasize = 0;
+        //     unsafe{
+        //             ulong* datasize_ptr = (ulong*)inputSizePtr;
+        //             datasize = (int)*datasize_ptr;
+        //         }
+        //    if(datasize!=datasize_track && datasize>0){
+        //         byte[] tempArray = new byte[datasize];
+        //         // lock (syncLock){
+        //             Marshal.Copy(inputPtr, tempArray, 0, datasize);
+        //         // }
+        //         receiveFifo = new Queue<byte>(tempArray);
+        //         datasize_track = datasize;
+        //         // general_fuzz_data.Clear();
+        //         // general_fuzz_data.AddRange(tempArray);
+        //     }
             // else if(general_fuzz_data.Count > 0){
             //     receiveFifo = new Queue<byte>(general_fuzz_data.ToArray());
             // }
@@ -335,8 +335,8 @@ namespace Antmicro.Renode.Peripherals.UART
         private IValueRegisterField dividerFraction;
 
         // private readonly Queue<byte> receiveFifo = new Queue<byte>();
-        private Queue<byte> receiveFifo = new Queue<byte>(1024); // fuzz - 1024 is MAX INPUT size that I have set on LibAFL to cap teh size of input generated by mutator
-        // private static Queue<byte> receiveFifo = new Queue<byte>(1024);
+        // private Queue<byte> receiveFifo = new Queue<byte>(1024); // fuzz - 1024 is MAX INPUT size that I have set on LibAFL to cap teh size of input generated by mutator
+        private static Queue<byte> receiveFifo = new Queue<byte>(1024);
         // private byte[] general_fuzz_data ;
         private List<byte> general_fuzz_data = new List<byte>(1024); //size changes based on input from fuzzer
         private int datasize_track = 0;

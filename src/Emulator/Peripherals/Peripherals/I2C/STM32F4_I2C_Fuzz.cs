@@ -22,16 +22,17 @@ namespace Antmicro.Renode.Peripherals.I2C
     [AllowedTranslations(AllowedTranslation.WordToDoubleWord)]
     public sealed class STM32F4_I2C_Fuzz : SimpleContainer<II2CPeripheral>, IDoubleWordPeripheral, IBytePeripheral, IKnownSize
     {
-        [DllImport("liblibafl_renode.so")]
-        // public static extern IntPtr i2c_get_input_ptr(); //multiInput - libafl
-        public static extern IntPtr get_input_ptr(); //byteInput - libafl
-        [DllImport("liblibafl_renode.so")]
-        // public static extern IntPtr i2c_get_input_size_ptr(); //multiInput - libafl
-        public static extern IntPtr get_input_size_ptr(); //byteInput
-        // private static IntPtr inputPtr = i2c_get_input_ptr(); //multi
-        // private static IntPtr inputSizePtr = i2c_get_input_size_ptr(); 
-        private static IntPtr inputPtr = get_input_ptr(); //byte
-        private static IntPtr inputSizePtr = get_input_size_ptr(); 
+        //used it when passed data internally via libafl, now taking it externally via harness using ReadFromFuzzer_Internal in MAchine.cs
+        // [DllImport("liblibafl_renode.so")]
+        // // public static extern IntPtr i2c_get_input_ptr(); //multiInput - libafl
+        // public static extern IntPtr get_input_ptr(); //byteInput - libafl
+        // [DllImport("liblibafl_renode.so")]
+        // // public static extern IntPtr i2c_get_input_size_ptr(); //multiInput - libafl
+        // public static extern IntPtr get_input_size_ptr(); //byteInput
+        // // private static IntPtr inputPtr = i2c_get_input_ptr(); //multi
+        // // private static IntPtr inputSizePtr = i2c_get_input_size_ptr(); 
+        // private static IntPtr inputPtr = get_input_ptr(); //byte
+        // private static IntPtr inputSizePtr = get_input_size_ptr(); 
         
         public STM32F4_I2C_Fuzz(IMachine machine) : base(machine)
         {
@@ -85,7 +86,7 @@ namespace Antmicro.Renode.Peripherals.I2C
         public override void Reset()
         {
             // Console.WriteLine($"^^^^^ STM32F4_I2C_Fuzz.cs. Reset()");
-            // state = State.Idle; //or fuzz from func
+            state = State.Idle; //or fuzz from func
             EventInterrupt.Unset();
             ErrorInterrupt.Unset();
 
@@ -119,34 +120,34 @@ namespace Antmicro.Renode.Peripherals.I2C
                 dataToReceive = new Queue<byte>(data_in);
                 // general_fuzz_data.Clear();
                 // general_fuzz_data.AddRange(data_in);
-                current_fuzz_data.Clear();
-                current_fuzz_data.AddRange(data_in);
+                // current_fuzz_data.Clear();
+                // current_fuzz_data.AddRange(data_in);
                 Console.WriteLine($"^^^^Done ReadFromFuzzer_i2c() in STM32F4_I2C_Fuzz.cs Len : {dataToReceive.Count}");
 
         }
 
-        public void DumpFuzzDataToFile(string filePath)
-        {
-            try
-            {
-                File.WriteAllBytes(filePath, current_fuzz_data.ToArray());
-                Console.WriteLine($"^^^ Fuzz data dumped to: {filePath}");
-            }
-            catch(Exception ex)
-            {
-                Console.WriteLine($"^^^^^ Error writing fuzz data to file: {ex.Message}");
-            }
-        }
+        // public void DumpFuzzDataToFile(string filePath)
+        // {
+        //     try
+        //     {
+        //         File.WriteAllBytes(filePath, current_fuzz_data.ToArray());
+        //         Console.WriteLine($"^^^ Fuzz data dumped to: {filePath}");
+        //     }
+        //     catch(Exception ex)
+        //     {
+        //         Console.WriteLine($"^^^^^ Error writing fuzz data to file: {ex.Message}");
+        //     }
+        // }
         
 
-        // public static void ReadFromFuzzer_Internal(byte[] data_in){ //WHEN WAS SENT FROM MACHINE.CS BUT It's slow  
-        //         //if (data_in != null && data_in.Length > 0){ //already being checked inside machine.cs
-        //             dataToReceive = new Queue<byte>(data_in);
-        //         //}
-        //         // general_fuzz_data.Clear();
-        //         // general_fuzz_data.AddRange(data_in);
-        //         // Console.WriteLine($"^^^^ReadFromFuzzer_Internal_i2c() in STM32F4_I2C_Fuzz.cs Len : {dataToReceive.Count}");
-        // }
+        public static void ReadFromFuzzer_Internal(byte[] data_in){ 
+                //if (data_in != null && data_in.Length > 0){ //already being checked inside machine.cs
+                    dataToReceive = new Queue<byte>(data_in);
+                //}
+                // general_fuzz_data.Clear();
+                // general_fuzz_data.AddRange(data_in);
+                // Console.WriteLine($"^^^^ReadFromFuzzer_Internal_i2c() in STM32F4_I2C_Fuzz.cs Len : {dataToReceive.Count}");
+        }
 
         public void SetRXNE_Fuzz(){
             dataRegisterNotEmpty.Value=true;
@@ -272,28 +273,28 @@ namespace Antmicro.Renode.Peripherals.I2C
                         // ReadFromFuzzer_SH_i2c(out size);
                         // byte[] buffer = new byte[datasize];
 
-                         // -----------For fuzzing
-                        int datasize = 0;
-                        unsafe{
-                            ulong* datasize_ptr = (ulong*)inputSizePtr;
-                            datasize = (int)*datasize_ptr;
-                            // Console.WriteLine($"inputPtr : 0x{inputPtr.ToString("X")}, inputSizePtr : 0x{inputSizePtr.ToString("X")}");
+                         // -----------For fuzzing - used it when reading input internally from libafl, now directly populating dataToReceive vai ReadFromFuzzer_Internal()  
+                        // int datasize = 0;
+                        // unsafe{
+                        //     ulong* datasize_ptr = (ulong*)inputSizePtr;
+                        //     datasize = (int)*datasize_ptr;
+                        //     // Console.WriteLine($"inputPtr : 0x{inputPtr.ToString("X")}, inputSizePtr : 0x{inputSizePtr.ToString("X")}, datasize : {datasize}");
 
-                        }
-                        if(datasize>0 && datasize!=datasize_track){
-                            // general_fuzz_data = new byte[datasize];
-                            byte[] tempArray = new byte[datasize];
-                            // lock (syncLock){
-                                Marshal.Copy(inputPtr, tempArray, 0, datasize);
-                            // }
-                            dataToReceive = new Queue<byte>(tempArray);
-                            datasize_track = datasize;
-                            current_fuzz_data.Clear();
-                            current_fuzz_data.AddRange(tempArray);
-                            // general_fuzz_data.Clear();
-                            // general_fuzz_data.AddRange(tempArray);
-                            // Console.WriteLine($"^^^^^STM32f4_I2C_fuzz : datasize : {dataToReceive.Count}");
-                        }
+                        // }
+                        // if(datasize>0 && datasize!=datasize_track){
+                        //     // general_fuzz_data = new byte[datasize];
+                        //     byte[] tempArray = new byte[datasize];
+                        //     // lock (syncLock){
+                        //         Marshal.Copy(inputPtr, tempArray, 0, datasize);
+                        //     // }
+                        //     dataToReceive = new Queue<byte>(tempArray);
+                        //     datasize_track = datasize;
+                        //     // current_fuzz_data.Clear();
+                        //     // current_fuzz_data.AddRange(tempArray);
+                        //     // general_fuzz_data.Clear();
+                        //     // general_fuzz_data.AddRange(tempArray);
+                        //     // Console.WriteLine($"^^^^^STM32f4_I2C_fuzz : datasize (inputPtr) : {dataToReceive.Count}");
+                        // }
                         //---------------
 
                         // else if(dataToReceive.Count<=0 || datasize<=0){
@@ -436,8 +437,8 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         private State state;
         private List<byte> dataToTransfer;
-        private  Queue<byte> dataToReceive = new Queue<byte>(1024); //1024 is MAX INPUT size that I have set on LibAFL to cap teh size of input generated by mutator
-        // private static Queue<byte> dataToReceive = new Queue<byte>(1024); //1024 is MAX INPUT size that I have set on LibAFL to cap teh size of input generated by mutator
+        // private  Queue<byte> dataToReceive = new Queue<byte>(1024); //1024 is MAX INPUT size that I have set on LibAFL to cap teh size of input generated by mutator
+        private static Queue<byte> dataToReceive = new Queue<byte>(1024); //1024 is MAX INPUT size that I have set on LibAFL to cap teh size of input generated by mutator
         private bool willReadOnSelectedSlave;
         private II2CPeripheral selectedSlave;
 
