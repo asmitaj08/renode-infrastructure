@@ -238,16 +238,16 @@ namespace Antmicro.Renode.Peripherals.Memory
             }
         }
 
-        public void WriteDoubleWord_Fuzz(long offset, uint value)
-        {
-            Console.WriteLine($"^^^^^^******  MappedMemory WriteDoubleWord_Fuzz(), offset : 0x{offset:X},value : {value}");
-            var localOffset = GetLocalOffset(offset);
-            var segment = segments[GetSegmentNo(offset)];
-            Console.WriteLine($"^^^^^^******  MappedMemory WriteDoubleWord_Fuzz(), localOffset : 0x{localOffset:X},segment : {segment}");
-            {
-                Marshal.WriteInt32(new IntPtr(segment.ToInt64() + localOffset), unchecked((int)value));
-            }
-        }
+        // public void WriteDoubleWord_Fuzz(long offset, uint value)
+        // {
+        //     Console.WriteLine($"^^^^^^******  MappedMemory WriteDoubleWord_Fuzz(), offset : 0x{offset:X},value : {value}");
+        //     var localOffset = GetLocalOffset(offset);
+        //     var segment = segments[GetSegmentNo(offset)];
+        //     Console.WriteLine($"^^^^^^******  MappedMemory WriteDoubleWord_Fuzz(), localOffset : 0x{localOffset:X},segment : {segment}");
+        //     {
+        //         Marshal.WriteInt32(new IntPtr(segment.ToInt64() + localOffset), unchecked((int)value));
+        //     }
+        // }
 
         public ulong ReadQuadWord(long offset)
         {

@@ -13,7 +13,7 @@ namespace Antmicro.Renode.Peripherals.CPU
     {
         // The arguments to a hook have the following meaning:
         // <ulong virtualPC, MemoryOperation operation, ulong virtualAddress, ulong physicalAddress, ulong value>
-        void SetHookAtMemoryAccess(Action<ulong, MemoryOperation, ulong, ulong, ulong> hook);
+        void SetHookAtMemoryAccess(Action<ulong, MemoryOperation, ulong, ulong, ulong, uint> hook); // fuzz- added uint ofr access_size
     }
 }
 

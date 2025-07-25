@@ -543,6 +543,7 @@ namespace Antmicro.Renode.Peripherals.Bus
                         }
                         if(hook != null)
                         {
+                            // Console.WriteLine("Setting**** , hook != null");
                             pam.WriteDoubleWord = new BusAccess.DoubleWordWriteMethod(new WriteHookWrapper<uint>(peripheral, new Action<long, uint>(pam.WriteDoubleWord), (Func<uint, long, uint>)(object)hook, subrange).Write);
                         }
                         return pam;

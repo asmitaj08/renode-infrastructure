@@ -168,7 +168,7 @@ namespace Antmicro.Renode.Peripherals.CPU
             {
                 throw new RecoverableException("This feature is not yet available on the X86 platforms.");
             }
-            AttachedCPU.SetHookAtMemoryAccess((pc, operation, virtualAddress, physicalAddress, value) =>
+            AttachedCPU.SetHookAtMemoryAccess((pc, operation, virtualAddress, physicalAddress, value, _) =>
             {
                 if(operation != MemoryOperation.InsnFetch)
                 {
@@ -198,6 +198,7 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         private void HandleBlockEndHook(ulong pc, uint instructionsInBlock)
         {
+            // Console.WriteLine($"^^^^^^^ HandleBlockEndHook : pc : 0x{pc:X}, instructionsInBlock : {instructionsInBlock}, wasStopped : {wasStopped}");
             if(instructionsInBlock == 0 || wasStopped)
             {
                 // ignore

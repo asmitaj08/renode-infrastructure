@@ -22,7 +22,7 @@ namespace Antmicro.Renode.Peripherals.I2C
     [AllowedTranslations(AllowedTranslation.WordToDoubleWord)]
     public sealed class STM32F4_I2C_Fuzz : SimpleContainer<II2CPeripheral>, IDoubleWordPeripheral, IBytePeripheral, IKnownSize
     {
-        //used it when passed data internally via libafl, now taking it externally via harness using ReadFromFuzzer_Internal in MAchine.cs
+        // //used it when passed data internally via libafl, now taking it externally via harness using ReadFromFuzzer_Internal in MAchine.cs
         // [DllImport("liblibafl_renode.so")]
         // // public static extern IntPtr i2c_get_input_ptr(); //multiInput - libafl
         // public static extern IntPtr get_input_ptr(); //byteInput - libafl
@@ -117,6 +117,7 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public void ReadFromFuzzer_PY(byte[] data_in){
                Console.WriteLine($"^^^^Start ReadFromFuzzer_i2c() in STM32F4_I2C_Fuzz.cs Len : {data_in.Length}");
+                dataToReceive.Clear();
                 dataToReceive = new Queue<byte>(data_in);
                 // general_fuzz_data.Clear();
                 // general_fuzz_data.AddRange(data_in);
@@ -142,7 +143,8 @@ namespace Antmicro.Renode.Peripherals.I2C
 
         public static void ReadFromFuzzer_Internal(byte[] data_in){ 
                 //if (data_in != null && data_in.Length > 0){ //already being checked inside machine.cs
-                    dataToReceive = new Queue<byte>(data_in);
+                // dataToReceive.Clear();
+                dataToReceive = new Queue<byte>(data_in);
                 //}
                 // general_fuzz_data.Clear();
                 // general_fuzz_data.AddRange(data_in);
@@ -223,7 +225,7 @@ namespace Antmicro.Renode.Peripherals.I2C
         private uint DataRead(uint oldValue)
         {
             var result = 0u;
-            // Console.WriteLine($"^^^^^^STM32F4_I2C_Fuzz.cs : DataRead(), dataToReceive len : {dataToReceive.Count}");
+            Console.WriteLine($"^^^^^^STM32F4_I2C_Fuzz.cs : DataRead(), dataToReceive len : {dataToReceive.Count}");
             if(dataToReceive != null && dataToReceive.Any())
             {
                 result = dataToReceive.Dequeue();
@@ -237,7 +239,7 @@ namespace Antmicro.Renode.Peripherals.I2C
             byteTransferFinished.Value = true; //fuzz change
 
             Update();
-            // Console.WriteLine($"^^^^^^STM32F4_I2C_Fuzz.cs : DataRead(), dataToReceive len : {dataToReceive.Count}, result : 0x{result:X}, byteTransferFinished.Value : {byteTransferFinished.Value}");
+            // Console.WriteLine($"^^^^^^STM32F4_I2C_Fuzz.cs : Done DataRead(), dataToReceive len : {dataToReceive.Count}, result : 0x{result:X}");
             return result;
         }
 
