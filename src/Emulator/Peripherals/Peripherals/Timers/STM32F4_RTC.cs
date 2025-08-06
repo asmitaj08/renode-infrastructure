@@ -15,7 +15,7 @@ using Antmicro.Renode.Utilities;
 
 namespace Antmicro.Renode.Peripherals.Timers
 {
-    public class STM32F4_RTC : IDoubleWordPeripheral, IKnownSize
+    public class STM32F4_RTC : IDoubleWordPeripheral, IKnownSize, IFuzzSnapshotRestorable
     {
         public STM32F4_RTC(IMachine machine, long wakeupTimerFrequency = DefaultWakeupTimerFrequency)
         {
@@ -535,6 +535,155 @@ namespace Antmicro.Renode.Peripherals.Timers
             ResetInnerStatus();
         }
 
+        public void fuzz_snap_capture()
+        {
+            Console.WriteLine("^^^^^ STM32F4_RTC.cs fuzz_snap_capture()");
+            
+            // Capture main timer state
+            fuzz_snap_mainTimerTimeState = mainTimer.TimeState;
+            fuzz_snap_mainTimerWeekDay = mainTimer.WeekDay;
+            fuzz_snap_mainTimerPM = mainTimer.PM;
+            
+            // Capture alarm A state
+            fuzz_snap_alarmADay = alarmA.Day;
+            fuzz_snap_alarmAHour = alarmA.Hour;
+            fuzz_snap_alarmAMinute = alarmA.Minute;
+            fuzz_snap_alarmASecond = alarmA.Second;
+            fuzz_snap_alarmASubsecond = alarmA.Subsecond;
+            fuzz_snap_alarmAEnable = alarmA.Enable;
+            fuzz_snap_alarmAInterruptEnable = alarmA.InterruptEnable;
+            fuzz_snap_alarmAFlag = alarmA.Flag;
+            fuzz_snap_alarmAPM = alarmA.PM;
+            fuzz_snap_alarmASubsecondsMask = alarmA.SubsecondsMask;
+            fuzz_snap_alarmASecondsMask = alarmA.SecondsMask;
+            fuzz_snap_alarmAMinutesMask = alarmA.MinutesMask;
+            fuzz_snap_alarmAHoursMask = alarmA.HoursMask;
+            fuzz_snap_alarmADaysMask = alarmA.DaysMask;
+            
+            // Capture alarm B state
+            fuzz_snap_alarmBDay = alarmB.Day;
+            fuzz_snap_alarmBHour = alarmB.Hour;
+            fuzz_snap_alarmBMinute = alarmB.Minute;
+            fuzz_snap_alarmBSecond = alarmB.Second;
+            fuzz_snap_alarmBSubsecond = alarmB.Subsecond;
+            fuzz_snap_alarmBEnable = alarmB.Enable;
+            fuzz_snap_alarmBInterruptEnable = alarmB.InterruptEnable;
+            fuzz_snap_alarmBFlag = alarmB.Flag;
+            fuzz_snap_alarmBPM = alarmB.PM;
+            fuzz_snap_alarmBSubsecondsMask = alarmB.SubsecondsMask;
+            fuzz_snap_alarmBSecondsMask = alarmB.SecondsMask;
+            fuzz_snap_alarmBMinutesMask = alarmB.MinutesMask;
+            fuzz_snap_alarmBHoursMask = alarmB.HoursMask;
+            fuzz_snap_alarmBDaysMask = alarmB.DaysMask;
+            
+            // Capture control state
+            fuzz_snap_firstStageUnlocked = firstStageUnlocked;
+            fuzz_snap_registersUnlocked = registersUnlocked;
+            fuzz_snap_initMode = initMode;
+            fuzz_snap_AMPMFormat = AMPMFormat;
+            
+            // Capture GPIO states
+            fuzz_snap_alarmIRQActive = AlarmIRQ.IsSet;
+            fuzz_snap_wakeupIRQActive = WakeupIRQ.IsSet;
+            
+            // Capture timer states
+            fuzz_snap_tickerValue = ticker.Value;
+            fuzz_snap_tickerLimit = ticker.Limit;
+            fuzz_snap_tickerEnabled = ticker.Enabled;
+            
+            fuzz_snap_fastTickerValue = fastTicker.Value;
+            fuzz_snap_fastTickerLimit = fastTicker.Limit;
+            fuzz_snap_fastTickerEnabled = fastTicker.Enabled;
+            
+            fuzz_snap_wakeupTimerValue = wakeupTimer.Value;
+            fuzz_snap_wakeupTimerLimit = wakeupTimer.Limit;
+            fuzz_snap_wakeupTimerEnabled = wakeupTimer.Enabled;
+            fuzz_snap_wakeupTimerEventEnabled = wakeupTimer.EventEnabled;
+            fuzz_snap_wakeupTimerFlag = wakeupTimerFlag.Value;
+        }
+
+        public void fuzz_snap_restore()
+        {
+            // Console.WriteLine("^^^^^ STM32F4_RTC.cs fuzz_snap_restore()");
+            
+            // Restore main timer state
+            mainTimer.TimeState = fuzz_snap_mainTimerTimeState;
+            mainTimer.WeekDay = fuzz_snap_mainTimerWeekDay;
+            mainTimer.PM = fuzz_snap_mainTimerPM;
+            
+            // Restore alarm A state
+            alarmA.Day = fuzz_snap_alarmADay;
+            alarmA.Hour = fuzz_snap_alarmAHour;
+            alarmA.Minute = fuzz_snap_alarmAMinute;
+            alarmA.Second = fuzz_snap_alarmASecond;
+            alarmA.Subsecond = fuzz_snap_alarmASubsecond;
+            alarmA.Enable = fuzz_snap_alarmAEnable;
+            alarmA.InterruptEnable = fuzz_snap_alarmAInterruptEnable;
+            alarmA.Flag = fuzz_snap_alarmAFlag;
+            alarmA.PM = fuzz_snap_alarmAPM;
+            alarmA.SubsecondsMask = fuzz_snap_alarmASubsecondsMask;
+            alarmA.SecondsMask = fuzz_snap_alarmASecondsMask;
+            alarmA.MinutesMask = fuzz_snap_alarmAMinutesMask;
+            alarmA.HoursMask = fuzz_snap_alarmAHoursMask;
+            alarmA.DaysMask = fuzz_snap_alarmADaysMask;
+            
+            // Restore alarm B state
+            alarmB.Day = fuzz_snap_alarmBDay;
+            alarmB.Hour = fuzz_snap_alarmBHour;
+            alarmB.Minute = fuzz_snap_alarmBMinute;
+            alarmB.Second = fuzz_snap_alarmBSecond;
+            alarmB.Subsecond = fuzz_snap_alarmBSubsecond;
+            alarmB.Enable = fuzz_snap_alarmBEnable;
+            alarmB.InterruptEnable = fuzz_snap_alarmBInterruptEnable;
+            alarmB.Flag = fuzz_snap_alarmBFlag;
+            alarmB.PM = fuzz_snap_alarmBPM;
+            alarmB.SubsecondsMask = fuzz_snap_alarmBSubsecondsMask;
+            alarmB.SecondsMask = fuzz_snap_alarmBSecondsMask;
+            alarmB.MinutesMask = fuzz_snap_alarmBMinutesMask;
+            alarmB.HoursMask = fuzz_snap_alarmBHoursMask;
+            alarmB.DaysMask = fuzz_snap_alarmBDaysMask;
+            
+            // Restore control state
+            firstStageUnlocked = fuzz_snap_firstStageUnlocked;
+            registersUnlocked = fuzz_snap_registersUnlocked;
+            initMode = fuzz_snap_initMode;
+            AMPMFormat = fuzz_snap_AMPMFormat;
+            
+            // Restore GPIO states
+            if (fuzz_snap_alarmIRQActive)
+            {
+                AlarmIRQ.Set();
+            }
+            else
+            {
+                AlarmIRQ.Unset();
+            }
+            
+            if (fuzz_snap_wakeupIRQActive)
+            {
+                WakeupIRQ.Set();
+            }
+            else
+            {
+                WakeupIRQ.Unset();
+            }
+            
+            // Restore timer states
+            ticker.Value = fuzz_snap_tickerValue;
+            ticker.Limit = fuzz_snap_tickerLimit;
+            ticker.Enabled = fuzz_snap_tickerEnabled;
+            
+            fastTicker.Value = fuzz_snap_fastTickerValue;
+            fastTicker.Limit = fuzz_snap_fastTickerLimit;
+            fastTicker.Enabled = fuzz_snap_fastTickerEnabled;
+            
+            wakeupTimer.Value = fuzz_snap_wakeupTimerValue;
+            wakeupTimer.Limit = fuzz_snap_wakeupTimerLimit;
+            wakeupTimer.Enabled = fuzz_snap_wakeupTimerEnabled;
+            wakeupTimer.EventEnabled = fuzz_snap_wakeupTimerEventEnabled;
+            wakeupTimerFlag.Value = fuzz_snap_wakeupTimerFlag;
+        }
+
         public long Size => 0x400;
         public GPIO AlarmIRQ { get; }
         public GPIO WakeupIRQ { get; }
@@ -695,6 +844,63 @@ namespace Antmicro.Renode.Peripherals.Timers
         private bool registersUnlocked;
         private bool initMode;
         private bool AMPMFormat;
+
+        // Fuzz snapshot variables
+        private DateTime fuzz_snap_mainTimerTimeState;
+        private DayOfTheWeek fuzz_snap_mainTimerWeekDay;
+        private bool fuzz_snap_mainTimerPM;
+        
+        private int fuzz_snap_alarmADay;
+        private int fuzz_snap_alarmAHour;
+        private int fuzz_snap_alarmAMinute;
+        private int fuzz_snap_alarmASecond;
+        private int fuzz_snap_alarmASubsecond;
+        private bool fuzz_snap_alarmAEnable;
+        private bool fuzz_snap_alarmAInterruptEnable;
+        private bool fuzz_snap_alarmAFlag;
+        private bool fuzz_snap_alarmAPM;
+        private uint fuzz_snap_alarmASubsecondsMask;
+        private bool fuzz_snap_alarmASecondsMask;
+        private bool fuzz_snap_alarmAMinutesMask;
+        private bool fuzz_snap_alarmAHoursMask;
+        private bool fuzz_snap_alarmADaysMask;
+        
+        private int fuzz_snap_alarmBDay;
+        private int fuzz_snap_alarmBHour;
+        private int fuzz_snap_alarmBMinute;
+        private int fuzz_snap_alarmBSecond;
+        private int fuzz_snap_alarmBSubsecond;
+        private bool fuzz_snap_alarmBEnable;
+        private bool fuzz_snap_alarmBInterruptEnable;
+        private bool fuzz_snap_alarmBFlag;
+        private bool fuzz_snap_alarmBPM;
+        private uint fuzz_snap_alarmBSubsecondsMask;
+        private bool fuzz_snap_alarmBSecondsMask;
+        private bool fuzz_snap_alarmBMinutesMask;
+        private bool fuzz_snap_alarmBHoursMask;
+        private bool fuzz_snap_alarmBDaysMask;
+        
+        private bool fuzz_snap_firstStageUnlocked;
+        private bool fuzz_snap_registersUnlocked;
+        private bool fuzz_snap_initMode;
+        private bool fuzz_snap_AMPMFormat;
+        
+        private bool fuzz_snap_alarmIRQActive;
+        private bool fuzz_snap_wakeupIRQActive;
+        
+        private ulong fuzz_snap_tickerValue;
+        private ulong fuzz_snap_tickerLimit;
+        private bool fuzz_snap_tickerEnabled;
+        
+        private ulong fuzz_snap_fastTickerValue;
+        private ulong fuzz_snap_fastTickerLimit;
+        private bool fuzz_snap_fastTickerEnabled;
+        
+        private ulong fuzz_snap_wakeupTimerValue;
+        private ulong fuzz_snap_wakeupTimerLimit;
+        private bool fuzz_snap_wakeupTimerEnabled;
+        private bool fuzz_snap_wakeupTimerEventEnabled;
+        private bool fuzz_snap_wakeupTimerFlag;
 
         private const uint UnlockKey1 = 0xCA;
         private const uint UnlockKey2 = 0x53;

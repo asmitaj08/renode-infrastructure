@@ -16,7 +16,7 @@ using Antmicro.Renode.Peripherals;
 namespace Antmicro.Renode.Utilities
 {
     // it's not possible to limit generic type parameter to enum in C# directly, so we verify it in the constructor
-    public class InterruptManager<TInterrupt> where TInterrupt : struct, IConvertible
+    public class InterruptManager<TInterrupt> : IFuzzSnapshotRestorable where TInterrupt : struct, IConvertible
     {
         public InterruptManager(IPeripheral master, IGPIO irq = null, string gpioName = null, int subvector = -1)
         {
@@ -117,13 +117,44 @@ namespace Antmicro.Renode.Utilities
 
         public void Reset()
         {
-            Console.WriteLine("^^^^^^^^^ InterruptManager.cs Reset() ");
+            // Console.WriteLine("^^^^^^^^^ InterruptManager.cs Reset() ");
             activeInterrupts.Clear();
             enabledInterrupts.Clear();
             foreach(var irq in enabledOnResetInterrupts)
             {
                 enabledInterrupts.Add(irq);
             }
+            RefreshInterrupts();
+        }
+
+        private HashSet<TInterrupt> fuzz_snap_activeInterrupts;
+        private HashSet<TInterrupt> fuzz_snap_enabledInterrupts;
+
+        public void fuzz_snap_capture()
+        {
+            // Capture active interrupts
+            fuzz_snap_activeInterrupts = new HashSet<TInterrupt>(activeInterrupts);
+    
+            // Capture enabled interrupts  
+            fuzz_snap_enabledInterrupts = new HashSet<TInterrupt>(enabledInterrupts);
+        }
+
+
+        public void fuzz_snap_restore()
+        {
+            // Restore active interrupts
+            activeInterrupts.Clear();
+            foreach(var interrupt in fuzz_snap_activeInterrupts)
+            {
+                activeInterrupts.Add(interrupt);
+            }
+            // Restore enabled interrupts
+            enabledInterrupts.Clear();
+            foreach(var interrupt in fuzz_snap_enabledInterrupts)
+            {
+                enabledInterrupts.Add(interrupt);
+            }
+            // Refresh GPIO states
             RefreshInterrupts();
         }
 

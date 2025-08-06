@@ -16,7 +16,7 @@ using System;
 
 namespace Antmicro.Renode.Peripherals.Python
 {
-    public static class PythonPeripheralExtensions
+    public static class PythonPeripheralExtensions 
     {
         public static void PyDevFromFile(this Machine @this, ReadFilePath path, ulong address, int size, bool initable = false, string name = null, ulong offset = 0)
         {
@@ -40,7 +40,7 @@ namespace Antmicro.Renode.Peripherals.Python
     }
 
     [Icon("python")]
-    public class PythonPeripheral : IBytePeripheral, IWordPeripheral, IDoubleWordPeripheral, IQuadWordPeripheral, IKnownSize, IAbsoluteAddressAware
+    public class PythonPeripheral : IBytePeripheral, IWordPeripheral, IDoubleWordPeripheral, IQuadWordPeripheral, IKnownSize, IAbsoluteAddressAware, IFuzzSnapshotRestorable
     {
         public PythonPeripheral(int size, bool initable = false, string script = null, string filename = null)
         {
@@ -149,6 +149,72 @@ namespace Antmicro.Renode.Peripherals.Python
             inited = false;
             EnsureInit();
         }
+
+
+    private bool fuzz_snap_inited;
+private ulong fuzz_snap_requestCounter;
+private PeripheralPythonEngine fuzz_snap_pythonRunner;
+private bool fuzz_snap_initable;
+private int fuzz_snap_size;
+private string fuzz_snap_script;
+private string fuzz_snap_filename;
+
+private string fuzz_snap_codeContent;
+private PeripheralPythonEngine.PythonRequest fuzz_snap_request;
+
+public void fuzz_snap_capture()
+{
+    Console.WriteLine("^^^^^ PythonPeripheral.cs fuzz_snap_capture()");
+    // Internal state variables
+    fuzz_snap_inited = inited;
+    fuzz_snap_requestCounter = requestCounter;
+    fuzz_snap_pythonRunner = pythonRunner;
+    fuzz_snap_initable = initable;
+    fuzz_snap_size = size;
+    fuzz_snap_script = script;
+    fuzz_snap_filename = filename;
+    
+    // Python engine state
+    fuzz_snap_codeContent = pythonRunner.Code;
+    fuzz_snap_request = new PeripheralPythonEngine.PythonRequest
+    {
+        value = pythonRunner.Request.value,
+        length = pythonRunner.Request.length,
+        type = pythonRunner.Request.type,
+        offset = pythonRunner.Request.offset,
+        absolute = pythonRunner.Request.absolute,
+        counter = pythonRunner.Request.counter
+    };
+}
+
+public void fuzz_snap_restore()
+{
+    // Console.WriteLine("^^^^^ PythonPeripheral.cs fuzz_snap_restore()");
+    // Restore internal state variables
+    inited = fuzz_snap_inited;
+    requestCounter = fuzz_snap_requestCounter;
+    // pythonRunner = fuzz_snap_pythonRunner;
+    // initable = fuzz_snap_initable;//readonly
+    // size = fuzz_snap_size;
+    // script = fuzz_snap_script;
+    // filename = fuzz_snap_filename;
+    
+    // Restore Python engine state
+    // Note: The pythonRunner will be restored through the serialization system
+    // The request state will be restored when the pythonRunner is restored
+    
+    // Restore request state
+    if (fuzz_snap_request != null)
+    {
+        pythonRunner.Request.value = fuzz_snap_request.value;
+        pythonRunner.Request.length = fuzz_snap_request.length;
+        pythonRunner.Request.type = fuzz_snap_request.type;
+        pythonRunner.Request.offset = fuzz_snap_request.offset;
+        pythonRunner.Request.absolute = fuzz_snap_request.absolute;
+        pythonRunner.Request.counter = fuzz_snap_request.counter;
+    }
+}
+
 
         public long Size
         {

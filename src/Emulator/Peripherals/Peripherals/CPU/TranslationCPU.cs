@@ -1037,6 +1037,26 @@ namespace Antmicro.Renode.Peripherals.CPU
             ClearTranslationCache();
         }
 
+        public void Fuzz_TlibReset()
+        {
+            // Clear abort state
+            // isAborted = false;
+            // // Stop execution
+            // Pause();
+    
+            // // Disable interrupt logging
+            // isInterruptLoggingEnabled = false;
+            // Reset CPU hardware state
+            TlibReset();
+    
+            // Reset performance counters
+            // ResetOpcodesCounters();
+    
+            // Clean up profiler
+            // profiler?.Dispose();
+            // ClearTranslationCache();
+        }
+
         // TODO: improve this when backend/analyser stuff is done
 
         public bool UpdateContextOnLoadAndStore { get; set; }
@@ -2964,11 +2984,11 @@ namespace Antmicro.Renode.Peripherals.CPU
         }
 
         public void Fuzz_Set_ramAddress(ulong ram_address){ //not needed as of now
-            ram_address = ram_address;
+            this.ram_address = ram_address;
         }
 
         public void Fuzz_Set_ramSize(ulong ram_size){ //not needed as of now
-            ram_size = ram_size;
+            this.ram_size = ram_size;
         }
 
         public int Fuzz_Get_ramAccessedSet_count(){ //not needed as of now
@@ -3019,6 +3039,19 @@ namespace Antmicro.Renode.Peripherals.CPU
             public int AccessSize; // 1, 2, 4, or 8
         }
         private Dictionary<ulong, MemWriteInfo_Fuzz> changedMemValues_Fuzz = new Dictionary<ulong, MemWriteInfo_Fuzz>();
+
+        // Fuzz snapshot variables for TranslationCPU
+        private bool fuzz_snap_tbCacheEnabled;
+        private bool fuzz_snap_syncPCEveryInstructionDisabled;
+        private bool fuzz_snap_chainingEnabled;
+        private int fuzz_snap_maximumBlockSize;
+        private decimal fuzz_snap_cyclesPerInstruction;
+        private bool fuzz_snap_logTranslationBlockFetch;
+        private uint fuzz_snap_currentBlockDisassemblyFlags;
+        private bool fuzz_snap_threadSentinelEnabled;
+        private bool fuzz_snap_updateContextOnLoadAndStore;
+        private List<SegmentMapping> fuzz_snap_currentMappings;
+        private List<SegmentMapping> fuzz_snap_currentMappings_ram_fuzz;
         // private Dictionary<ulong, uint> changedMemValues_Fuzz = new Dictionary<ulong, uint>();
 
         //  Helper method to read values based on access size
@@ -3138,6 +3171,62 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public void Fuzz_Clear_All_Mem_Track_Dict(){
             changedMemValues_Fuzz.Clear();
+        }
+
+        // Implementation of fuzz snapshot/restore for TranslationCPU
+        public override void fuzz_snap_capture()
+        {
+            Console.WriteLine("^^^^^ TranslationCPU.cs fuzz_snap_capture()");
+            
+            // Capture base CPU state
+            fuzz_snap_state = State;
+            fuzz_snap_executionMode = ExecutionMode;
+            fuzz_snap_isHalted = IsHalted;
+            fuzz_snap_isPaused = IsPaused;
+            fuzz_snap_executedInstructions = ExecutedInstructions;
+            fuzz_snap_skippedInstructions = SkippedInstructions;
+            // Note: ElapsedVirtualTime doesn't exist, so we can't capture elapsed time
+
+            // Capture TranslationCPU-specific state
+            fuzz_snap_tbCacheEnabled = TbCacheEnabled;
+            fuzz_snap_syncPCEveryInstructionDisabled = SyncPCEveryInstructionDisabled;
+            fuzz_snap_chainingEnabled = ChainingEnabled;
+            fuzz_snap_maximumBlockSize = MaximumBlockSize;
+            fuzz_snap_cyclesPerInstruction = CyclesPerInstruction;
+            fuzz_snap_logTranslationBlockFetch = LogTranslationBlockFetch;
+            fuzz_snap_currentBlockDisassemblyFlags = CurrentBlockDisassemblyFlags;
+            fuzz_snap_threadSentinelEnabled = ThreadSentinelEnabled;
+            fuzz_snap_updateContextOnLoadAndStore = UpdateContextOnLoadAndStore;
+            
+            // Capture memory mappings
+            fuzz_snap_currentMappings = new List<SegmentMapping>(currentMappings);
+            fuzz_snap_currentMappings_ram_fuzz = new List<SegmentMapping>(currentMappings_ram_fuzz);
+        }
+
+        public override void fuzz_snap_restore()
+        {
+            // sConsole.WriteLine("^^^^^ TranslationCPU.cs fuzz_snap_restore()");
+            
+            // Restore base CPU state
+            // Note: State has a private setter, so we can't restore it directly
+            ExecutionMode = fuzz_snap_executionMode;
+            // Note: IsHalted and IsPaused are read-only properties, so we can't restore them directly
+            
+            // Restore TranslationCPU-specific state
+            TbCacheEnabled = fuzz_snap_tbCacheEnabled;
+            SyncPCEveryInstructionDisabled = fuzz_snap_syncPCEveryInstructionDisabled;
+            ChainingEnabled = fuzz_snap_chainingEnabled;
+            MaximumBlockSize = fuzz_snap_maximumBlockSize;
+            CyclesPerInstruction = fuzz_snap_cyclesPerInstruction;
+            LogTranslationBlockFetch = fuzz_snap_logTranslationBlockFetch;
+            ThreadSentinelEnabled = fuzz_snap_threadSentinelEnabled;
+            UpdateContextOnLoadAndStore = fuzz_snap_updateContextOnLoadAndStore;
+            
+            // Restore memory mappings
+            currentMappings.Clear();
+            currentMappings.AddRange(fuzz_snap_currentMappings);
+            currentMappings_ram_fuzz.Clear();
+            currentMappings_ram_fuzz.AddRange(fuzz_snap_currentMappings_ram_fuzz);
         }
 
         public int Fuzz_Count_All_Mem_Track_Dict(){

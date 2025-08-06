@@ -12,11 +12,12 @@ using Antmicro.Renode.Core.Structure.Registers;
 using Antmicro.Renode.Peripherals.Bus;
 using Antmicro.Renode.Logging;
 using Antmicro.Renode.Utilities;
+using System;
 
 namespace Antmicro.Renode.Peripherals.Miscellaneous
 {
     [AllowedTranslations(AllowedTranslation.ByteToDoubleWord | AllowedTranslation.WordToDoubleWord)]
-    public sealed class STM32_PWR : BasicDoubleWordPeripheral, IKnownSize
+    public sealed class STM32_PWR : BasicDoubleWordPeripheral, IKnownSize, IFuzzSnapshotRestorable
     {
         public STM32_PWR(IMachine machine) : base(machine)
         {
@@ -76,6 +77,45 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
                 .WithReservedBits(20, 12);
         }
 
+        public void fuzz_snap_capture()
+        {
+            Console.WriteLine("^^^^^ STM32_PWR.cs fuzz_snap_capture()");
+            
+            // Capture register field states
+            fuzz_snap_vosValue = vosValue?.Value ?? RegulatorVoltageScalingOutputSelection.ScaleMode3;
+            fuzz_snap_odswenValue = odswenValue?.Value ?? false;
+            fuzz_snap_vosrdyValue = vosrdyValue?.Value ?? false;
+            fuzz_snap_odrdyValue = odrdyValue?.Value ?? false;
+            fuzz_snap_odswrdyValue = odswrdyValue?.Value ?? false;
+        }
+
+        public void fuzz_snap_restore()
+        {
+            // Console.WriteLine("^^^^^ STM32_PWR.cs fuzz_snap_restore()");
+            
+            // Restore register field states
+            if (vosValue != null)
+            {
+                vosValue.Value = fuzz_snap_vosValue;
+            }
+            if (odswenValue != null)
+            {
+                odswenValue.Value = fuzz_snap_odswenValue;
+            }
+            if (vosrdyValue != null)
+            {
+                vosrdyValue.Value = fuzz_snap_vosrdyValue;
+            }
+            if (odrdyValue != null)
+            {
+                odrdyValue.Value = fuzz_snap_odrdyValue;
+            }
+            if (odswrdyValue != null)
+            {
+                odswrdyValue.Value = fuzz_snap_odswrdyValue;
+            }
+        }
+
         public long Size => 0x400;
 
         private IEnumRegisterField<RegulatorVoltageScalingOutputSelection> vosValue;
@@ -83,6 +123,13 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
         private IFlagRegisterField vosrdyValue;
         private IFlagRegisterField odrdyValue;
         private IFlagRegisterField odswrdyValue;
+
+        // Fuzz snapshot variables
+        private RegulatorVoltageScalingOutputSelection fuzz_snap_vosValue;
+        private bool fuzz_snap_odswenValue;
+        private bool fuzz_snap_vosrdyValue;
+        private bool fuzz_snap_odrdyValue;
+        private bool fuzz_snap_odswrdyValue;
 
         private enum Registers
         {

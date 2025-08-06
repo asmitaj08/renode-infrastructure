@@ -116,7 +116,30 @@ namespace Antmicro.Renode.Peripherals.CPU
         private ulong instructionsExecutedThisRound;
         private ulong totalExecutedInstructions;
 
+        // Fuzz snapshot variables for ExternalCPU
+        private ulong fuzz_snap_instructionsExecutedThisRound;
+        private ulong fuzz_snap_totalExecutedInstructions;
+
         // [This needs to be mapped to the id of the Program Counter register used by the simulator]
         private const int PCRegisterId = 0;
+
+        // Implementation of fuzz snapshot/restore for ExternalCPU
+        public override void fuzz_snap_capture()
+        {
+            Console.WriteLine("^^^^^ ExternalCPU.cs fuzz_snap_capture()");
+            
+            // Capture ExternalCPU-specific state
+            fuzz_snap_instructionsExecutedThisRound = instructionsExecutedThisRound;
+            fuzz_snap_totalExecutedInstructions = totalExecutedInstructions;
+        }
+
+        public override void fuzz_snap_restore()
+        {
+            Console.WriteLine("^^^^^ ExternalCPU.cs fuzz_snap_restore()");
+            
+            // Restore ExternalCPU-specific state
+            instructionsExecutedThisRound = fuzz_snap_instructionsExecutedThisRound;
+            totalExecutedInstructions = fuzz_snap_totalExecutedInstructions;
+        }
     }
 }

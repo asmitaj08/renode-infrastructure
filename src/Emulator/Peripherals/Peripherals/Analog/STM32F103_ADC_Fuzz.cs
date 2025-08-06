@@ -40,7 +40,7 @@ namespace Antmicro.Renode.Peripherals.Analog
    // * Sampling time (time is fixed)
    // * Discontinuous mode
    // * Multi-ADC (i.e. Dual/Triple) mode
-   public class STM32F103_ADC_Fuzz : BasicDoubleWordPeripheral, IKnownSize
+   public class STM32F103_ADC_Fuzz : BasicDoubleWordPeripheral, IKnownSize, IFuzzSnapshotRestorable
    {
       public STM32F103_ADC_Fuzz(IMachine machine) : base(machine)
       {
@@ -58,6 +58,12 @@ namespace Antmicro.Renode.Peripherals.Analog
                autoUpdate: false,
                workMode: WorkMode.OneShot);
          samplingTimer.LimitReached += OnConversionFinished;
+         
+         // // Feed default samples to all channels
+         // for(uint i = 0; i < NumberOfChannels; i++)
+         // {
+         //    FeedSample(0x1000 + i * 0x100, i, 1000);  // Default values - fuzz change
+         // }
       }
 
       public void FeedSample(uint value, uint channelIdx, int repeat = 1)
@@ -95,6 +101,147 @@ namespace Antmicro.Renode.Peripherals.Analog
             c.Reset();
          }
       }
+
+      private uint fuzz_snap_adcData;
+      private uint fuzz_snap_regularSequenceLen;
+      private uint fuzz_snap_currentChannelIdx;
+      private ADCChannel fuzz_snap_currentChannel;
+      private ADCChannel[] fuzz_snap_channels;
+      private LimitTimer fuzz_snap_samplingTimer;
+      private Queue<uint> fuzz_snap_adcSample_fuzz;
+
+      private bool fuzz_snap_scanMode;
+      private bool fuzz_snap_endOfConversion;
+      private bool fuzz_snap_adcOn;
+      private bool fuzz_snap_endOfConversionSelect;
+      private bool fuzz_snap_eocInterruptEnable;
+      private bool fuzz_snap_continuousConversion;
+      private bool fuzz_snap_dmaEnabled;
+      private bool fuzz_snap_dmaIssueRequest;
+      private IValueRegisterField[] fuzz_snap_regularSequence;
+
+      private bool fuzz_snap_irqLineActive;
+      private bool fuzz_snap_dmaRequestLineActive;
+
+      private bool fuzz_snap_samplingTimerEnabled;
+      private ulong fuzz_snap_samplingTimerValue;
+      private ulong fuzz_snap_samplingTimerLimit;
+
+      public void fuzz_snap_capture()
+      {
+         Console.WriteLine("^^^^^ STM32F103_ADC_Fuzz.cs fuzz_snap_capture()");
+         // Internal state variables
+         fuzz_snap_adcData = adcData;
+         fuzz_snap_regularSequenceLen = regularSequenceLen;
+         fuzz_snap_currentChannelIdx = currentChannelIdx;
+         fuzz_snap_currentChannel = currentChannel;
+         fuzz_snap_channels = (ADCChannel[])channels.Clone();
+         fuzz_snap_samplingTimer = samplingTimer;
+         fuzz_snap_adcSample_fuzz = new Queue<uint>(adcSample_fuzz);
+    
+         // Register field states (out variables)
+         fuzz_snap_scanMode = scanMode.Value;
+         fuzz_snap_endOfConversion = endOfConversion.Value;
+         fuzz_snap_adcOn = adcOn.Value;
+         fuzz_snap_endOfConversionSelect = endOfConversionSelect.Value;
+         fuzz_snap_eocInterruptEnable = eocInterruptEnable.Value;
+         fuzz_snap_continuousConversion = continuousConversion.Value;
+         fuzz_snap_dmaEnabled = dmaEnabled.Value;
+         fuzz_snap_dmaIssueRequest = dmaIssueRequest.Value;
+    
+         // Regular sequence array
+         fuzz_snap_regularSequence = new IValueRegisterField[regularSequence.Length];
+         Array.Copy(regularSequence, fuzz_snap_regularSequence, regularSequence.Length);
+    
+         // GPIO states
+         fuzz_snap_irqLineActive = IRQ.IsSet;
+         fuzz_snap_dmaRequestLineActive = DMARequest.IsSet;
+    
+         // Timer states
+         fuzz_snap_samplingTimerEnabled = samplingTimer.Enabled;
+         fuzz_snap_samplingTimerValue = samplingTimer.Value;
+         fuzz_snap_samplingTimerLimit = samplingTimer.Limit;
+      }
+
+      public void fuzz_snap_restore()
+      {
+         //  Console.WriteLine("^^^^^ STM32F103_ADC_Fuzz.cs fuzz_snap_restore()");
+         // Restore internal state variables
+         adcData = fuzz_snap_adcData;
+         regularSequenceLen = fuzz_snap_regularSequenceLen;
+         currentChannelIdx = fuzz_snap_currentChannelIdx;
+         currentChannel = fuzz_snap_currentChannel;
+         //  channels = (ADCChannel[])fuzz_snap_channels.Clone(); //read-only
+         //  samplingTimer = fuzz_snap_samplingTimer;
+         adcSample_fuzz = new Queue<uint>(fuzz_snap_adcSample_fuzz);
+    
+         // Restore register field states (out variables)
+         scanMode.Value = fuzz_snap_scanMode;
+         endOfConversion.Value = fuzz_snap_endOfConversion;
+         adcOn.Value = fuzz_snap_adcOn;
+         endOfConversionSelect.Value = fuzz_snap_endOfConversionSelect;
+         eocInterruptEnable.Value = fuzz_snap_eocInterruptEnable;
+         continuousConversion.Value = fuzz_snap_continuousConversion;
+         dmaEnabled.Value = fuzz_snap_dmaEnabled;
+         dmaIssueRequest.Value = fuzz_snap_dmaIssueRequest;
+    
+         // Restore regular sequence array
+         Array.Copy(fuzz_snap_regularSequence, regularSequence, regularSequence.Length);
+    
+         // Restore GPIO states
+         if (fuzz_snap_irqLineActive)
+         {
+            IRQ.Set();
+         }
+         else
+         {
+            IRQ.Unset();
+         }
+    
+         if (fuzz_snap_dmaRequestLineActive)
+         {
+            DMARequest.Set();
+         }
+         else
+         {
+            DMARequest.Unset();
+         }
+    
+         // Restore timer states
+         samplingTimer.Enabled = fuzz_snap_samplingTimerEnabled;
+         samplingTimer.Value = fuzz_snap_samplingTimerValue;
+         samplingTimer.Limit = fuzz_snap_samplingTimerLimit;
+      }
+
+      public void ReadFromFuzzer_Internal(byte[] data_in)
+      {
+         // Console.WriteLine($"^^^^^^ STM32F103_ADC_Fuzz: Injecting {data_in.Length} bytes");
+    
+         var localQueue = new Queue<uint>();
+         // Handle complete pairs
+         for (int i = 0; i < data_in.Length - 1; i += 2)
+         {
+            uint adcValue = (uint)((data_in[i + 1] << 8) | data_in[i]);
+            localQueue.Enqueue(adcValue);
+         }
+         // Handle last byte if odd length
+         if (data_in.Length % 2 != 0)
+         {
+            uint adcValue = (uint)((0x00 << 8) | data_in[data_in.Length - 1]);
+            localQueue.Enqueue(adcValue);
+         }
+
+         // Console.WriteLine($"^^^^^^ ADC: Parsed {localQueue.Count} samples from {data_in.Length} bytes");
+         // Feed to all channels
+         for (uint channelId = 0; channelId < 4; channelId++)
+         {
+            channels[channelId].FeedSample(localQueue, 1);
+         }
+
+      }  
+
+
+
 
       public long Size => 0x50;
 
@@ -236,10 +383,12 @@ namespace Antmicro.Renode.Peripherals.Analog
       private void EnableADC()
       {
           currentChannel = channels[regularSequence[currentChannelIdx].Value];
+         //  Console.WriteLine($"^^^^^^ADC EnableADC(). currentChannel : {currentChannelIdx}");
       }
 
       private void StartConversion()
       {
+         // Console.WriteLine("^^^^^^ADC StartConversion()");
          if(adcOn.Value)
          {
              this.Log(LogLevel.Debug, "Starting conversion time={0}",
@@ -275,11 +424,18 @@ namespace Antmicro.Renode.Peripherals.Analog
          // adcSample_fuzz.Enqueue((uint)val);
          // i+=1;
          // adcData = adcSample_fuzz.Dequeue();
-         // Console.WriteLine($"^^^^adcDAta from GetSample adcData1: {adcData1:X}, adcData : {adcData:X}");
-         if(dmaEnabled.Value && dmaIssueRequest.Value)
+         // Console.WriteLine($"^^^^adcDAta OnConversionFinished : from GetSample adcData1: {adcData:X}, adcData : {adcData:X}, currentChannel : {currentChannelIdx}");
+         
+         // FIX: Assign the calculated adcData to the class field
+         this.adcData = adcData;
+         // Console.WriteLine($"^^^^ADC OnConversionFinished : dmaEnabled.Value : {dmaEnabled.Value}, dmaIssueRequest.Value : {dmaIssueRequest.Value}");
+         
+         // if(dmaEnabled.Value && dmaIssueRequest.Value) //orig
+          if(dmaEnabled.Value)
          {
             // Issue DMA peripheral request, which when mapped to DMA
             // controller will trigger a peripheral to memory transfer
+            // Console.WriteLine($"^^^^ADC OnConversionFinished : DMA triggered");
             DMARequest.Set();
             DMARequest.Unset();
          }
@@ -297,10 +453,13 @@ namespace Antmicro.Renode.Peripherals.Analog
          // Auto trigger next conversion if we're scanning or CONT bit set
          samplingTimer.Enabled = scanModeActive || continuousConversion.Value;
 
+         // Console.WriteLine($"^^^^adc OnConversionFinished: samplingTimer.Enabled - {samplingTimer.Enabled}, endOfConversion.Value : {endOfConversion.Value}");
+
          // Trigger EOC interrupt
          if(endOfConversion.Value && eocInterruptEnable.Value)
          {
             this.Log(LogLevel.Debug, "OnConversionFinished: Set IRQ");
+            // Console.WriteLine($"^^^^adc OnConversionFinished: Set IRQ");
             IRQ.Set(true);
          }
       }

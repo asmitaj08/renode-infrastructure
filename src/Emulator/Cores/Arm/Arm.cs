@@ -494,6 +494,16 @@ namespace Antmicro.Renode.Peripherals.CPU
         private readonly List<TCMConfiguration> defaultTCMConfiguration = new List<TCMConfiguration>();
         private readonly ArmSignalsUnit signalsUnit;
 
+        // Fuzz snapshot variables for Arm
+        private MemorySystemArchitectureType fuzz_snap_memorySystemArchitecture;
+        private uint fuzz_snap_exceptionVectorAddress;
+        private uint fuzz_snap_modelID;
+        private bool fuzz_snap_wfiAsNop;
+        private bool fuzz_snap_wfeAndSevAsNop;
+        private uint fuzz_snap_numberOfMPURegions;
+        private bool fuzz_snap_implementsPMSA;
+        private bool fuzz_snap_implementsVMSA;
+
         // 649:  Field '...' is never assigned to, and will always have its default value null
 #pragma warning disable 649
 
@@ -551,6 +561,40 @@ namespace Antmicro.Renode.Peripherals.CPU
         public Action<uint> TlibSetExceptionVectorAddress;
 
 #pragma warning restore 649
+
+        // Override fuzz snapshot methods for Arm-specific state
+        public override void fuzz_snap_capture()
+        {
+            Console.WriteLine("^^^^^ Arm.cs fuzz_snap_capture()");
+            
+            // Call base implementation first
+            base.fuzz_snap_capture();
+            
+            // Capture ARM-specific state
+            fuzz_snap_memorySystemArchitecture = MemorySystemArchitecture;
+            fuzz_snap_exceptionVectorAddress = ExceptionVectorAddress;
+            fuzz_snap_modelID = ModelID;
+            fuzz_snap_wfiAsNop = WfiAsNop;
+            fuzz_snap_wfeAndSevAsNop = WfeAndSevAsNop;
+            fuzz_snap_numberOfMPURegions = NumberOfMPURegions;
+            fuzz_snap_implementsPMSA = ImplementsPMSA;
+            fuzz_snap_implementsVMSA = ImplementsVMSA;
+        }
+
+        public override void fuzz_snap_restore()
+        {
+            // Console.WriteLine("^^^^^ Arm.cs fuzz_snap_restore()");
+            
+            // Restore ARM-specific state
+            ExceptionVectorAddress = fuzz_snap_exceptionVectorAddress;
+            ModelID = fuzz_snap_modelID;
+            WfiAsNop = fuzz_snap_wfiAsNop;
+            WfeAndSevAsNop = fuzz_snap_wfeAndSevAsNop;
+            NumberOfMPURegions = fuzz_snap_numberOfMPURegions;
+            
+            // Call base implementation last
+            base.fuzz_snap_restore();
+        }
 
         private readonly string[] ExceptionDescriptions =
         {

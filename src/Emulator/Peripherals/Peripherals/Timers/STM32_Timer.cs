@@ -19,7 +19,7 @@ namespace Antmicro.Renode.Peripherals.Timers
 {
     // This class does not implement advanced-control timers interrupts
     [AllowedTranslations(AllowedTranslation.ByteToDoubleWord | AllowedTranslation.WordToDoubleWord)]
-    public class STM32_Timer : LimitTimer, IDoubleWordPeripheral, IKnownSize, INumberedGPIOOutput, IPeripheralRegister<IGPIOReceiver, NumberRegistrationPoint<int>>, IPeripheralRegister<IGPIOReceiver, NullRegistrationPoint>
+    public class STM32_Timer : LimitTimer, IDoubleWordPeripheral, IKnownSize, INumberedGPIOOutput, IPeripheralRegister<IGPIOReceiver, NumberRegistrationPoint<int>>, IPeripheralRegister<IGPIOReceiver, NullRegistrationPoint>, IFuzzSnapshotRestorable
     {
         public STM32_Timer(IMachine machine, long frequency, uint initialLimit) : base(machine.ClockSource, frequency, limit: initialLimit, direction: Direction.Ascending, enabled: false, autoUpdate: false)
         {
@@ -444,6 +444,120 @@ namespace Antmicro.Renode.Peripherals.Timers
             }
             UpdateInterrupts();
         }
+
+        private uint fuzz_snap_autoReloadValue;
+        private uint fuzz_snap_repetitionsLeft;
+        private bool fuzz_snap_updateInterruptFlag;
+        private bool fuzz_snap_enableRequested;
+        private bool[] fuzz_snap_ccInterruptFlag;
+        private bool[] fuzz_snap_ccInterruptEnable;
+        private bool[] fuzz_snap_ccOutputEnable;
+
+        private Dictionary<int, bool> fuzz_snap_connectionStates;
+
+        // For each of the 4 CC timers, capture their internal state
+        private ulong[] fuzz_snap_ccTimerValues;
+        private ulong[] fuzz_snap_ccTimerLimits;
+        private bool[] fuzz_snap_ccTimerEnabled;
+        private bool[] fuzz_snap_ccTimerEventEnabled;
+        private long[] fuzz_snap_ccTimerFrequencies;
+        private int[] fuzz_snap_ccTimerDividers;
+        private WorkMode[] fuzz_snap_ccTimerWorkModes;
+        private Direction[] fuzz_snap_ccTimerDirections;
+        private bool[] fuzz_snap_ccTimerAutoUpdate;
+
+
+        public void fuzz_snap_capture()
+        {
+            Console.WriteLine("^^^^^ STM32_Timer.cs fuzz_snap_capture()");
+            // Internal state variables
+            fuzz_snap_autoReloadValue = autoReloadValue;
+            fuzz_snap_repetitionsLeft = repetitionsLeft;
+            fuzz_snap_updateInterruptFlag = updateInterruptFlag;
+            fuzz_snap_enableRequested = enableRequested;
+    
+            // Arrays
+            fuzz_snap_ccInterruptFlag = (bool[])ccInterruptFlag.Clone();
+            fuzz_snap_ccInterruptEnable = (bool[])ccInterruptEnable.Clone();
+            fuzz_snap_ccOutputEnable = (bool[])ccOutputEnable.Clone();
+    
+            // GPIO connection states
+            fuzz_snap_connectionStates = new Dictionary<int, bool>();
+            foreach(var kvp in Connections)
+            {
+                fuzz_snap_connectionStates[kvp.Key] = kvp.Value.IsSet;
+            }
+    
+            // Capture/Compare timer states
+            fuzz_snap_ccTimerValues = new ulong[NumberOfCCChannels];
+            fuzz_snap_ccTimerLimits = new ulong[NumberOfCCChannels];
+            fuzz_snap_ccTimerEnabled = new bool[NumberOfCCChannels];
+            fuzz_snap_ccTimerEventEnabled = new bool[NumberOfCCChannels];
+            fuzz_snap_ccTimerFrequencies = new long[NumberOfCCChannels];
+            fuzz_snap_ccTimerDividers = new int[NumberOfCCChannels];
+            fuzz_snap_ccTimerWorkModes = new WorkMode[NumberOfCCChannels];
+            fuzz_snap_ccTimerDirections = new Direction[NumberOfCCChannels];
+            fuzz_snap_ccTimerAutoUpdate = new bool[NumberOfCCChannels];
+    
+            for(int i = 0; i < NumberOfCCChannels; i++)
+            {
+                fuzz_snap_ccTimerValues[i] = ccTimers[i].Value;
+                fuzz_snap_ccTimerLimits[i] = ccTimers[i].Limit;
+                fuzz_snap_ccTimerEnabled[i] = ccTimers[i].Enabled;
+                fuzz_snap_ccTimerEventEnabled[i] = ccTimers[i].EventEnabled;
+                fuzz_snap_ccTimerFrequencies[i] = ccTimers[i].Frequency;
+                fuzz_snap_ccTimerDividers[i] = ccTimers[i].Divider;
+                fuzz_snap_ccTimerWorkModes[i] = ccTimers[i].Mode;
+                fuzz_snap_ccTimerDirections[i] = ccTimers[i].Direction;
+                fuzz_snap_ccTimerAutoUpdate[i] = ccTimers[i].AutoUpdate;
+            }
+        }
+
+        public void fuzz_snap_restore()
+        {
+            // Restore internal state variables
+            //  Console.WriteLine("^^^^^ STM32_Timer.cs fuzz_snap_restore()");
+            //  registers.Reset();
+            autoReloadValue = fuzz_snap_autoReloadValue;
+            repetitionsLeft = fuzz_snap_repetitionsLeft;
+            updateInterruptFlag = fuzz_snap_updateInterruptFlag;
+            enableRequested = fuzz_snap_enableRequested;
+    
+            // Restore arrays
+            ccInterruptFlag = (bool[])fuzz_snap_ccInterruptFlag.Clone();
+            ccInterruptEnable = (bool[])fuzz_snap_ccInterruptEnable.Clone();
+            ccOutputEnable = (bool[])fuzz_snap_ccOutputEnable.Clone();
+    
+            // Restore GPIO connection states
+            foreach(var kvp in Connections)
+            {
+                if(fuzz_snap_connectionStates.TryGetValue(kvp.Key, out var isSet))
+                {
+                    if(isSet)
+                        kvp.Value.Set();
+                    else
+                        kvp.Value.Unset();
+                }
+            }
+    
+            // Restore Capture/Compare timer states
+            for(int i = 0; i < NumberOfCCChannels; i++)
+            {
+                ccTimers[i].Value = fuzz_snap_ccTimerValues[i];
+                ccTimers[i].Limit = fuzz_snap_ccTimerLimits[i];
+                ccTimers[i].Enabled = fuzz_snap_ccTimerEnabled[i];
+                ccTimers[i].EventEnabled = fuzz_snap_ccTimerEventEnabled[i];
+                ccTimers[i].Frequency = fuzz_snap_ccTimerFrequencies[i];
+                ccTimers[i].Divider = fuzz_snap_ccTimerDividers[i];
+                ccTimers[i].Mode = fuzz_snap_ccTimerWorkModes[i];
+                ccTimers[i].Direction = fuzz_snap_ccTimerDirections[i];
+                ccTimers[i].AutoUpdate = fuzz_snap_ccTimerAutoUpdate[i];
+            }
+    
+            // Update interrupts after restoration
+            UpdateInterrupts();
+        }
+
 
         public GPIO IRQ { get; private set; }
         public IReadOnlyDictionary<int, IGPIO> Connections => connections;

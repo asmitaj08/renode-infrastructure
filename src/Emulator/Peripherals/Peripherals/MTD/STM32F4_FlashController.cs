@@ -19,7 +19,7 @@ using Antmicro.Renode.Utilities;
 namespace Antmicro.Renode.Peripherals.MTD
 {
     [AllowedTranslations(AllowedTranslation.ByteToDoubleWord | AllowedTranslation.WordToDoubleWord)]
-    public class STM32F4_FlashController : STM32_FlashController, IKnownSize
+    public class STM32F4_FlashController : STM32_FlashController, IKnownSize, IFuzzSnapshotRestorable
     {
         public STM32F4_FlashController(IMachine machine, MappedMemory flash) : base(machine)
         {
@@ -41,6 +41,68 @@ namespace Antmicro.Renode.Peripherals.MTD
             controlLock.Reset();
             optionControlLock.Reset();
         }
+
+        private MappedMemory fuzz_snap_flash;
+        private LockRegister fuzz_snap_controlLock;
+        private LockRegister fuzz_snap_optionControlLock;
+        private DoubleWordRegisterCollection fuzz_snap_optionBytesRegisters;
+        private ulong fuzz_snap_readProtectionRegister;
+        private ulong fuzz_snap_writeProtectionRegister;
+        private ulong fuzz_snap_readProtectionOptionBytes;
+        private ulong fuzz_snap_writeProtectionOptionBytes;
+        private bool fuzz_snap_controlLockIsLocked;
+        private bool fuzz_snap_controlLockDisabledUntilReset;
+        private int fuzz_snap_controlLockKeyIndex;
+        private bool fuzz_snap_optionControlLockIsLocked;
+        private bool fuzz_snap_optionControlLockDisabledUntilReset;
+        private int fuzz_snap_optionControlLockKeyIndex;
+
+public void fuzz_snap_capture()
+{
+    Console.WriteLine("^^^^^ STM32F4_FlashController.cs fuzz_snap_capture()");
+    // Internal state variables
+    fuzz_snap_flash = flash;
+    fuzz_snap_controlLock = controlLock;
+    fuzz_snap_optionControlLock = optionControlLock;
+    fuzz_snap_optionBytesRegisters = optionBytesRegisters;
+    
+    // Register field states (out variables)
+    fuzz_snap_readProtectionRegister = readProtectionRegister.Value;
+    fuzz_snap_writeProtectionRegister = writeProtectionRegister.Value;
+    fuzz_snap_readProtectionOptionBytes = readProtectionOptionBytes.Value;
+    fuzz_snap_writeProtectionOptionBytes = writeProtectionOptionBytes.Value;
+    
+    // Lock register states
+    fuzz_snap_controlLockIsLocked = controlLock.IsLocked;
+    fuzz_snap_controlLockDisabledUntilReset = controlLock.DisabledUntilReset;
+    // Note: keyIndex is private, so we can't capture it directly
+    // The lock state will be restored through the Reset() method
+    
+    fuzz_snap_optionControlLockIsLocked = optionControlLock.IsLocked;
+    fuzz_snap_optionControlLockDisabledUntilReset = optionControlLock.DisabledUntilReset;
+}
+
+public void fuzz_snap_restore()
+{
+    // Console.WriteLine("^^^^^ STM32F4_FlashController.cs fuzz_snap_restore()");
+    // Restore internal state variables - no as they r read-only
+    // flash = fuzz_snap_flash;
+    // controlLock = fuzz_snap_controlLock;
+    // optionControlLock = fuzz_snap_optionControlLock;
+    // optionBytesRegisters = fuzz_snap_optionBytesRegisters;
+    
+    // Restore register field states (out variables)
+    readProtectionRegister.Value = fuzz_snap_readProtectionRegister;
+    writeProtectionRegister.Value = fuzz_snap_writeProtectionRegister;
+    readProtectionOptionBytes.Value = fuzz_snap_readProtectionOptionBytes;
+    writeProtectionOptionBytes.Value = fuzz_snap_writeProtectionOptionBytes;
+    
+    // Restore lock register states
+    // Note: LockRegister doesn't have public setters, so we need to work around this
+    // The lock states will be properly restored when the peripheral is reset
+    // and the locks are re-initialized
+}
+
 
         [ConnectionRegion("optionBytes")]
         public uint ReadDoubleWordFromOptionBytes(long offset)

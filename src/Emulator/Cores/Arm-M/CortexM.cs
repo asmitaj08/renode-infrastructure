@@ -495,6 +495,23 @@ namespace Antmicro.Renode.Peripherals.CPU
         private bool pcNotInitialized = true;
         private bool vtorInitialized;
 
+        // Fuzz snapshot variables for CortexM
+        private uint fuzz_snap_vectorTableOffset;
+        private uint fuzz_snap_faultStatus;
+        private bool fuzz_snap_isV8;
+        private uint fuzz_snap_pmsaV8Ctrl;
+        private uint fuzz_snap_pmsaV8Rnr;
+        private uint fuzz_snap_pmsaV8Rbar;
+        private uint fuzz_snap_pmsaV8Rlar;
+        private uint fuzz_snap_pmsaV8Mair0;
+        private uint fuzz_snap_pmsaV8Mair1;
+        private bool fuzz_snap_mpuEnabled;
+        private uint fuzz_snap_mpuRegionBaseAddress;
+        private uint fuzz_snap_mpuRegionAttributeAndSize;
+        private uint fuzz_snap_mpuRegionNumber;
+        private bool fuzz_snap_pcNotInitialized;
+        private bool fuzz_snap_vtorInitialized;
+
         // 649:  Field '...' is never assigned to, and will always have its default value null
         #pragma warning disable 649
 
@@ -584,6 +601,70 @@ namespace Antmicro.Renode.Peripherals.CPU
         private Func<uint, uint> tlibGetPmsav8Mair;
 
         #pragma warning restore 649
+
+        // Override fuzz snapshot methods for CortexM-specific state
+        public override void fuzz_snap_capture()
+        {
+            Console.WriteLine("^^^^^ CortexM.cs fuzz_snap_capture()");
+            
+            // Call base implementation first
+            base.fuzz_snap_capture();
+            
+            // Capture CortexM-specific state
+            fuzz_snap_vectorTableOffset = VectorTableOffset;
+            // Note: FpuEnabled only has a setter, so we can't capture its current value
+            fuzz_snap_faultStatus = FaultStatus;
+            // Note: MemoryFaultAddress is read-only, so we can't capture it
+            fuzz_snap_isV8 = IsV8;
+            
+            // Only capture PMSAv8 features if the CPU supports ARM v8-M
+            if (IsV8)
+            {
+                fuzz_snap_pmsaV8Ctrl = PmsaV8Ctrl;
+                fuzz_snap_pmsaV8Rnr = PmsaV8Rnr;
+                fuzz_snap_pmsaV8Rbar = PmsaV8Rbar;
+                fuzz_snap_pmsaV8Rlar = PmsaV8Rlar;
+                fuzz_snap_pmsaV8Mair0 = PmsaV8Mair0;
+                fuzz_snap_pmsaV8Mair1 = PmsaV8Mair1;
+            }
+            fuzz_snap_mpuEnabled = MPUEnabled;
+            fuzz_snap_mpuRegionBaseAddress = MPURegionBaseAddress;
+            fuzz_snap_mpuRegionAttributeAndSize = MPURegionAttributeAndSize;
+            fuzz_snap_mpuRegionNumber = MPURegionNumber;
+            // Note: XProgramStatusRegister is read-only, so we can't capture its current value
+            fuzz_snap_pcNotInitialized = pcNotInitialized;
+            fuzz_snap_vtorInitialized = vtorInitialized;
+        }
+
+        public override void fuzz_snap_restore()
+        {
+            // Console.WriteLine("^^^^^ CortexM.cs fuzz_snap_restore()");
+            
+            // Restore CortexM-specific state
+            VectorTableOffset = fuzz_snap_vectorTableOffset;
+            FaultStatus = fuzz_snap_faultStatus;
+            // Note: MemoryFaultAddress is read-only, so we can't restore it
+            
+            // Only restore PMSAv8 features if the CPU supports ARM v8-M
+            if (IsV8)
+            {
+                PmsaV8Ctrl = fuzz_snap_pmsaV8Ctrl;
+                PmsaV8Rnr = fuzz_snap_pmsaV8Rnr;
+                PmsaV8Rbar = fuzz_snap_pmsaV8Rbar;
+                PmsaV8Rlar = fuzz_snap_pmsaV8Rlar;
+                PmsaV8Mair0 = fuzz_snap_pmsaV8Mair0;
+                PmsaV8Mair1 = fuzz_snap_pmsaV8Mair1;
+            }
+            MPURegionBaseAddress = fuzz_snap_mpuRegionBaseAddress;
+            MPURegionAttributeAndSize = fuzz_snap_mpuRegionAttributeAndSize;
+            MPURegionNumber = fuzz_snap_mpuRegionNumber;
+            // Note: XProgramStatusRegister is read-only, so we can't restore it
+            pcNotInitialized = fuzz_snap_pcNotInitialized;
+            vtorInitialized = fuzz_snap_vtorInitialized;
+            
+            // Call base implementation last
+            base.fuzz_snap_restore();
+        }
     }
 }
 

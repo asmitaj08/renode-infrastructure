@@ -13,7 +13,7 @@ using Antmicro.Migrant;
 
 namespace Antmicro.Renode.Peripherals.Miscellaneous
 {
-    public class CombinedInput : IGPIOReceiver
+    public class CombinedInput : IGPIOReceiver , IFuzzSnapshotRestorable
     {
         public CombinedInput(int numberOfInputs)
         {
@@ -28,6 +28,34 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
            Array.Clear(inputStates, 0, inputStates.Length);
            OutputLine.Unset();
         }
+
+        private bool[] fuzz_snap_inputStates;
+private bool fuzz_snap_outputLineState;
+
+public void fuzz_snap_capture()
+{
+    Console.WriteLine("^^^^^ CombinedInput.cs fuzz_snap_capture()");
+    // Internal state variables
+    fuzz_snap_inputStates = (bool[])inputStates.Clone();
+    fuzz_snap_outputLineState = OutputLine.IsSet;
+}
+
+public void fuzz_snap_restore()
+{
+    Console.WriteLine("^^^^^ CombinedInput.cs fuzz_snap_restore()");
+    // Restore internal state variables
+    Array.Copy(fuzz_snap_inputStates, inputStates, inputStates.Length);
+    
+    // Restore GPIO output state
+    if (fuzz_snap_outputLineState)
+    {
+        OutputLine.Set();
+    }
+    else
+    {
+        OutputLine.Unset();
+    }
+}
 
         public void OnGPIO(int number, bool value)
         {

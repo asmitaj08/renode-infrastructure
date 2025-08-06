@@ -558,13 +558,13 @@ namespace Antmicro.Renode.Core
 
         public IDisposable ObtainPausedState()
         {
-            Console.WriteLine("^^^^^^^^^Emulation.cs : ObtainPausedState");
+            // Console.WriteLine("^^^^^^^^^Emulation.cs : ObtainPausedState");
             return new PausedState(this);
         }
 
         public IDisposable ObtainSafeState()
         {   
-             Console.WriteLine("^^^^^^^^^Emulation.cs : ObtainSafeState");
+            //  Console.WriteLine("^^^^^^^^^Emulation.cs : ObtainSafeState");
             // check if we are on a safe thread that executes sync phase
             if(MasterTimeSource.IsOnSyncPhaseThread)
             {
@@ -964,7 +964,7 @@ namespace Antmicro.Renode.Core
             public PausedState(Emulation emulation)
             {
                 
-                Console.WriteLine("^^^^^^^^^Emulation paused : PausedState");
+                // Console.WriteLine("^^^^^^^^^Emulation paused : PausedState");
                 wasStarted = emulation.IsStarted;
                 this.emulation = emulation;
 
@@ -973,7 +973,7 @@ namespace Antmicro.Renode.Core
                     emulation.MasterTimeSource.Stop();
                     machineStates = emulation.Machines.Select(x => x.ObtainPausedState()).ToArray();
                     emulation.ExternalsManager.Pause();
-                    Console.WriteLine("^^^^^^^^^Emulation paused All: PausedState");
+                    // Console.WriteLine("^^^^^^^^^Emulation paused All: PausedState");
                 }
             }
 

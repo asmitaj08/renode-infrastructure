@@ -18,6 +18,7 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
     {
         public DWT(IMachine machine, uint frequency): base(machine)
         {
+            Console.WriteLine("^^^^^ DWT.cs constructor()");
             CreateRegisters();
             cycleCounter = new LimitTimer(machine.ClockSource, frequency, this, "CycleCounter", direction: Direction.Ascending);
         }

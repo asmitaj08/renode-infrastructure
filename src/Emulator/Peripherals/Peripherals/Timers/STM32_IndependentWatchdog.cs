@@ -14,7 +14,7 @@ using Antmicro.Renode.Logging;
 
 namespace Antmicro.Renode.Peripherals.Timers
 {
-    public class STM32_IndependentWatchdog : BasicDoubleWordPeripheral, IKnownSize
+    public class STM32_IndependentWatchdog : BasicDoubleWordPeripheral, IKnownSize, IFuzzSnapshotRestorable
     {
         //TODO: Stop timer on debug stop.
         //TODO: Use RCC to set restart cause.
@@ -36,6 +36,40 @@ namespace Antmicro.Renode.Peripherals.Timers
             reloadValue = DefaultReloadValue;
             window = DefaultWindow;
             windowEnabled = false;
+        }
+
+        public void fuzz_snap_capture()
+        {
+            Console.WriteLine("^^^^^ STM32_IndependentWatchdog.cs fuzz_snap_capture()");
+            
+            // Capture control states
+            fuzz_snap_registersUnlocked = registersUnlocked;
+            fuzz_snap_reloadValue = reloadValue;
+            fuzz_snap_window = window;
+            fuzz_snap_windowEnabled = windowEnabled;
+            
+            // Capture timer states
+            fuzz_snap_watchdogTimerEnabled = watchdogTimer.Enabled;
+            fuzz_snap_watchdogTimerValue = watchdogTimer.Value;
+            fuzz_snap_watchdogTimerLimit = watchdogTimer.Limit;
+            fuzz_snap_watchdogTimerDivider = watchdogTimer.Divider;
+        }
+
+        public void fuzz_snap_restore()
+        {
+            // Console.WriteLine("^^^^^ STM32_IndependentWatchdog.cs fuzz_snap_restore()");
+            
+            // Restore control states
+            registersUnlocked = fuzz_snap_registersUnlocked;
+            reloadValue = fuzz_snap_reloadValue;
+            window = fuzz_snap_window;
+            windowEnabled = fuzz_snap_windowEnabled;
+            
+            // Restore timer states
+            watchdogTimer.Enabled = fuzz_snap_watchdogTimerEnabled;
+            watchdogTimer.Value = fuzz_snap_watchdogTimerValue;
+            watchdogTimer.Limit = fuzz_snap_watchdogTimerLimit;
+            watchdogTimer.Divider = fuzz_snap_watchdogTimerDivider;
         }
 
         public long Size => 0x400;
@@ -147,6 +181,16 @@ namespace Antmicro.Renode.Peripherals.Timers
         private readonly LimitTimer watchdogTimer;
         private readonly uint defaultPrescaler;
         private readonly bool windowOption;
+
+        // Fuzz snapshot variables
+        private bool fuzz_snap_registersUnlocked;
+        private uint fuzz_snap_reloadValue;
+        private uint fuzz_snap_window;
+        private bool fuzz_snap_windowEnabled;
+        private bool fuzz_snap_watchdogTimerEnabled;
+        private ulong fuzz_snap_watchdogTimerValue;
+        private ulong fuzz_snap_watchdogTimerLimit;
+        private int fuzz_snap_watchdogTimerDivider;
 
         private const uint DefaultReloadValue = 0xFFF;
         private const uint DefaultWindow = 0xFFF;

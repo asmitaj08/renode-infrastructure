@@ -17,7 +17,7 @@ using Antmicro.Renode.Core.Structure.Registers;
 namespace Antmicro.Renode.Peripherals.GPIOPort
 {
     [AllowedTranslations(AllowedTranslation.WordToDoubleWord)]
-    public class STM32_GPIOPort : BaseGPIOPort, IDoubleWordPeripheral, ILocalGPIOReceiver
+    public class STM32_GPIOPort : BaseGPIOPort, IDoubleWordPeripheral, ILocalGPIOReceiver, IFuzzSnapshotRestorable
     {
         public STM32_GPIOPort(IMachine machine, uint modeResetValue = 0, uint outputSpeedResetValue = 0, uint pullUpPullDownResetValue = 0,
             uint numberOfAFs = 16) : base(machine, NumberOfPins)
@@ -85,6 +85,83 @@ namespace Antmicro.Renode.Peripherals.GPIOPort
             }
 
             return alternateFunctionOutputs[pin];
+        }
+
+        // Fuzz snapshot variables
+        private Mode[] fuzz_snap_mode;
+        private OutputSpeed[] fuzz_snap_outputSpeed;
+        private PullUpPullDown[] fuzz_snap_pullUpPullDown;
+        private bool[] fuzz_snap_state;
+        private Dictionary<int, bool> fuzz_snap_connections;
+        private GPIOAlternateFunction[] fuzz_snap_alternateFunctionOutputs;
+
+        public void fuzz_snap_capture()
+        {
+            Console.WriteLine("^^^^^ STM32_GPIOPort.cs fuzz_snap_capture()");
+            
+            // Capture pin modes
+            fuzz_snap_mode = (Mode[])mode.Clone();
+            
+            // Capture output speed settings
+            fuzz_snap_outputSpeed = (OutputSpeed[])outputSpeed.Clone();
+            
+            // Capture pull-up/pull-down settings
+            fuzz_snap_pullUpPullDown = (PullUpPullDown[])pullUpPullDown.Clone();
+            
+            // Capture GPIO state array
+            fuzz_snap_state = (bool[])State.Clone();
+            
+            // Capture GPIO connection states
+            fuzz_snap_connections = new Dictionary<int, bool>();
+            foreach(var kvp in Connections)
+            {
+                fuzz_snap_connections[kvp.Key] = kvp.Value.IsSet;
+            }
+            
+            // Capture alternate function outputs state
+            fuzz_snap_alternateFunctionOutputs = new GPIOAlternateFunction[NumberOfPins];
+            for(var i = 0; i < NumberOfPins; i++)
+            {
+                fuzz_snap_alternateFunctionOutputs[i] = new GPIOAlternateFunction(this, i);
+                fuzz_snap_alternateFunctionOutputs[i].IsConnected = alternateFunctionOutputs[i].IsConnected;
+                fuzz_snap_alternateFunctionOutputs[i].ActiveFunction = alternateFunctionOutputs[i].ActiveFunction;
+            }
+        }
+
+        public void fuzz_snap_restore()
+        {
+            // Console.WriteLine("^^^^^ STM32_GPIOPort.cs fuzz_snap_restore()");
+            
+            // Restore pin modes
+            Array.Copy(fuzz_snap_mode, mode, mode.Length);
+            
+            // Restore output speed settings
+            Array.Copy(fuzz_snap_outputSpeed, outputSpeed, outputSpeed.Length);
+            
+            // Restore pull-up/pull-down settings
+            Array.Copy(fuzz_snap_pullUpPullDown, pullUpPullDown, pullUpPullDown.Length);
+            
+            // Restore GPIO state array
+            Array.Copy(fuzz_snap_state, State, State.Length);
+            
+            // Restore GPIO connection states
+            foreach(var kvp in Connections)
+            {
+                if(fuzz_snap_connections.TryGetValue(kvp.Key, out var isSet))
+                {
+                    if(isSet)
+                        kvp.Value.Set();
+                    else
+                        kvp.Value.Unset();
+                }
+            }
+            
+            // Restore alternate function outputs state
+            for(var i = 0; i < NumberOfPins; i++)
+            {
+                alternateFunctionOutputs[i].IsConnected = fuzz_snap_alternateFunctionOutputs[i].IsConnected;
+                alternateFunctionOutputs[i].ActiveFunction = fuzz_snap_alternateFunctionOutputs[i].ActiveFunction;
+            }
         }
 
         private void WritePin(int number, bool value)

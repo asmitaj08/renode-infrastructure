@@ -16,7 +16,7 @@ using Antmicro.Renode.Utilities;
 namespace Antmicro.Renode.Peripherals.GPIOPort
 {
     [AllowedTranslations(AllowedTranslation.WordToDoubleWord)]
-    public class STM32F1GPIOPort_Fuzz : BaseGPIOPort, IDoubleWordPeripheral
+    public class STM32F1GPIOPort_Fuzz : BaseGPIOPort, IDoubleWordPeripheral, IFuzzSnapshotRestorable
     {
         public STM32F1GPIOPort_Fuzz(IMachine machine) : base(machine, NumberOfPorts)
         {
@@ -100,6 +100,52 @@ namespace Antmicro.Renode.Peripherals.GPIOPort
             base.Reset();
             registers.Reset();
         }
+
+
+        private PinMode[] fuzz_snap_pins;
+        private Dictionary<int, bool> fuzz_snap_connectionStates;
+        private bool[] fuzz_snap_stateArray;
+
+        public void fuzz_snap_capture()
+        {
+            Console.WriteLine("^^^^^ STM32F1GPIOPort_Fuzz.cs fuzz_snap_capture()");
+            // Pin modes (NOT reset by base.Reset())
+            fuzz_snap_pins = (PinMode[])pins.Clone();
+    
+            // GPIO connection states (reset by base.Reset())
+            fuzz_snap_connectionStates = new Dictionary<int, bool>();
+            foreach(var kvp in Connections)
+            {
+                fuzz_snap_connectionStates[kvp.Key] = kvp.Value.IsSet;
+            }
+    
+            // State array (reset by base.Reset())
+            fuzz_snap_stateArray = (bool[])State.Clone();
+        }
+
+        public void fuzz_snap_restore()
+        {
+            // Console.WriteLine("^^^^^ STM32F1GPIOPort_Fuzz.cs fuzz_snap_restore()");
+            //gisters.Reset();
+            // Restore pin modes
+            Array.Copy(fuzz_snap_pins, pins, pins.Length);
+    
+            // Restore GPIO connection states
+            foreach(var kvp in Connections)
+            {
+                if(fuzz_snap_connectionStates.TryGetValue(kvp.Key, out var isSet))
+                {
+                    if(isSet)
+                        kvp.Value.Set();
+                    else
+                        kvp.Value.Unset();
+                }
+            }
+    
+            // Restore GPIO state array
+            Array.Copy(fuzz_snap_stateArray, State, State.Length);
+        }
+
 
         private void SetBitsFromMask(uint mask, bool state)
         {

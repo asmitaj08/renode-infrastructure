@@ -1098,7 +1098,7 @@ namespace Antmicro.Renode.Peripherals.Bus
 
         public void Reset()
         {
-            Console.WriteLine("^^^^^^ Sysbus.cs Reset()");
+            // Console.WriteLine("^^^^^^ Sysbus.cs Reset()");
             LowestLoadedAddress = null;
             globalLookup = new SymbolLookup();
             localLookups = new Dictionary<ICPU, SymbolLookup>();

@@ -35,6 +35,18 @@ using Monitor = System.Threading.Monitor;
 using Antmicro.Renode.Peripherals.I2C;
 using Antmicro.Renode.Peripherals.UART;
 using Antmicro.Renode.Peripherals.Memory;
+using Antmicro.Renode.Peripherals.IRQControllers;
+using Antmicro.Renode.Peripherals.Timers;
+using Antmicro.Renode.Peripherals.GPIOPort;
+using Antmicro.Renode.Peripherals.I2C;
+using Antmicro.Renode.Peripherals.UART;
+using Antmicro.Renode.Peripherals.MTD;
+using Antmicro.Renode.Peripherals.Miscellaneous;
+using Antmicro.Renode.Peripherals.Python;
+using Antmicro.Renode.Peripherals.Analog;
+using Antmicro.Renode.Core;
+using Antmicro.Renode.Peripherals.CPU;
+
 
 namespace Antmicro.Renode.Core
 {
@@ -696,6 +708,7 @@ namespace Antmicro.Renode.Core
        
 
         private HashSet<string> peripheralsToFuzz = new HashSet<string>();
+        private HashSet<string> peripheralsToSkipSnapshot = new HashSet<string>();
 
         public void Fuzz_ConfigurePeripheralsToFuzz(string[] peripheralNames)
         {
@@ -712,6 +725,20 @@ namespace Antmicro.Renode.Core
 
             }
             Console.WriteLine($"^^^Machine.cs ConfigurePeripheralsToFuzz : ConfigurePeripheralsToFuzz.Count : {peripheralsToFuzz.Count}");
+        }
+
+        public void Fuzz_ConfigurePeripheralsToSkipSnapshot(string[] peripheralNames)
+        {
+            peripheralsToSkipSnapshot.Clear();
+            if(peripheralNames != null)
+            {
+                foreach(var name in peripheralNames)
+                {
+                    // Store the name as-is (no tolower) since we want exact matches
+                    peripheralsToSkipSnapshot.Add(name);
+                }
+            }
+            Console.WriteLine($"^^^Machine.cs ConfigurePeripheralsToSkipSnapshot : peripheralsToSkipSnapshot.Count : {peripheralsToSkipSnapshot.Count}");
         }
 
 
@@ -836,13 +863,136 @@ namespace Antmicro.Renode.Core
         // }
 
 
-        public void FuzzResetAll(byte[] data_in){
+        
+        // public void FuzzResetAll_w_noPause(byte[] data_in = null){
 
+        //         var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+        //         // using (currentEmulation.ObtainPausedState()){
+        //         foreach(var p in peripheralsToReset_all) 
+        //         {
+        //             // Console.WriteLine($"Resetting : {p}");
+        //             p.Reset();
+        //         }
+        //         //this works
+        //         var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
+        //         // Console.WriteLine($"Resetting mem : {mem}");
+        //         var mapped_mem = mem?.Peripheral;
+        //         // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
+        //         mapped_mem.Fuzz_zeroRam();
+        //         // 2. Reset random number generator to a known state
+                
+        //         currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
+    
+        //         var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
+        //         cpu.ClearTranslationCache();
+        //         // // 3. Reset virtual time to zero using MasterTimeSource
+        //         // currentEmulation.MasterTimeSource.ResetVirtualTime(TimeInterval.Empty);
+        //         Resume();
+        //         // Pass data_in to I2C1 peripheral
+        //         if (data_in != null && data_in.Length > 0)
+        //         {
+        //             // UARTBase.ReadFromFuzzer_Internal(data_in);
+        //             // STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //this works too
+
+        //             var i2c = GetPeripheralsOfType<STM32F4_I2C_Fuzz>().FirstOrDefault();
+        //             if(i2c != null)
+        //             {
+        //                 i2c.ReadFromFuzzer_Internal(data_in);
+        //             }
+        //             else{
+        //                 Console.WriteLine("^^^^^^ i2c null");
+        //             }
+        //             // var uart = GetPeripheralsOfType<EFR32_USART>().FirstOrDefault();
+        //             // if(uart != null)
+        //             // {
+        //             //     uart.ReadFromFuzzer_Internal(data_in);
+        //             // } 
+        //             // else{
+        //             //     Console.WriteLine("^^^^^^ uart null");
+        //             // }
+
+
+        //             // foreach(var p in peripheralsToFuzz)  // commented for now, later add condition if name=='i2c1'..STM32F4_I2C_Fuzz
+        //             // {
+        //             //     p.ReadFromFuzzer_Internal(data_in);
+        //             //     // STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //hardcoding for now, later make it more configurable
+        //             //     // STM32_UART_Fuzz.ReadFromFuzzer_Internal(data_in);
+        //             // }
+        //         // }
+        //         }
+        // }
+
+        private bool useDirectAddressWrite_fuzz = false;
+        private ulong fuzzerDataAddress = 0x20010000;
+        private ulong pointerAddress_fuzz = 0x0;
+        private bool writePointerToAddress_fuzz = false;
+
+        // Configuration methods
+        public void ConfigureDirectAddressWrite(ulong dataAddress, ulong pointerAddr = 0, bool writePointer = false)
+        {
+            
+            // Validate data address
+            if (dataAddress == 0)
+            {
+                throw new ArgumentException("ConfigureDirectAddressWrite : Data address cannot be zero.", nameof(dataAddress));
+            }
+    
+            // Validate pointer address when writePointer is true
+            if (writePointer && pointerAddr == 0)
+            {
+                throw new ArgumentException("ConfigureDirectAddressWrite : Pointer address cannot be zero when writePointer is true.", nameof(pointerAddr));
+            }
+            useDirectAddressWrite_fuzz = true;
+            fuzzerDataAddress = dataAddress;
+            pointerAddress_fuzz = pointerAddr;
+            writePointerToAddress_fuzz = writePointer;
+            Console.WriteLine($"^^^^^^ Machine: Configured direct address write - Data: 0x{fuzzerDataAddress:X}, Pointer: 0x{pointerAddress_fuzz:X}, WritePointer: {writePointer}");
+        }
+
+        public void DisableDirectAddressWrite()
+        {
+            useDirectAddressWrite_fuzz = false;
+            writePointerToAddress_fuzz = false;
+            Console.WriteLine($"^^^^^^ Machine: Disabled direct address write");
+        }
+
+        private void PerformDirectAddressWrite(byte[] data_in)
+        {
+            try
+            {
+               // Console.WriteLine($"^^^^^^ Machine: Performing direct address write operations");
+            
+                // Write fuzzer data to configured address
+                SystemBus.WriteBytes(data_in, fuzzerDataAddress);
+               // Console.WriteLine($"^^^^^^ Machine: Wrote {data_in.Length} bytes to 0x{fuzzerDataAddress:X}");
+            
+                // Write pointer to specified address if configured
+                if (writePointerToAddress_fuzz)
+                {
+                    // if (pointerAddress_fuzz == 0) // already chekcing during configure
+                    // {
+                    //     throw new InvalidOperationException("pointerAddress_fuzz cannot be zero when writePointerToAddress is enabled. Please configure a valid pointer address.");
+                    // }
+                    SystemBus.WriteQuadWord(pointerAddress_fuzz, fuzzerDataAddress);
+                   // Console.WriteLine($"^^^^^^ Machine: Wrote pointer 0x{fuzzerDataAddress:X} to 0x{pointerAddress_fuzz:X}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"^^^^^^ Machine: Error during direct address write: {ex.Message}");
+            }
+        }
+
+        public void FuzzResetAll_w_ePause(byte[] data_in = null, bool debug=false, string trace_filename=null){
+
+                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                using (currentEmulation.ObtainPausedState()){
                 foreach(var p in peripheralsToReset_all) 
                 {
                     // Console.WriteLine($"Resetting : {p}");
                     p.Reset();
                 }
+                // Reset();
                 //this works
                 var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
                 // Console.WriteLine($"Resetting mem : {mem}");
@@ -850,190 +1000,745 @@ namespace Antmicro.Renode.Core
                 // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
                 mapped_mem.Fuzz_zeroRam();
                 // 2. Reset random number generator to a known state
+                
+                currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
+    
+                var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
+                // cpu.ClearTranslationCache();
+                // // 3. Reset virtual time to zero using MasterTimeSource
+                // currentEmulation.MasterTimeSource.ResetVirtualTime(TimeInterval.Empty);
+                
+                
+                // Enable tracing if debug is enabled and trace_filename is provided
+                
+                if (debug && !string.IsNullOrEmpty(trace_filename))
+                {
+                    try
+                    {
+                        Console.WriteLine($"^^^^^ Machine.cs: Enabling execution tracing to file: {trace_filename}");
+                        cpu.CreateExecutionTracing("fuzz_trace", trace_filename, TraceFormat.PC, false, false, false);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"^^^^^ Machine.cs: Error enabling tracing: {ex.Message}");
+                    }
+                }
+                // Print PC value before resume if debug is enabled
+                if (debug)
+                {
+                    try
+                    {
+                        var pc = cpu.PC;
+                        Console.WriteLine($"^^^^^ Machine.cs: PC value before resume: {pc:X}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"^^^^^ Machine.cs: Error reading PC value: {ex.Message}");
+                    }
+                }
+                Resume();
+
+                // Check for direct address write configuration
+                if (useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
+                {
+                    PerformDirectAddressWrite(data_in);
+                }
+                // Pass data_in to configured peripherals
+                if (peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
+                {
+                    // Console.WriteLine("^^^^ Machine.cs : FuzzResetAll_w_Pause : Calling Fuzz_InjectDataToConfiguredPeripherals ");
+                    Fuzz_InjectDataToConfiguredPeripherals(data_in);
+                }
+                }
+            }
+
+
+        public void FuzzResetAll_w_ePause_defaultReset(byte[] data_in = null){
+
                 var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                using (currentEmulation.ObtainPausedState()){
+                // foreach(var p in peripheralsToReset_all) 
+                // {
+                //     // Console.WriteLine($"Resetting : {p}");
+                //     p.Reset();
+                // }
+                Reset();
+                //this works
+                var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
+                // Console.WriteLine($"Resetting mem : {mem}");
+                var mapped_mem = mem?.Peripheral;
+                // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
+                mapped_mem.Fuzz_zeroRam();
+                // 2. Reset random number generator to a known state
+                
+                currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
+    
+                // var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
+                // cpu.ClearTranslationCache();
+                // // 3. Reset virtual time to zero using MasterTimeSource
+                // currentEmulation.MasterTimeSource.ResetVirtualTime(TimeInterval.Empty);
+                
+                Resume();
+                // Pass data_in to configured peripherals
+                if (useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
+                {
+                    PerformDirectAddressWrite(data_in);
+                }
+                // Pass data_in to configured peripherals
+                if (peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
+                {
+                    // Console.WriteLine("^^^^ Machine.cs : FuzzResetAll_w_Pause : Calling Fuzz_InjectDataToConfiguredPeripherals ");
+                    Fuzz_InjectDataToConfiguredPeripherals(data_in);
+                }
+                }
+        }
+
+        public void FuzzResetAll_w_ePause_noResume(byte[] data_in = null){
+
+                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                using (currentEmulation.ObtainPausedState()){
+                foreach(var p in peripheralsToReset_all) 
+                {
+                    // Console.WriteLine($"Resetting : {p}");
+                    p.Reset();
+                }
+                // Reset();
+                //this works
+                var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
+                // Console.WriteLine($"Resetting mem : {mem}");
+                var mapped_mem = mem?.Peripheral;
+                // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
+                mapped_mem.Fuzz_zeroRam();
+                // 2. Reset random number generator to a known state
+                
                 currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
     
                 var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
                 cpu.ClearTranslationCache();
                 // // 3. Reset virtual time to zero using MasterTimeSource
                 // currentEmulation.MasterTimeSource.ResetVirtualTime(TimeInterval.Empty);
-
-                // Pass data_in to I2C1 peripheral
-                if (data_in != null && data_in.Length > 0)
-                {
-                    STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //this works too
-                    // foreach(var p in peripheralsToFuzz)  // commented for now, later add condition if name=='i2c1'..STM32F4_I2C_Fuzz
-                    // {
-                    //     p.ReadFromFuzzer_Internal(data_in);
-                    //     // STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //hardcoding for now, later make it more configurable
-                    //     // STM32_UART_Fuzz.ReadFromFuzzer_Internal(data_in);
-                    // }
-                }
-       
-        }
-
-
-
-        public void FuzzReset_memTrack(byte[] data_in){
-
-                // foreach(var p in peripheralsToReset_all) 
-                // {
-                //     // Console.WriteLine($"Resetting : {p}");
-                //     p.Reset();
-                // }
-                //this works
-                // var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
-                // // Console.WriteLine($"Resetting mem : {mem}");
-                // var mapped_mem = mem?.Peripheral;
-                // // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
-                // mapped_mem.Fuzz_zeroRam();
-                // Reset random number generator to a known state
-
-                var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
-                cpu.Fuzz_PartialResetForFunctionRerun();
-                // Console.WriteLine($"FuzzReset_memTrack Fuzz_PartialResetForFunctionRerun done");
-                // // 3. Reset virtual time to zero using MasterTimeSource
-                // currentEmulation.MasterTimeSource.ResetVirtualTime(TimeInterval.Empty);
                 
-                // Console.WriteLine($"FuzzReset_memTrack starting");
+                // Resume();
+                // Pass data_in to configured peripherals using generalized approach
+                // Check for direct address write configuration
+                if (useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
+                {
+                    PerformDirectAddressWrite(data_in);
+                }
+                // Pass data_in to configured peripherals
+                if (peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
+                {
+                    // Console.WriteLine("^^^^ Machine.cs : FuzzResetAll_w_Pause : Calling Fuzz_InjectDataToConfiguredPeripherals ");
+                    Fuzz_InjectDataToConfiguredPeripherals(data_in);
+                }
+                }
+        }
+        public void FuzzResetAll_w_ePause_noInput_noResume(byte[] data_in = null){
+
                 var currentEmulation = EmulationManager.Instance.CurrentEmulation;
-                currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
-                // Console.WriteLine($"FuzzReset_memTrack ResetSeed set");
-    
-
-                // restore changed CPU registers
-                cpu.Fuzz_UpdateChangedRegValues();
-                // Console.WriteLine($"FuzzReset_memTrack Fuzz_UpdateChangedRegValues done");
-                // restore changed Memory values
-                cpu.Fuzz_Restore_All_Mem_Track_Dict();
-                // Console.WriteLine($"FuzzReset_memTrack Fuzz_Restore_All_Mem_Track_Dict done");
-
-                 //this works too
-                // var i2cPeripherals = GetPeripheralsOfType<STM32F4_I2C_Fuzz>();
-                // var i2c1 = i2cPeripherals.FirstOrDefault(p => GetLocalName(p) == "i2c1");
-                // if (i2c1 != null)
-                // {
-                //     i2c1.ReadFromFuzzer_PY(data_in);
-                // }
-
-
-                // Pass data_in to I2C1 peripheral
-                if (data_in != null && data_in.Length > 0)
+                using (currentEmulation.ObtainPausedState()){
+                foreach(var p in peripheralsToReset_all) 
                 {
-                    STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //this works too
-                    // foreach(var p in peripheralsToFuzz)  // commented for now, later add condition if name=='i2c1'..STM32F4_I2C_Fuzz
-                    // {
-                    //     p.ReadFromFuzzer_Internal(data_in);
-                    //     // STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //hardcoding for now, later make it more configurable
-                    //     // STM32_UART_Fuzz.ReadFromFuzzer_Internal(data_in);
-                    // }
+                    // Console.WriteLine($"Resetting : {p}");
+                    p.Reset();
                 }
-                // Console.WriteLine($"FuzzReset_memTrack ReadFromFuzzer_Internal done. data_len : {data_in.Length}");
-                
-       
-        }
-
-
-        public void FuzzReset_snapshot(byte[] data_in){
-
-                // foreach(var p in peripheralsToReset_all) 
-                // {
-                //     // Console.WriteLine($"Resetting : {p}");
-                //     p.Reset();
-                // }
+                // Reset();
                 //this works
-                // var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
-                // // Console.WriteLine($"Resetting mem : {mem}");
-                // var mapped_mem = mem?.Peripheral;
-                // // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
-                // mapped_mem.Fuzz_zeroRam();
-                // Reset random number generator to a known state
-
+                var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
+                // Console.WriteLine($"Resetting mem : {mem}");
+                var mapped_mem = mem?.Peripheral;
+                // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
+                mapped_mem.Fuzz_zeroRam();
+                // 2. Reset random number generator to a known state
+                
+                currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
     
                 var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
-                cpu.Fuzz_PartialResetForFunctionRerun();
-                // Console.WriteLine($"FuzzReset_memTrack Fuzz_PartialResetForFunctionRerun done");
-                // // 3. Reset virtual time to zero using MasterTimeSource
-                // currentEmulation.MasterTimeSource.ResetVirtualTime(TimeInterval.Empty);
-                // Console.WriteLine($"FuzzReset_memTrack starting");
-                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
-                currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
-                // Console.WriteLine($"FuzzReset_memTrack ResetSeed set");
-                // restore changed CPU registers
-                cpu.Fuzz_UpdateChangedRegValues();
-                // Console.WriteLine($"FuzzReset_memTrack Fuzz_UpdateChangedRegValues done");
-                // restore changed Memory values
-                cpu.Fuzz_Restore_All_Mem_Track_Dict();
-                // Console.WriteLine($"FuzzReset_memTrack Fuzz_Restore_All_Mem_Track_Dict done");
-
-                 //this works too
-                // var i2cPeripherals = GetPeripheralsOfType<STM32F4_I2C_Fuzz>();
-                // var i2c1 = i2cPeripherals.FirstOrDefault(p => GetLocalName(p) == "i2c1");
-                // if (i2c1 != null)
-                // {
-                //     i2c1.ReadFromFuzzer_PY(data_in);
-                // }
-
-
-                // Pass data_in to I2C1 peripheral
-                if (data_in != null && data_in.Length > 0)
-                {
-                    STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //this works too
-                    // foreach(var p in peripheralsToFuzz)  // commented for now, later add condition if name=='i2c1'..STM32F4_I2C_Fuzz
-                    // {
-                    //     p.ReadFromFuzzer_Internal(data_in);
-                    //     // STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //hardcoding for now, later make it more configurable
-                    //     // STM32_UART_Fuzz.ReadFromFuzzer_Internal(data_in);
-                    // }
-                }
-                // Console.WriteLine($"FuzzReset_memTrack ReadFromFuzzer_Internal done. data_len : {data_in.Length}");
-        }
-
-        public void FuzzReset_memTrack_w_cpuState(byte[] data_in){
-                // foreach(var p in peripheralsToReset_all) 
-                // {
-                //     // Console.WriteLine($"Resetting : {p}");
-                //     p.Reset();
-                // }
-                var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
-                // cpu.Fuzz_PartialResetForFunctionRerun();
-
-                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
-                currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
-                cpu.Fuzz_LoadState(); // load cpu state saved using Fuzz_PrepareState()
-                // cpu.Fuzz_UpdateChangedRegValues();
-                cpu.Fuzz_Restore_All_Mem_Track_Dict();
-                if (data_in != null && data_in.Length > 0)
-                {
-                    STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //this works too
+                cpu.ClearTranslationCache();
                 }
         }
 
+ 
+        // public void FuzzResetAll_w_mPause(byte[] data_in = null){
 
-        public void FuzzReset_snapshot_w_cpuState(byte[] data_in){
+        //         var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+        //         using (ObtainPausedState()){
+        //         foreach(var p in peripheralsToReset_all) 
+        //         {
+        //             // Console.WriteLine($"Resetting : {p}");
+        //             p.Reset();
+        //         }
+        //         //this works
+        //         var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
+        //         // Console.WriteLine($"Resetting mem : {mem}");
+        //         var mapped_mem = mem?.Peripheral;
+        //         // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
+        //         mapped_mem.Fuzz_zeroRam();
+        //         // 2. Reset random number generator to a known state
+                
+        //         currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
+    
+        //         var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
+        //         cpu.ClearTranslationCache();
+        //         // // 3. Reset virtual time to zero using MasterTimeSource
+        //         // currentEmulation.MasterTimeSource.ResetVirtualTime(TimeInterval.Empty);
+                
+        //         Resume();
+        //         // Pass data_in to I2C1 peripheral
+        //         if (data_in != null && data_in.Length > 0)
+        //         {
+        //             // UARTBase.ReadFromFuzzer_Internal(data_in);
+        //             // STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //this works too
 
-            //  foreach(var p in peripheralsToReset_all) 
-            //     {
-            //         // Console.WriteLine($"Resetting : {p}");
-            //         p.Reset();
-            //     }
-                var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
-                // cpu.Fuzz_PartialResetForFunctionRerun();
+        //             var i2c = GetPeripheralsOfType<STM32F4_I2C_Fuzz>().FirstOrDefault();
+        //             if(i2c != null)
+        //             {
+        //                 i2c.ReadFromFuzzer_Internal(data_in);
+        //             }
+        //             else{
+        //                 Console.WriteLine("^^^^^^ i2c null");
+        //             }
+        //             // var uart = GetPeripheralsOfType<EFR32_USART>().FirstOrDefault();
+        //             // if(uart != null)
+        //             // {
+        //             //     uart.ReadFromFuzzer_Internal(data_in);
+        //             // } 
+        //             // else{
+        //             //     Console.WriteLine("^^^^^^ uart null");
+        //             // }
+
+        //             // foreach(var p in peripheralsToFuzz)  // commented for now, later add condition if name=='i2c1'..STM32F4_I2C_Fuzz
+        //             // {
+        //             //     p.ReadFromFuzzer_Internal(data_in);
+        //             //     // STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //hardcoding for now, later make it more configurable
+        //             //     // STM32_UART_Fuzz.ReadFromFuzzer_Internal(data_in);
+        //             // }
+        //         }
+        //         }
+        // }
+
+
+        // public void FuzzReset_noTc_w_ePause(byte[] data_in = null){
+
+        //         var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+        //         using (currentEmulation.ObtainPausedState()){
+        //         foreach(var p in peripheralsToReset_all) 
+        //         {
+        //             // Console.WriteLine($"Resetting : {p}");
+        //             p.Reset();
+        //         }
+        //         //this works
+        //         var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
+        //         // Console.WriteLine($"Resetting mem : {mem}");
+        //         var mapped_mem = mem?.Peripheral;
+        //         // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
+        //         mapped_mem.Fuzz_zeroRam();
+        //         // 2. Reset random number generator to a known state
+                
+        //         // currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
+    
+        //         // var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
+        //         // cpu.ClearTranslationCache();
+        //         // // 3. Reset virtual time to zero using MasterTimeSource
+        //         // currentEmulation.MasterTimeSource.ResetVirtualTime(TimeInterval.Empty);
+        //         Resume();
+        //         // Pass data_in to I2C1 peripheral
+        //         if (data_in != null && data_in.Length > 0)
+        //         {
+        //             // STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //this works too
+        //             // UARTBase.ReadFromFuzzer_Internal(data_in);
+
+                    
+        //             var i2c = GetPeripheralsOfType<STM32F4_I2C_Fuzz>().FirstOrDefault();
+        //             if(i2c != null)
+        //             {
+        //                 i2c.ReadFromFuzzer_Internal(data_in);
+        //             }
+        //             else{
+        //                 Console.WriteLine("^^^^^^ i2c null");
+        //             }
+        //             // var uart = GetPeripheralsOfType<EFR32_USART>().FirstOrDefault();
+        //             // if(uart != null)
+        //             // {
+        //             //     uart.ReadFromFuzzer_Internal(data_in);
+        //             // } 
+        //             // else{
+        //             //     Console.WriteLine("^^^^^^ uart null");
+        //             // }
+
+
+        //             // foreach(var p in peripheralsToFuzz)  // commented for now, later add condition if name=='i2c1'..STM32F4_I2C_Fuzz
+        //             // {
+        //             //     p.ReadFromFuzzer_Internal(data_in);
+        //             //     // STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //hardcoding for now, later make it more configurable
+        //             //     // STM32_UART_Fuzz.ReadFromFuzzer_Internal(data_in);
+        //             // }
+        //         }
+        //         }
+        // }
+
+
+        // public void FuzzReset_memTrack(byte[] data_in){
+
+        //         // foreach(var p in peripheralsToReset_all) 
+        //         // {
+        //         //     // Console.WriteLine($"Resetting : {p}");
+        //         //     p.Reset();
+        //         // }
+        //         //this works
+        //         // var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
+        //         // // Console.WriteLine($"Resetting mem : {mem}");
+        //         // var mapped_mem = mem?.Peripheral;
+        //         // // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
+        //         // mapped_mem.Fuzz_zeroRam();
+        //         // Reset random number generator to a known state
+
+        //         var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
+        //         cpu.Fuzz_PartialResetForFunctionRerun();
+        //         // Console.WriteLine($"FuzzReset_memTrack Fuzz_PartialResetForFunctionRerun done");
+        //         // // 3. Reset virtual time to zero using MasterTimeSource
+        //         // currentEmulation.MasterTimeSource.ResetVirtualTime(TimeInterval.Empty);
+                
+        //         // Console.WriteLine($"FuzzReset_memTrack starting");
+        //         var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+        //         currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
+        //         // Console.WriteLine($"FuzzReset_memTrack ResetSeed set");
+    
+
+        //         // restore changed CPU registers
+        //         cpu.Fuzz_UpdateChangedRegValues();
+        //         // Console.WriteLine($"FuzzReset_memTrack Fuzz_UpdateChangedRegValues done");
+        //         // restore changed Memory values
+        //         cpu.Fuzz_Restore_All_Mem_Track_Dict();
+        //         // Console.WriteLine($"FuzzReset_memTrack Fuzz_Restore_All_Mem_Track_Dict done");
+
+        //          //this works too
+        //         // var i2cPeripherals = GetPeripheralsOfType<STM32F4_I2C_Fuzz>();
+        //         // var i2c1 = i2cPeripherals.FirstOrDefault(p => GetLocalName(p) == "i2c1");
+        //         // if (i2c1 != null)
+        //         // {
+        //         //     i2c1.ReadFromFuzzer_PY(data_in);
+        //         // }
+
+
+        //         // Pass data_in to I2C1 peripheral
+        //         if (data_in != null && data_in.Length > 0)
+        //         {
+        //             STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //this works too
+        //             // foreach(var p in peripheralsToFuzz)  // commented for now, later add condition if name=='i2c1'..STM32F4_I2C_Fuzz
+        //             // {
+        //             //     p.ReadFromFuzzer_Internal(data_in);
+        //             //     // STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //hardcoding for now, later make it more configurable
+        //             //     // STM32_UART_Fuzz.ReadFromFuzzer_Internal(data_in);
+        //             // }
+        //         }
+        //         // Console.WriteLine($"FuzzReset_memTrack ReadFromFuzzer_Internal done. data_len : {data_in.Length}");
+                
+       
+        // }
+
+
+        // public void FuzzReset_snapshot(byte[] data_in){
+
+        //         // foreach(var p in peripheralsToReset_all) 
+        //         // {
+        //         //     // Console.WriteLine($"Resetting : {p}");
+        //         //     p.Reset();
+        //         // }
+        //         //this works
+        //         // var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
+        //         // // Console.WriteLine($"Resetting mem : {mem}");
+        //         // var mapped_mem = mem?.Peripheral;
+        //         // // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
+        //         // mapped_mem.Fuzz_zeroRam();
+        //         // Reset random number generator to a known state
+
+    
+        //         var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
+        //         cpu.Fuzz_PartialResetForFunctionRerun();
+        //         // Console.WriteLine($"FuzzReset_memTrack Fuzz_PartialResetForFunctionRerun done");
+        //         // // 3. Reset virtual time to zero using MasterTimeSource
+        //         // currentEmulation.MasterTimeSource.ResetVirtualTime(TimeInterval.Empty);
+        //         // Console.WriteLine($"FuzzReset_memTrack starting");
+        //         var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+        //         currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
+        //         // Console.WriteLine($"FuzzReset_memTrack ResetSeed set");
+        //         // restore changed CPU registers
+        //         cpu.Fuzz_UpdateChangedRegValues();
+        //         // Console.WriteLine($"FuzzReset_memTrack Fuzz_UpdateChangedRegValues done");
+        //         // restore changed Memory values
+        //         cpu.Fuzz_Restore_All_Mem_Track_Dict();
+        //         // Console.WriteLine($"FuzzReset_memTrack Fuzz_Restore_All_Mem_Track_Dict done");
+
+        //          //this works too
+        //         // var i2cPeripherals = GetPeripheralsOfType<STM32F4_I2C_Fuzz>();
+        //         // var i2c1 = i2cPeripherals.FirstOrDefault(p => GetLocalName(p) == "i2c1");
+        //         // if (i2c1 != null)
+        //         // {
+        //         //     i2c1.ReadFromFuzzer_PY(data_in);
+        //         // }
+
+
+        //         // Pass data_in to I2C1 peripheral
+        //         if (data_in != null && data_in.Length > 0)
+        //         {
+        //             STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //this works too
+        //             // foreach(var p in peripheralsToFuzz)  // commented for now, later add condition if name=='i2c1'..STM32F4_I2C_Fuzz
+        //             // {
+        //             //     p.ReadFromFuzzer_Internal(data_in);
+        //             //     // STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //hardcoding for now, later make it more configurable
+        //             //     // STM32_UART_Fuzz.ReadFromFuzzer_Internal(data_in);
+        //             // }
+        //         }
+        //         // Console.WriteLine($"FuzzReset_memTrack ReadFromFuzzer_Internal done. data_len : {data_in.Length}");
+        // }
+
+        // public void FuzzReset_memTrack_w_cpuState(byte[] data_in){
+        //         // foreach(var p in peripheralsToReset_all) 
+        //         // {
+        //         //     // Console.WriteLine($"Resetting : {p}");
+        //         //     p.Reset();
+        //         // }
+        //         var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
+        //         // cpu.Fuzz_PartialResetForFunctionRerun();
+                
+
+        //         var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+        //         currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
+                
+        //         cpu.Fuzz_Restore_All_Mem_Track_Dict();
+        //         cpu.Fuzz_LoadState(); // load cpu state saved using Fuzz_PrepareState()
+        //         // cpu.Fuzz_UpdateChangedRegValues();
+
+                
+
+        //     //     // Get the NVIC instance from the machine
+        //     // var nvic = GetPeripheralsOfType<NVIC>().FirstOrDefault();
+        //     // if(nvic != null)
+        //     // {
+        //     //     nvic.fuzz_snap_restore();
+        //     // }  
+        //     // var exti = GetPeripheralsOfType<STM32F4_EXTI>().FirstOrDefault();
+        //     // if(exti != null)
+        //     // {
+        //     //     exti.fuzz_snap_restore();
+        //     // } 
+
+        //     // var uart = GetPeripheralsOfType<STM32_UART_Fuzz>().FirstOrDefault();
+        //     // if(uart != null)
+        //     // {
+        //     //     uart.fuzz_snap_restore();
+        //     // } 
+
+        //     // var flsh_cntrl = GetPeripheralsOfType<STM32F4_FlashController>().FirstOrDefault();
+        //     // if(flsh_cntrl != null)
+        //     // {
+        //     //     flsh_cntrl.fuzz_snap_restore();
+        //     // }               
+                          
+            
+            
+        //     if (data_in != null && data_in.Length > 0)
+        //         {
+        //             STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //this works too
+        //         }
+        // }
+
+
+        public void FuzzReset_snapshot_w_cpuState_all(byte[] data_in=null, bool debug=false, string trace_filename=null){
+
                 var currentEmulation = EmulationManager.Instance.CurrentEmulation;
-                currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
-                cpu.Fuzz_LoadState(); // load cpu state saved using Fuzz_PrepareState()
-                // restore changed CPU registers
-                // cpu.Fuzz_UpdateChangedRegValues();
-                // restore changed Memory values
-                // cpu.ClearTranslationCache();
-                cpu.Fuzz_Restore_All_Mem_Track_Dict();
-                // Pass data_in to I2C1 peripheral
-                if (data_in != null && data_in.Length > 0)
+                using (currentEmulation.ObtainPausedState()){
+                
+                
+                
+                foreach(var p in peripheralsToReset_all) 
                 {
-                    STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //this works too
+                    // Console.WriteLine($"Resetting : {p}");
+                    p.Reset();
+                }
+                // cpu.Fuzz_PartialResetForFunctionRerun();
+                // var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
+                
+                var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
+                // Console.WriteLine($"Resetting mem : {mem}");
+                var mapped_mem = mem?.Peripheral;
+                // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
+                mapped_mem.Fuzz_zeroRam();
+                var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
+                cpu.ClearTranslationCache();
+                cpu.Fuzz_Restore_All_Mem_Track_Dict();
+
+                cpu.Fuzz_LoadState(); // load cpu state saved using Fuzz_PrepareState()
+                Fuzz_RestoreAllPeripheralSnapshots(); 
+                
+                // Enable tracing if debug is enabled and trace_filename is provided
+                
+                if (debug && !string.IsNullOrEmpty(trace_filename))
+                {
+                    try
+                    {
+                        Console.WriteLine($"^^^^^ Machine.cs: Enabling execution tracing to file: {trace_filename}");
+                        cpu.CreateExecutionTracing("fuzz_trace", trace_filename, TraceFormat.PC, false, false, false);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"^^^^^ Machine.cs: Error enabling tracing: {ex.Message}");
+                    }
+                }
+                // Print PC value before resume if debug is enabled
+                if (debug)
+                {
+                    try
+                    {
+                        var pc = cpu.PC;
+                        Console.WriteLine($"^^^^^ Machine.cs: PC value before resume: {pc:X}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"^^^^^ Machine.cs: Error reading PC value: {ex.Message}");
+                    }
+                }
+                
+                Resume();            
+                // Pass data_in to I2C1 peripheral
+                // if (data_in != null && data_in.Length > 0)
+                // {
+                //     // STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //this works too but when static
+                //     var i2c = GetPeripheralsOfType<STM32F4_I2C_Fuzz>().FirstOrDefault();
+                //     if(i2c != null)
+                //     {
+                //         i2c.ReadFromFuzzer_Internal(data_in);
+                //     }
+                //     else{
+                //         Console.WriteLine("^^^^^^ i2c null");
+                //     }
+                // }
+
+                // Check for direct address write configuration
+                if (useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
+                {
+                    PerformDirectAddressWrite(data_in);
+                }
+                // Pass data_in to configured peripherals
+                if (peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
+                {
+                    // Console.WriteLine("^^^^ Machine.cs : FuzzResetAll_w_Pause : Calling Fuzz_InjectDataToConfiguredPeripherals ");
+                    Fuzz_InjectDataToConfiguredPeripherals(data_in);
+                }
+
                 }
       
         }
+
+
+        public void FuzzReset_snapshot_w_cpuState_all_w_defaultReset(byte[] data_in=null, bool debug=false, string trace_filename=null){
+
+                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                using (currentEmulation.ObtainPausedState()){
+                Reset();
+                var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
+                // cpu.Fuzz_PartialResetForFunctionRerun();
+                // var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
+                
+                var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
+                // Console.WriteLine($"Resetting mem : {mem}");
+                var mapped_mem = mem?.Peripheral;
+                // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
+                mapped_mem.Fuzz_zeroRam();
+                cpu.Fuzz_Restore_All_Mem_Track_Dict();
+                cpu.Fuzz_LoadState(); 
+                Fuzz_RestoreAllPeripheralSnapshots(); 
+                
+                // Enable tracing if debug is enabled and trace_filename is provided
+                
+                if (debug && !string.IsNullOrEmpty(trace_filename))
+                {
+                    try
+                    {
+                        Console.WriteLine($"^^^^^ Machine.cs: Enabling execution tracing to file: {trace_filename}");
+                        cpu.CreateExecutionTracing("fuzz_trace", trace_filename, TraceFormat.PC, false, false, false);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"^^^^^ Machine.cs: Error enabling tracing: {ex.Message}");
+                    }
+                }
+                // Print PC value before resume if debug is enabled
+                if (debug)
+                {
+                    try
+                    {
+                        var pc = cpu.PC;
+                        Console.WriteLine($"^^^^^ Machine.cs: PC value before resume: {pc:X}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"^^^^^ Machine.cs: Error reading PC value: {ex.Message}");
+                    }
+                }
+                Resume();            
+                // Pass data_in to I2C1 peripheral
+                // if (data_in != null && data_in.Length > 0)
+                // {
+                //     // STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //this works too but when static
+                //     var i2c = GetPeripheralsOfType<STM32F4_I2C_Fuzz>().FirstOrDefault();
+                //     if(i2c != null)
+                //     {
+                //         i2c.ReadFromFuzzer_Internal(data_in);
+                //     }
+                //     else{
+                //         Console.WriteLine("^^^^^^ i2c null");
+                //     }
+                // }
+
+                // Check for direct address write configuration
+                if (useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
+                {
+                    PerformDirectAddressWrite(data_in);
+                }
+                // Pass data_in to configured peripherals
+                if (peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
+                {
+                    // Console.WriteLine("^^^^ Machine.cs : FuzzResetAll_w_Pause : Calling Fuzz_InjectDataToConfiguredPeripherals ");
+                    Fuzz_InjectDataToConfiguredPeripherals(data_in);
+                }
+                
+                }
+        }
+
+        public void Fuzz_CaptureAllPeripheralSnapshots()
+        {
+            Console.WriteLine("^^^^^ Machine.cs CaptureAllPeripheralSnapshots()");
+            lock(pausingSync)
+            {
+                using(ObtainPausedState(true))
+                {
+                    foreach(var peripheral in registeredPeripherals.Distinct().ToList())
+                    {
+                        Console.WriteLine($"^^^^^^^CaptureAllPeripheralSnapshots : {peripheral}");
+                        if(peripheral == this)
+                            continue;
+
+                        // Check if this peripheral should be skipped by trying to find it by name
+                        bool shouldSkip = false;
+                        foreach(var skipName in peripheralsToSkipSnapshot)
+                        {
+                            string fullName = $"sysbus.{skipName}";
+                            if (TryGetByName(fullName, out IPeripheral skipPeripheral) && skipPeripheral == peripheral)
+                            {
+                                shouldSkip = true;
+                                break;
+                            }
+                        }
+                        
+                        if(shouldSkip)
+                        {
+                            Console.WriteLine($"^^^^^^Machine.cs Skipping fuzz_snap_capture on {peripheral.GetType().Name} (configured to skip)");
+                            continue;
+                        }
+
+                        if(peripheral is IFuzzSnapshotRestorable restorable)
+                        {
+                            try
+                            {
+                                Console.WriteLine($"^^^^^^Machine.cs Calling fuzz_snap_capture on {peripheral.GetType().Name}");
+                                restorable.fuzz_snap_capture();
+                            }
+                            catch(Exception ex)
+                            {
+                                Console.WriteLine($"^^^^^^Machine.cs Error in fuzz_snap_capture on {peripheral.GetType().Name}: {ex.Message}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        public void Fuzz_RestoreAllPeripheralSnapshots()
+        {
+            // Console.WriteLine("^^^^^ Machine.cs RestoreAllPeripheralSnapshots()");
+    
+            foreach(var peripheral in registeredPeripherals.Distinct().ToList())
+            {
+                if(peripheral == this)
+                    continue;
+
+                // Check if this peripheral should be skipped by trying to find it by name
+                bool shouldSkip = false;
+                foreach(var skipName in peripheralsToSkipSnapshot)
+                {
+                    string fullName = $"sysbus.{skipName}";
+                    if (TryGetByName(fullName, out IPeripheral skipPeripheral) && skipPeripheral == peripheral)
+                    {
+                        shouldSkip = true;
+                        break;
+                    }
+                }
+                
+                if(shouldSkip)
+                {
+                    Console.WriteLine($"^^^^^^Machine.cs Skipping fuzz_snap_restore on {peripheral.GetType().Name} (configured to skip)");
+                    continue;
+                }
+
+                if(peripheral is IFuzzSnapshotRestorable restorable)
+                {
+                    try
+                    {
+                        // Console.WriteLine($"^^^^^^Machine.cs Calling fuzz_snap_restore on {peripheral.GetType().Name}");
+                        restorable.fuzz_snap_restore();
+                    }
+                    catch(Exception ex)
+                    {
+                        Console.WriteLine($"^^^^^^Machine.cs Error in fuzz_snap_restore on {peripheral.GetType().Name}: {ex.Message}");
+                    }
+                }
+            }
+        }
+
+
+        // public void FuzzReset_snapshot_w_cpuState(byte[] data_in){ //won't work
+
+        //         var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+        //         using (currentEmulation.ObtainPausedState()){
+        //         foreach(var p in peripheralsToReset_all) 
+        //         {
+        //             // Console.WriteLine($"Resetting : {p}");
+        //             p.Reset();
+        //         }
+        //         var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
+        //         // cpu.Fuzz_PartialResetForFunctionRerun();
+                
+        //         currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
+                
+        //         var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
+        //         // Console.WriteLine($"Resetting mem : {mem}");
+        //         var mapped_mem = mem?.Peripheral;
+        //         // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
+        //         mapped_mem.Fuzz_zeroRam();
+        //         cpu.Fuzz_Restore_All_Mem_Track_Dict();
+        //         cpu.Fuzz_LoadState();  
+        //         //Resume();           
+        //         // Pass data_in to I2C1 peripheral
+        //         if (data_in != null && data_in.Length > 0)
+        //         {
+        //             // STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //this works too but when static
+        //             var i2c = GetPeripheralsOfType<STM32F4_I2C_Fuzz>().FirstOrDefault();
+        //             if(i2c != null)
+        //             {
+        //                 i2c.ReadFromFuzzer_Internal(data_in);
+        //             }
+        //             else{
+        //                 Console.WriteLine("^^^^^^ i2c null");
+        //             }
+        //         }
+        //         }
+      
+        // }
+
 
 
 
@@ -3049,6 +3754,61 @@ public static List<MemoryRegion> DumpAllSTM32F4Regions() //stm32f103 - currently
                 public IMachine Machine { get; private set; }
 
                 public IEnumerable<IPeripheral> Peripherals { get; private set; }
+            }
+        }
+
+        // Add this new function after Fuzz_ConfigurePeripheralsToFuzz
+        public void Fuzz_InjectDataToConfiguredPeripherals(byte[] data_in)
+        {
+            if (data_in == null || data_in.Length == 0)
+            {
+                Console.WriteLine("^^^^^^ No data to inject");
+                return;
+            }
+
+            if (peripheralsToFuzz.Count == 0)
+            {
+                throw new InvalidOperationException("No peripherals configured for fuzzing. Call Fuzz_ConfigurePeripheralsToFuzz() first with the desired peripheral names.");
+            }
+
+            // Console.WriteLine($"^^^^^^ Injecting data to {peripheralsToFuzz.Count} configured peripherals");
+            
+            foreach (var peripheralName in peripheralsToFuzz)
+            {
+                // Console.WriteLine($"^^^^^^ Attempting to inject data to peripheral: {peripheralName}");
+                
+                // Try to get the peripheral by name with sysbus prefix
+                string fullName = $"sysbus.{peripheralName}";
+                if (TryGetByName(fullName, out IPeripheral peripheral))
+                {
+                    Fuzz_InjectDataToPeripheral(peripheral, data_in, peripheralName);
+                }
+                else
+                {
+                    Console.WriteLine($"^^^^^^ Could not find peripheral with name: {peripheralName} (tried: {fullName})");
+                }
+            }
+        }
+
+        private void Fuzz_InjectDataToPeripheral(IPeripheral peripheral, byte[] data_in, string peripheralName)
+        {
+            try
+            {
+                // Use reflection to call ReadFromFuzzer_Internal if it exists
+                var method = peripheral.GetType().GetMethod("ReadFromFuzzer_Internal");
+                if (method != null)
+                {
+                    method.Invoke(peripheral, new object[] { data_in });
+                    // Console.WriteLine($"^^^^^^ Successfully injected data to {peripheralName} ({peripheral.GetType().Name})");
+                }
+                else
+                {
+                    Console.WriteLine($"^^^^^^ Peripheral {peripheralName} ({peripheral.GetType().Name}) does not have ReadFromFuzzer_Internal method");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"^^^^^^ Error injecting data to {peripheralName}: {ex.Message}");
             }
         }
     }

@@ -14,10 +14,11 @@ using Antmicro.Renode.Core.Structure.Registers;
 using Antmicro.Renode.Exceptions;
 using Antmicro.Renode.Logging;
 using Antmicro.Renode.Utilities;
+using Antmicro.Renode.Core;
 
 namespace Antmicro.Renode.Peripherals.CRC
 {
-    public class STM32_CRC : IBytePeripheral, IWordPeripheral, IDoubleWordPeripheral, IKnownSize
+    public class STM32_CRC : IBytePeripheral, IWordPeripheral, IDoubleWordPeripheral, IKnownSize, IFuzzSnapshotRestorable
     {
         public STM32_CRC(STM32Series series, bool configurablePoly=false)
         {
@@ -132,6 +133,60 @@ namespace Antmicro.Renode.Peripherals.CRC
             ReloadCRCConfig();
         }
 
+        public void fuzz_snap_capture()
+        {
+            Console.WriteLine("^^^^^ STM32_CRC.cs fuzz_snap_capture()");
+            
+            // Capture register field states
+            fuzz_snap_reverseOutputData = reverseOutputData?.Value ?? false;
+            fuzz_snap_reverseInputData = reverseInputData?.Value ?? BitReversal.Disabled;
+            fuzz_snap_polySize = polySize?.Value ?? PolySize.CRC32;
+            fuzz_snap_initialValue = initialValue?.Value ?? DefaultInitialValue;
+            fuzz_snap_polynomial = polynomial?.Value ?? DefaultPolymonial;
+            fuzz_snap_crcConfigDirty = crcConfigDirty;
+            
+            // Capture current CRC value
+            fuzz_snap_crcValue = CRC.Value;
+        }
+
+        public void fuzz_snap_restore()
+        {
+            // Console.WriteLine("^^^^^ STM32_CRC.cs fuzz_snap_restore()");
+            
+            // Restore register field states
+            if (reverseOutputData != null)
+            {
+                reverseOutputData.Value = fuzz_snap_reverseOutputData;
+            }
+            if (reverseInputData != null)
+            {
+                reverseInputData.Value = fuzz_snap_reverseInputData;
+            }
+            if (polySize != null)
+            {
+                polySize.Value = fuzz_snap_polySize;
+            }
+            if (initialValue != null)
+            {
+                initialValue.Value = fuzz_snap_initialValue;
+            }
+            if (polynomial != null)
+            {
+                polynomial.Value = fuzz_snap_polynomial;
+            }
+            crcConfigDirty = fuzz_snap_crcConfigDirty;
+            
+            // Restore CRC engine state
+            if (crc != null)
+            {
+                // Reset and reload configuration to ensure consistency
+                ReloadCRCConfig();
+                // Set the CRC value to the captured value
+                crc.Reset();
+                // Note: We can't directly set the CRC value, but we can ensure the configuration is correct
+            }
+        }
+
         public long Size => 0x400;
 
         public enum IndependentDataWidth
@@ -235,6 +290,15 @@ namespace Antmicro.Renode.Peripherals.CRC
 
         private bool crcConfigDirty;
         private CRCEngine crc;
+
+        // Fuzz snapshot variables
+        private bool fuzz_snap_reverseOutputData;
+        private BitReversal fuzz_snap_reverseInputData;
+        private PolySize fuzz_snap_polySize;
+        private ulong fuzz_snap_initialValue;
+        private ulong fuzz_snap_polynomial;
+        private bool fuzz_snap_crcConfigDirty;
+        private uint fuzz_snap_crcValue;
 
         private readonly Dictionary<STM32Series, STM32Config> setupConfig = new Dictionary<STM32Series, STM32Config> ()
         {

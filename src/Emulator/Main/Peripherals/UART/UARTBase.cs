@@ -45,6 +45,18 @@ namespace Antmicro.Renode.Peripherals.UART
 
         // }
 
+        public void ReadFromFuzzer_Internal(byte[] data_in=null){ 
+                if (data_in != null && data_in.Length > 0){ //already being checked inside machine.cs
+                // dataToReceive.Clear();
+                queue = new Queue<byte>(data_in);
+                WriteChar(0xaa);
+                // }
+                // general_fuzz_data.Clear();
+                // general_fuzz_data.AddRange(data_in);
+                // Console.WriteLine($"^^^^ReadFromFuzzer_Internal() in UARTBAse.cs Len : {queue.Count}");
+                }
+        }
+
         public virtual void WriteChar(byte value) //orig
         {
             lock(innerLock)
@@ -170,8 +182,8 @@ namespace Antmicro.Renode.Peripherals.UART
         }
 
         protected readonly object innerLock;
-        private readonly Queue<byte> queue; //orig
-        // private  Queue<byte> queue;
+        // private readonly Queue<byte> queue; //orig
+        private Queue<byte> queue;
 
         public abstract Bits StopBits { get; }
 

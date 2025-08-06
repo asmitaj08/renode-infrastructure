@@ -39,7 +39,7 @@ namespace Antmicro.Renode.Peripherals.CPU
     /// <see cref="BaseCPU"/> implements <see cref="ICluster{T}"/> interface
     /// to seamlessly handle either cluster or CPU as a parameter to different methods.
     /// </summary>
-    public abstract class BaseCPU : CPUCore, ICluster<BaseCPU>, ICPU, IDisposable, ITimeSink, IInitableCPU
+    public abstract class BaseCPU : CPUCore, ICluster<BaseCPU>, ICPU, IDisposable, ITimeSink, IInitableCPU, IFuzzSnapshotRestorable
     {
         protected BaseCPU(uint id, string cpuType, IMachine machine, Endianess endianness, CpuBitness bitness = CpuBitness.Bits32)
             : base(id)
@@ -1031,5 +1031,18 @@ restart:
         private volatile bool pauseLockTimeHandleMarker;
 
         private readonly object cpuThreadBodyLock = new object();
+
+        // Fuzz snapshot variables for BaseCPU
+        protected CPUState fuzz_snap_state;
+        protected ExecutionMode fuzz_snap_executionMode;
+        protected bool fuzz_snap_isHalted;
+        protected bool fuzz_snap_isPaused;
+        protected ulong fuzz_snap_executedInstructions;
+        protected ulong fuzz_snap_skippedInstructions;
+        // Note: ElapsedVirtualTime doesn't exist, so we can't capture elapsed time
+
+        // Abstract methods for fuzz snapshot/restore
+        public abstract void fuzz_snap_capture();
+        public abstract void fuzz_snap_restore();
     }
 }

@@ -16,7 +16,7 @@ using Antmicro.Renode.Logging;
 
 namespace Antmicro.Renode.Peripherals.Miscellaneous
 {
-    public class STM32F4_RNG : IDoubleWordPeripheral, IKnownSize
+    public class STM32F4_RNG : IDoubleWordPeripheral, IKnownSize, IFuzzSnapshotRestorable
     {
         public STM32F4_RNG(IMachine machine)
         {
@@ -61,6 +61,43 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
             registers.Reset();
         }
 
+        public void fuzz_snap_capture()
+        {
+            Console.WriteLine("^^^^^ STM32F4_RNG.cs fuzz_snap_capture()");
+            
+            // Capture register field states
+            fuzz_snap_enable = enable?.Value ?? false;
+            fuzz_snap_interruptEnable = interruptEnable?.Value ?? false;
+            
+            // Capture GPIO state
+            fuzz_snap_irqActive = IRQ.IsSet;
+        }
+
+        public void fuzz_snap_restore()
+        {
+            // Console.WriteLine("^^^^^ STM32F4_RNG.cs fuzz_snap_restore()");
+            
+            // Restore register field states
+            if (enable != null)
+            {
+                enable.Value = fuzz_snap_enable;
+            }
+            if (interruptEnable != null)
+            {
+                interruptEnable.Value = fuzz_snap_interruptEnable;
+            }
+            
+            // Restore GPIO state
+            if (fuzz_snap_irqActive)
+            {
+                IRQ.Set();
+            }
+            else
+            {
+                IRQ.Unset();
+            }
+        }
+
         public uint ReadDoubleWord(long offset)
         {
             return registers.Read(offset);
@@ -83,6 +120,11 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
         private PseudorandomNumberGenerator rng = EmulationManager.Instance.CurrentEmulation.RandomGenerator;
         private IFlagRegisterField enable;
         private IFlagRegisterField interruptEnable;
+
+        // Fuzz snapshot variables
+        private bool fuzz_snap_enable;
+        private bool fuzz_snap_interruptEnable;
+        private bool fuzz_snap_irqActive;
 
         private enum Registers
         {

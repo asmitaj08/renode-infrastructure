@@ -1496,6 +1496,27 @@ namespace Antmicro.Renode.Peripherals.CPU
         private StatusFlags statusRegister;
         private ulong executedInstructions;
 
+        // Fuzz snapshot variables for MSP430X
+        private StatusFlags fuzz_snap_statusRegister;
+        private ulong fuzz_snap_executedInstructions;
+        private List<PendingWatchpoint> fuzz_snap_pendingWatchpoints;
+        private SortedSet<int> fuzz_snap_pendingInterrupt;
+        private RegisterValue fuzz_snap_pc;
+        private RegisterValue fuzz_snap_sp;
+        private RegisterValue fuzz_snap_sr;
+        private RegisterValue fuzz_snap_r4;
+        private RegisterValue fuzz_snap_r5;
+        private RegisterValue fuzz_snap_r6;
+        private RegisterValue fuzz_snap_r7;
+        private RegisterValue fuzz_snap_r8;
+        private RegisterValue fuzz_snap_r9;
+        private RegisterValue fuzz_snap_r10;
+        private RegisterValue fuzz_snap_r11;
+        private RegisterValue fuzz_snap_r12;
+        private RegisterValue fuzz_snap_r13;
+        private RegisterValue fuzz_snap_r14;
+        private RegisterValue fuzz_snap_r15;
+
         private readonly List<PendingWatchpoint> pendingWatchpoints = new List<PendingWatchpoint>();
         private readonly SortedSet<int> pendingInterrupt = new SortedSet<int>();
         private readonly IDictionary<ulong, HashSet<Action<ICpuSupportingGdb, ulong>>> hooks =
@@ -1584,6 +1605,69 @@ namespace Antmicro.Renode.Peripherals.CPU
             R13,
             R14,
             R15,
+        }
+
+        // Implementation of fuzz snapshot/restore for MSP430X
+        public override void fuzz_snap_capture()
+        {
+            Console.WriteLine("^^^^^ MSP430X.cs fuzz_snap_capture()");
+            
+            // Capture MSP430X-specific state
+            fuzz_snap_statusRegister = statusRegister;
+            fuzz_snap_executedInstructions = executedInstructions;
+            
+            // Capture pending watchpoints and interrupts
+            fuzz_snap_pendingWatchpoints = new List<PendingWatchpoint>(pendingWatchpoints);
+            fuzz_snap_pendingInterrupt = new SortedSet<int>(pendingInterrupt);
+            
+            // Capture register values
+            fuzz_snap_pc = PC;
+            fuzz_snap_sp = SP;
+            fuzz_snap_sr = SR;
+            fuzz_snap_r4 = R4;
+            fuzz_snap_r5 = R5;
+            fuzz_snap_r6 = R6;
+            fuzz_snap_r7 = R7;
+            fuzz_snap_r8 = R8;
+            fuzz_snap_r9 = R9;
+            fuzz_snap_r10 = R10;
+            fuzz_snap_r11 = R11;
+            fuzz_snap_r12 = R12;
+            fuzz_snap_r13 = R13;
+            fuzz_snap_r14 = R14;
+            fuzz_snap_r15 = R15;
+        }
+
+        public override void fuzz_snap_restore()
+        {
+            Console.WriteLine("^^^^^ MSP430X.cs fuzz_snap_restore()");
+            
+            // Restore MSP430X-specific state
+            statusRegister = fuzz_snap_statusRegister;
+            executedInstructions = fuzz_snap_executedInstructions;
+            
+            // Restore pending watchpoints and interrupts
+            pendingWatchpoints.Clear();
+            pendingWatchpoints.AddRange(fuzz_snap_pendingWatchpoints);
+            pendingInterrupt.Clear();
+            pendingInterrupt.UnionWith(fuzz_snap_pendingInterrupt);
+            
+            // Restore register values
+            PC = fuzz_snap_pc;
+            SP = fuzz_snap_sp;
+            SR = fuzz_snap_sr;
+            R4 = fuzz_snap_r4;
+            R5 = fuzz_snap_r5;
+            R6 = fuzz_snap_r6;
+            R7 = fuzz_snap_r7;
+            R8 = fuzz_snap_r8;
+            R9 = fuzz_snap_r9;
+            R10 = fuzz_snap_r10;
+            R11 = fuzz_snap_r11;
+            R12 = fuzz_snap_r12;
+            R13 = fuzz_snap_r13;
+            R14 = fuzz_snap_r14;
+            R15 = fuzz_snap_r15;
         }
     }
 }

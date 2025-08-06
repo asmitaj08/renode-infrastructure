@@ -14,7 +14,7 @@ using System.Linq;
 
 namespace Antmicro.Renode.Peripherals.DMA
 {
-    public sealed class STM32DMA : IDoubleWordPeripheral, IKnownSize, IGPIOReceiver, INumberedGPIOOutput
+    public sealed class STM32DMA : IDoubleWordPeripheral, IKnownSize, IGPIOReceiver, INumberedGPIOOutput, IFuzzSnapshotRestorable
     {
         public STM32DMA(IMachine machine)
         {
@@ -95,6 +95,42 @@ namespace Antmicro.Renode.Peripherals.DMA
             }
         }
 
+        public void fuzz_snap_capture()
+        {
+            Console.WriteLine("^^^^^ STM32DMA.cs fuzz_snap_capture()");
+            
+            // Capture stream finished states
+            fuzz_snap_streamFinished = (bool[])streamFinished.Clone();
+            
+            // Capture stream states
+            fuzz_snap_streams = new Stream[NumberOfStreams];
+            for(var i = 0; i < NumberOfStreams; i++)
+            {
+                fuzz_snap_streams[i] = new Stream(this, i);
+                fuzz_snap_streams[i].CaptureState(streams[i]);
+            }
+        }
+
+        public void fuzz_snap_restore()
+        {
+            // Console.WriteLine("^^^^^ STM32DMA.cs fuzz_snap_restore()");
+            
+            // Restore stream finished states
+            if (fuzz_snap_streamFinished != null)
+            {
+                Array.Copy(fuzz_snap_streamFinished, streamFinished, streamFinished.Length);
+            }
+            
+            // Restore stream states
+            if (fuzz_snap_streams != null)
+            {
+                for(var i = 0; i < NumberOfStreams; i++)
+                {
+                    streams[i].RestoreState(fuzz_snap_streams[i]);
+                }
+            }
+        }
+
         public void OnGPIO(int number, bool value)
         {
             if(number < 0 || number >= streams.Length)
@@ -170,6 +206,10 @@ namespace Antmicro.Renode.Peripherals.DMA
         private readonly Stream[] streams;
         private readonly DmaEngine engine;
         private readonly IMachine machine;
+
+        // Fuzz snapshot variables
+        private bool[] fuzz_snap_streamFinished;
+        private Stream[] fuzz_snap_streams;
 
         private const int NumberOfStreams = 8;
         private const int StreamOffsetStart = 0x10;
@@ -253,6 +293,42 @@ namespace Antmicro.Renode.Peripherals.DMA
                 direction = Direction.PeripheralToMemory;
                 interruptOnComplete = false;
                 Enabled = false;
+            }
+
+            public void CaptureState(Stream source)
+            {
+                memory0Address = source.memory0Address;
+                memory1Address = source.memory1Address;
+                peripheralAddress = source.peripheralAddress;
+                numberOfData = source.numberOfData;
+                transferredSize = source.transferredSize;
+                memoryTransferType = source.memoryTransferType;
+                peripheralTransferType = source.peripheralTransferType;
+                memoryIncrementAddress = source.memoryIncrementAddress;
+                peripheralIncrementAddress = source.peripheralIncrementAddress;
+                direction = source.direction;
+                interruptOnComplete = source.interruptOnComplete;
+                channel = source.channel;
+                priority = source.priority;
+                Enabled = source.Enabled;
+            }
+
+            public void RestoreState(Stream source)
+            {
+                memory0Address = source.memory0Address;
+                memory1Address = source.memory1Address;
+                peripheralAddress = source.peripheralAddress;
+                numberOfData = source.numberOfData;
+                transferredSize = source.transferredSize;
+                memoryTransferType = source.memoryTransferType;
+                peripheralTransferType = source.peripheralTransferType;
+                memoryIncrementAddress = source.memoryIncrementAddress;
+                peripheralIncrementAddress = source.peripheralIncrementAddress;
+                direction = source.direction;
+                interruptOnComplete = source.interruptOnComplete;
+                channel = source.channel;
+                priority = source.priority;
+                Enabled = source.Enabled;
             }
 
             private Request CreateRequest(int? size = null, int? destinationOffset = null)

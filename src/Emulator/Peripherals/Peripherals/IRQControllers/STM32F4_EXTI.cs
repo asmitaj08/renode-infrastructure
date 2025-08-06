@@ -15,7 +15,7 @@ using Antmicro.Renode.Utilities;
 
 namespace Antmicro.Renode.Peripherals.IRQControllers
 {
-    public class STM32F4_EXTI : BasicDoubleWordPeripheral, IKnownSize, IIRQController, INumberedGPIOOutput
+    public class STM32F4_EXTI : BasicDoubleWordPeripheral, IKnownSize, IIRQController, INumberedGPIOOutput, IFuzzSnapshotRestorable
     {
         public STM32F4_EXTI(IMachine machine, int numberOfOutputLines = 14, int firstDirectLine = DefaultFirstDirectLine) : base(machine)
         {
@@ -64,6 +64,39 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 gpio.Value.Unset();
             }
         }
+
+        private ulong fuzz_snap_softwareInterrupt;
+        private Dictionary<int, bool> fuzz_snap_gpioStates;
+
+        public void fuzz_snap_capture()
+        {
+            Console.WriteLine("^^^^STM32F4_EXTI.cs fuzz_snap_capture()");
+            fuzz_snap_softwareInterrupt = softwareInterrupt;
+            fuzz_snap_gpioStates = new Dictionary<int, bool>();
+            foreach(var kvp in Connections)
+            {
+                fuzz_snap_gpioStates[kvp.Key] = kvp.Value.IsSet; // IsSet is a property of GPIO
+            }
+        }
+
+        public void fuzz_snap_restore()
+        {
+            // Console.WriteLine("^^^^STM32F4_EXTI.cs fuzz_snap_restore()");
+            // base.Reset();
+            softwareInterrupt = fuzz_snap_softwareInterrupt;
+            foreach(var kvp in Connections)
+            {
+                if(fuzz_snap_gpioStates.TryGetValue(kvp.Key, out var isSet) && isSet)
+                {
+                    kvp.Value.Set();
+                }
+                else
+                {
+                    kvp.Value.Unset();
+                }
+            }
+        }
+
 
         public long Size => 0x400;
 

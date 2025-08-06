@@ -48,6 +48,19 @@ namespace Antmicro.Renode.UnitTests.Mocks
             {
             }
         }
+
+        // Implementation of fuzz snapshot/restore for EmptyCPU
+        public override void fuzz_snap_capture()
+        {
+            Console.WriteLine("^^^^^ EmptyCPU.cs fuzz_snap_capture()");
+            // EmptyCPU has no state to capture
+        }
+
+        public override void fuzz_snap_restore()
+        {
+            //Console.WriteLine("^^^^^ EmptyCPU.cs fuzz_snap_restore()");
+            // EmptyCPU has no state to restore
+        }
     }
 }
 

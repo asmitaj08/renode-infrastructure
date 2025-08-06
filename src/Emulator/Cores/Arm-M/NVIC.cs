@@ -22,7 +22,7 @@ using Antmicro.Renode.Utilities;
 namespace Antmicro.Renode.Peripherals.IRQControllers
 {
     [AllowedTranslations(AllowedTranslation.ByteToDoubleWord | AllowedTranslation.WordToDoubleWord)]
-    public class NVIC : IDoubleWordPeripheral, IHasDivisibleFrequency, IKnownSize, IIRQController
+    public class NVIC : IDoubleWordPeripheral, IHasDivisibleFrequency, IKnownSize, IIRQController, IFuzzSnapshotRestorable
     {
         public NVIC(IMachine machine, long systickFrequency = 50 * 0x800000, byte priorityMask = 0xFF, bool haltSystickOnDeepSleep = true)
         {
@@ -349,6 +349,157 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             // bit [16] DC / Cache enable. This is a global enable bit for data and unified caches.
             ccr = 0x10000;
         }
+
+
+        private byte[] fuzz_snap_priorities;
+        private IRQState[] fuzz_snap_irqs;
+        private Stack<int> fuzz_snap_activeIRQs;
+        private SortedSet<int> fuzz_snap_pendingIRQs;
+        private ulong fuzz_snap_systickValue;
+        private ulong fuzz_snap_systickReloadValue;
+        private bool fuzz_snap_systickEnabled;
+        private bool fuzz_snap_irqLineActive;
+        private uint fuzz_snap_mpuControlRegister;
+        private uint fuzz_snap_ccr;
+        private bool fuzz_snap_haltSystickOnDeepSleep;
+        private bool fuzz_snap_maskedInterruptPresent;
+        private byte fuzz_snap_basepri;
+        private byte fuzz_snap_priorityMask;
+        private int fuzz_snap_binaryPointPosition;
+        private uint fuzz_snap_cpuId;
+        private MPUVersion fuzz_snap_mpuVersion;
+        private bool fuzz_snap_systickEnabled_flag;
+        private bool fuzz_snap_eventEnabled_flag;
+        private bool fuzz_snap_countFlag_flag;
+        private ulong fuzz_snap_systickReload_flag;
+        private bool fuzz_snap_sleepOnExitEnabled_flag;
+        private bool fuzz_snap_deepSleepEnabled_flag;
+        private bool fuzz_snap_currentSevOnPending_flag;
+
+        private long fuzz_snap_systickFrequency;
+private int fuzz_snap_systickDivider;
+private bool fuzz_snap_systickEventEnabled;
+private bool fuzz_snap_systickRawInterrupt;
+private WorkMode fuzz_snap_systickWorkMode;
+private Direction fuzz_snap_systickDirection;
+private bool fuzz_snap_systickAutoUpdate;
+
+
+        public void fuzz_snap_capture()
+        {
+          Console.WriteLine("^^^^^ NVIC.cs fuzz_snap_capture()");
+          // Capture interrupt arrays
+          fuzz_snap_priorities = (byte[])priorities.Clone();
+          fuzz_snap_irqs = (IRQState[])irqs.Clone();
+    
+          // Capture active and pending interrupt collections
+          fuzz_snap_activeIRQs = new Stack<int>(activeIRQs);
+          fuzz_snap_pendingIRQs = new SortedSet<int>(pendingIRQs);
+    
+          // Capture SysTick timer state
+          fuzz_snap_systickValue = systick.Value;
+          fuzz_snap_systickReloadValue = systick.Limit;
+          fuzz_snap_systickEnabled = systick.Enabled;
+    
+          // Capture IRQ line state
+          fuzz_snap_irqLineActive = IRQ.IsSet;
+    
+          // Capture control registers
+          fuzz_snap_mpuControlRegister = mpuControlRegister;
+          fuzz_snap_ccr = ccr;
+          fuzz_snap_basepri = basepri;
+          fuzz_snap_priorityMask = priorityMask;
+          fuzz_snap_binaryPointPosition = binaryPointPosition;
+          fuzz_snap_cpuId = cpuId;
+          fuzz_snap_mpuVersion = mpuVersion;
+    
+         // Capture flags
+         fuzz_snap_haltSystickOnDeepSleep = HaltSystickOnDeepSleep;
+         fuzz_snap_maskedInterruptPresent = maskedInterruptPresent;
+    
+         // Capture register field values (the 'out' variables)
+         fuzz_snap_systickEnabled_flag = systickEnabled.Value;
+          fuzz_snap_eventEnabled_flag = eventEnabled.Value;
+          fuzz_snap_countFlag_flag = countFlag.Value;
+         fuzz_snap_systickReload_flag = systickReload.Value;
+         fuzz_snap_sleepOnExitEnabled_flag = sleepOnExitEnabled.Value;
+         fuzz_snap_deepSleepEnabled_flag = deepSleepEnabled.Value;
+         fuzz_snap_currentSevOnPending_flag = currentSevOnPending.Value;
+    fuzz_snap_systickFrequency = systick.Frequency;
+    fuzz_snap_systickDivider = systick.Divider;
+    fuzz_snap_systickEventEnabled = systick.EventEnabled;
+    fuzz_snap_systickRawInterrupt = systick.RawInterrupt;
+    fuzz_snap_systickWorkMode = systick.Mode;
+    fuzz_snap_systickDirection = systick.Direction;
+    fuzz_snap_systickAutoUpdate = systick.AutoUpdate;
+       }
+
+       public void fuzz_snap_restore()
+       {
+          
+        //   Console.WriteLine("^^^^^ NVIC.cs fuzz_snap_restore()");// Restore interrupt arrays
+        //   RegisterCollection.Reset();
+          Array.Copy(fuzz_snap_priorities, priorities, priorities.Length);
+          Array.Copy(fuzz_snap_irqs, irqs, irqs.Length);
+    
+          // Restore active and pending interrupt collections
+          activeIRQs.Clear();
+          foreach (var irq in fuzz_snap_activeIRQs)
+          {
+              activeIRQs.Push(irq);
+          }
+    
+          pendingIRQs.Clear();
+          foreach (var irq in fuzz_snap_pendingIRQs)
+          {
+             pendingIRQs.Add(irq);
+          }
+    
+    // Restore SysTick timer state
+    systick.Value = fuzz_snap_systickValue;
+    systick.Limit = fuzz_snap_systickReloadValue;
+    systick.Enabled = fuzz_snap_systickEnabled;
+    
+    // Restore IRQ line state
+    if (fuzz_snap_irqLineActive)
+    {
+        IRQ.Set();
+    }
+    else
+    {
+        IRQ.Unset();
+    }
+    
+    // Restore control registers
+    mpuControlRegister = fuzz_snap_mpuControlRegister;
+    ccr = fuzz_snap_ccr;
+    basepri = fuzz_snap_basepri;
+    priorityMask = fuzz_snap_priorityMask;
+    binaryPointPosition = fuzz_snap_binaryPointPosition;
+    cpuId = fuzz_snap_cpuId;
+    mpuVersion = fuzz_snap_mpuVersion;
+    
+    // Restore flags
+    HaltSystickOnDeepSleep = fuzz_snap_haltSystickOnDeepSleep;
+    maskedInterruptPresent = fuzz_snap_maskedInterruptPresent;
+    
+    // Restore register field values (the 'out' variables)
+    systickEnabled.Value = fuzz_snap_systickEnabled_flag;
+    eventEnabled.Value = fuzz_snap_eventEnabled_flag;
+    countFlag.Value = fuzz_snap_countFlag_flag;
+    systickReload.Value = fuzz_snap_systickReload_flag;
+    sleepOnExitEnabled.Value = fuzz_snap_sleepOnExitEnabled_flag;
+    deepSleepEnabled.Value = fuzz_snap_deepSleepEnabled_flag;
+    currentSevOnPending.Value = fuzz_snap_currentSevOnPending_flag;
+
+     systick.Frequency = fuzz_snap_systickFrequency;
+    systick.Divider = fuzz_snap_systickDivider;
+    systick.EventEnabled = fuzz_snap_systickEventEnabled;
+    systick.Mode = fuzz_snap_systickWorkMode;
+    systick.AutoUpdate = fuzz_snap_systickAutoUpdate;
+}
+
+
 
         public long Size
         {

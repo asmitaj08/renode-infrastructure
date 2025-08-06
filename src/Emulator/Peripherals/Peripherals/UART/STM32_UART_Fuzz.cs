@@ -19,7 +19,7 @@ using System.Runtime.InteropServices;
 namespace Antmicro.Renode.Peripherals.UART
 {
     [AllowedTranslations(AllowedTranslation.WordToDoubleWord | AllowedTranslation.ByteToDoubleWord)]
-    public class STM32_UART_Fuzz : BasicDoubleWordPeripheral, IUART
+    public class STM32_UART_Fuzz : BasicDoubleWordPeripheral, IUART, IFuzzSnapshotRestorable
     {
         // [DllImport("liblibafl_renode.so")]
         // // public static extern IntPtr uart_get_input_ptr(); //multiInput - libafl
@@ -44,21 +44,21 @@ namespace Antmicro.Renode.Peripherals.UART
                 Console.WriteLine($"^^^^Start ReadFromFuzzer_PY_uart() in STM32F4_UART_Fuzz.cs Len : {receiveFifo.Count}");
 
                 receiveFifo = new Queue<byte>(data);
-                //  WriteChar(0xaa); //dummy val, just setting  UART flags internaly
+                 WriteChar(0xaa); //dummy val, just setting  UART flags internaly
                 // general_fuzz_data.Clear();
                 // general_fuzz_data.AddRange(data);
                 Console.WriteLine($"^^^^ Done ReadFromFuzzer_PY_uart() in STM32F4_UART_Fuzz.cs Len : {receiveFifo.Count}");
 
         }
 
-        public static void ReadFromFuzzer_Internal(byte[] data){  
+        public void ReadFromFuzzer_Internal(byte[] data){  
                 //if (data != null && data.Length > 0){ //already being checked inside machine.cs
                     receiveFifo = new Queue<byte>(data);
-                    // WriteChar(0xaa); //dummy val, just setting  UART flags  // issue with static method here
+                    WriteChar(0xaa); //dummy val, just setting  UART flags  // issue with static method here
                 //}
                 // general_fuzz_data.Clear();
                 // general_fuzz_data.AddRange(data);
-                // Console.WriteLine($"^^^^ReadFromFuzzer_Internal_i2c() in STM32F4_I2C_Fuzz.cs Len : {dataToReceive.Count}");
+                //Console.WriteLine($"^^^^ReadFromFuzzer_Internal() in STM32F4_UART_Fuzz.cs Len : {receiveFifo.Count}");
         }
 
         public void SetRXNE_Fuzz(){
@@ -76,7 +76,7 @@ namespace Antmicro.Renode.Peripherals.UART
             //  Console.WriteLine("****** UART WriteChar");
             if(!usartEnabled.Value && !receiverEnabled.Value)
             {
-                Console.WriteLine("****** Received a character, but the receiver is not enabled, dropping.");
+                // Console.WriteLine("****** Received a character, but the receiver is not enabled, dropping.");
                 this.Log(LogLevel.Warning, "Received a character, but the receiver is not enabled, dropping.");
                 return;
             }
@@ -136,6 +136,103 @@ namespace Antmicro.Renode.Peripherals.UART
             // readFifoNotEmpty.Value=true;
 
         }
+
+        private CancellationTokenSource fuzz_snap_idleLineDetectedCancellationTokenSrc;
+        private bool fuzz_snap_irqLineActive;
+    
+    private bool fuzz_snap_idleLineDetected;
+private bool fuzz_snap_readFifoNotEmpty;
+private bool fuzz_snap_transmissionComplete;
+private bool fuzz_snap_usartEnabled;
+private bool fuzz_snap_receiverEnabled;
+private bool fuzz_snap_transmitterEnabled;
+private bool fuzz_snap_idleLineDetectedInterruptEnabled;
+private bool fuzz_snap_receiverNotEmptyInterruptEnabled;
+private bool fuzz_snap_transmissionCompleteInterruptEnabled;
+private bool fuzz_snap_transmitDataRegisterEmptyInterruptEnabled;
+private bool fuzz_snap_parityControlEnabled;
+private OversamplingMode fuzz_snap_oversamplingMode;
+private StopBitsValues fuzz_snap_stopBits;
+private ParitySelection fuzz_snap_paritySelection;
+private ulong fuzz_snap_dividerMantissa;
+private ulong fuzz_snap_dividerFraction;
+
+
+public void fuzz_snap_capture()
+{
+    Console.WriteLine("^^^^^ STM32_UART_Fuzz.cs fuzz_snap_capture()");
+    
+    // GPIO state
+    fuzz_snap_irqLineActive = IRQ.IsSet;
+    
+    // Register field states (out variables)
+    fuzz_snap_idleLineDetected = idleLineDetected.Value;
+    fuzz_snap_readFifoNotEmpty = readFifoNotEmpty.Value;
+    fuzz_snap_transmissionComplete = transmissionComplete.Value;
+    fuzz_snap_usartEnabled = usartEnabled.Value;
+    fuzz_snap_receiverEnabled = receiverEnabled.Value;
+    fuzz_snap_transmitterEnabled = transmitterEnabled.Value;
+    fuzz_snap_idleLineDetectedInterruptEnabled = idleLineDetectedInterruptEnabled.Value;
+    fuzz_snap_receiverNotEmptyInterruptEnabled = receiverNotEmptyInterruptEnabled.Value;
+    fuzz_snap_transmissionCompleteInterruptEnabled = transmissionCompleteInterruptEnabled.Value;
+    fuzz_snap_transmitDataRegisterEmptyInterruptEnabled = transmitDataRegisterEmptyInterruptEnabled.Value;
+    fuzz_snap_parityControlEnabled = parityControlEnabled.Value;
+    fuzz_snap_oversamplingMode = oversamplingMode.Value;
+    fuzz_snap_stopBits = stopBits.Value;
+    fuzz_snap_paritySelection = paritySelection.Value;
+    fuzz_snap_dividerMantissa = dividerMantissa.Value;
+    fuzz_snap_dividerFraction = dividerFraction.Value;
+    
+    // CancellationTokenSource (if not null)
+    if (idleLineDetectedCancellationTokenSrc != null)
+    {
+        fuzz_snap_idleLineDetectedCancellationTokenSrc = new CancellationTokenSource();
+    }
+}
+
+public void fuzz_snap_restore()
+{
+    // Console.WriteLine("^^^^^ STM32_UART_Fuzz.cs fuzz_snap_restore()");
+    // base.Reset();
+    // Restore GPIO state
+    if (fuzz_snap_irqLineActive)
+    {
+        IRQ.Set();
+    }
+    else
+    {
+        IRQ.Unset();
+    }
+    
+    // Restore register field states (out variables)
+    idleLineDetected.Value = fuzz_snap_idleLineDetected;
+    readFifoNotEmpty.Value = fuzz_snap_readFifoNotEmpty;
+    transmissionComplete.Value = fuzz_snap_transmissionComplete;
+    usartEnabled.Value = fuzz_snap_usartEnabled;
+    receiverEnabled.Value = fuzz_snap_receiverEnabled;
+    transmitterEnabled.Value = fuzz_snap_transmitterEnabled;
+    idleLineDetectedInterruptEnabled.Value = fuzz_snap_idleLineDetectedInterruptEnabled;
+    receiverNotEmptyInterruptEnabled.Value = fuzz_snap_receiverNotEmptyInterruptEnabled;
+    transmissionCompleteInterruptEnabled.Value = fuzz_snap_transmissionCompleteInterruptEnabled;
+    transmitDataRegisterEmptyInterruptEnabled.Value = fuzz_snap_transmitDataRegisterEmptyInterruptEnabled;
+    parityControlEnabled.Value = fuzz_snap_parityControlEnabled;
+    oversamplingMode.Value = fuzz_snap_oversamplingMode;
+    stopBits.Value = fuzz_snap_stopBits;
+    paritySelection.Value = fuzz_snap_paritySelection;
+    dividerMantissa.Value = fuzz_snap_dividerMantissa;
+    dividerFraction.Value = fuzz_snap_dividerFraction;
+    
+    // Restore CancellationTokenSource (if it was captured)
+    if (fuzz_snap_idleLineDetectedCancellationTokenSrc != null)
+    {
+        idleLineDetectedCancellationTokenSrc = fuzz_snap_idleLineDetectedCancellationTokenSrc;
+    }
+    
+    // Update the peripheral state
+    Update();
+}
+
+
 
         public uint BaudRate
         {
@@ -257,8 +354,9 @@ namespace Antmicro.Renode.Peripherals.UART
                         idleLineDetectedCancellationTokenSrc?.Cancel();
                     }
                     // if(receiverEnabled.Value){ //added for fuzzing - cnc - it won't work for all target
-                    //     WriteChar(0xaa);
+                    //     WriteChar(0xbb);
                     // }
+
                     Update();
                 })
             ;
@@ -335,8 +433,8 @@ namespace Antmicro.Renode.Peripherals.UART
         private IValueRegisterField dividerFraction;
 
         // private readonly Queue<byte> receiveFifo = new Queue<byte>();
-        // private Queue<byte> receiveFifo = new Queue<byte>(1024); // fuzz - 1024 is MAX INPUT size that I have set on LibAFL to cap teh size of input generated by mutator
-        private static Queue<byte> receiveFifo = new Queue<byte>(1024);
+        private Queue<byte> receiveFifo = new Queue<byte>(1024); // fuzz - 1024 is MAX INPUT size that I have set on LibAFL to cap teh size of input generated by mutator
+        // private static Queue<byte> receiveFifo = new Queue<byte>(1024);
         // private byte[] general_fuzz_data ;
         private List<byte> general_fuzz_data = new List<byte>(1024); //size changes based on input from fuzzer
         private int datasize_track = 0;

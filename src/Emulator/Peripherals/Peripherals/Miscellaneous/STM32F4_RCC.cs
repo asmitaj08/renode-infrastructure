@@ -15,7 +15,7 @@ using Antmicro.Renode.Peripherals.Timers;
 namespace Antmicro.Renode.Peripherals.Miscellaneous
 {
     [AllowedTranslations(AllowedTranslation.ByteToDoubleWord | AllowedTranslation.WordToDoubleWord)]
-    public sealed class STM32F4_RCC : IDoubleWordPeripheral, IKnownSize, IProvidesRegisterCollection<DoubleWordRegisterCollection>
+    public sealed class STM32F4_RCC : IDoubleWordPeripheral, IKnownSize, IProvidesRegisterCollection<DoubleWordRegisterCollection>, IFuzzSnapshotRestorable
     {
         public STM32F4_RCC(IMachine machine, STM32F4_RTC rtcPeripheral)
         {
@@ -354,9 +354,24 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
             RegistersCollection.Reset();
         }
 
+        public void fuzz_snap_capture()
+        {
+            Console.WriteLine("^^^^^ STM32F4_RCC.cs fuzz_snap_capture() -- nothing to capture");
+            
+            
+        }
+
+        public void fuzz_snap_restore()
+        {
+            
+        }
+
         public long Size => 0x400;
 
         public DoubleWordRegisterCollection RegistersCollection { get; }
+
+        // Fuzz snapshot variables
+        private Dictionary<long, uint> fuzz_snap_registerStates;
 
         private enum Registers
         {
