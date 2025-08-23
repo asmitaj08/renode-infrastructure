@@ -129,6 +129,11 @@ namespace Antmicro.Renode.Peripherals.DMA
                     streams[i].RestoreState(fuzz_snap_streams[i]);
                 }
             }
+            // Reassert IRQ Line to reflect streamFinished
+            for(var i=0; i<NumberOfStreams; i++){
+                if(streamFinished[i]) streams[i].IRQ.Set();
+                else streams[i].IRQ.Unset();
+            }
         }
 
         public void OnGPIO(int number, bool value)

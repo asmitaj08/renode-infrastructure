@@ -353,7 +353,7 @@ namespace Antmicro.Renode.Peripherals.CPU
                     Marshal.Copy(cpuState_fuzz, 0, statePtr_fuzz, cpuState_fuzz.Length);
                     // Console.WriteLine($"^^^^ TranslationCPU.cs Fuzz_LoadState() : stateptr : 0x{statePtr_fuzz:X}");
                     AfterLoad(statePtr_fuzz);
-                   // ClearTranslationCache();
+                   
                     // UpdateBlockBeginHookPresent();
                     // Console.WriteLine("In renode after cpustore load");
                     // Fuzz_PrepareState_after();
@@ -2983,12 +2983,14 @@ namespace Antmicro.Renode.Peripherals.CPU
             ramAccessedSet.Clear();
         }
 
-        public void Fuzz_Set_ramAddress(ulong ram_address){ //not needed as of now
+        public void Fuzz_Set_ramAddress(ulong ram_address){ 
             this.ram_address = ram_address;
+            Console.WriteLine($"^^^^ TranslationCPU.cs: updated ram_address = 0x{this.ram_address:X}");
         }
-
-        public void Fuzz_Set_ramSize(ulong ram_size){ //not needed as of now
+ 
+        public void Fuzz_Set_ramSize(ulong ram_size){ 
             this.ram_size = ram_size;
+            Console.WriteLine($"^^^^ TranslationCPU.cs: updated ram_size = 0x{this.ram_size:X}");
         }
 
         public int Fuzz_Get_ramAccessedSet_count(){ //not needed as of now
@@ -3094,42 +3096,42 @@ namespace Antmicro.Renode.Peripherals.CPU
             }
         }
 
-        public void Fuzz_Set_Track_All_Mem_Write() 
-        {
-            Fuzz_Clear_All_Mem_Track_Dict();
-            SetHookAtMemoryAccess((pc, operation, virtualAddress, physicalAddress, value, access_size) => // fuzz - added access_size
-            {
-                // Console.WriteLine($"^^^^^ Fuzz_Set_Track_All_Mem_Write() :Accessing address : virtual  0x{virtualAddress:X}, physical :  0x{physicalAddress:X} , operation : {(MemoryOperation)operation} , value : 0x{value:X}, acess_size : {access_size}, pc : 0x{pc:X}");
-                if((MemoryOperation)operation == MemoryOperation.MemoryWrite || (MemoryOperation)operation == MemoryOperation.MemoryIOWrite){
+        // public void Fuzz_Set_Track_All_Mem_Write() 
+        // {
+        //     Fuzz_Clear_All_Mem_Track_Dict();
+        //     SetHookAtMemoryAccess((pc, operation, virtualAddress, physicalAddress, value, access_size) => // fuzz - added access_size
+        //     {
+        //         // Console.WriteLine($"^^^^^ Fuzz_Set_Track_All_Mem_Write() :Accessing address : virtual  0x{virtualAddress:X}, physical :  0x{physicalAddress:X} , operation : {(MemoryOperation)operation} , value : 0x{value:X}, acess_size : {access_size}, pc : 0x{pc:X}");
+        //         if((MemoryOperation)operation == MemoryOperation.MemoryWrite || (MemoryOperation)operation == MemoryOperation.MemoryIOWrite){
                             
-                    // Console.WriteLine($"^^^^^ Fuzz_Set_Track_All_Mem_Write() : operation : {(MemoryOperation)operation}");
-                    // Only track the first write to each address
-                    if(!changedMemValues_Fuzz.ContainsKey(virtualAddress))
-                    {
-                        // // Read the value currently at that address before the write
-                        // uint prevValue = machine.SystemBus.ReadDoubleWord(virtualAddress);
+        //             // Console.WriteLine($"^^^^^ Fuzz_Set_Track_All_Mem_Write() : operation : {(MemoryOperation)operation}");
+        //             // Only track the first write to each address
+        //             if(!changedMemValues_Fuzz.ContainsKey(virtualAddress))
+        //             {
+        //                 // // Read the value currently at that address before the write
+        //                 // uint prevValue = machine.SystemBus.ReadDoubleWord(virtualAddress);
                         
-                        // Read the value currently at that address before the write, using the correct access size
-                        ulong prevValue = Fuzz_ReadValueByAccessSize(virtualAddress, access_size);
+        //                 // Read the value currently at that address before the write, using the correct access size
+        //                 ulong prevValue = Fuzz_ReadValueByAccessSize(virtualAddress, access_size);
                 
-                        // changedMemValues_Fuzz[virtualAddress] = prevValue;
+        //                 // changedMemValues_Fuzz[virtualAddress] = prevValue;
                         
-                        changedMemValues_Fuzz[virtualAddress] = new MemWriteInfo_Fuzz 
-                        { 
-                            Value = prevValue, 
-                            AccessSize = (int)access_size 
-                        };
-                        Console.WriteLine($"First write to 0x{virtualAddress:X}: previous value = 0x{prevValue:X}, current_val : 0x{value:X}, count : {changedMemValues_Fuzz.Count()}");
-                    }
+        //                 changedMemValues_Fuzz[virtualAddress] = new MemWriteInfo_Fuzz 
+        //                 { 
+        //                     Value = prevValue, 
+        //                     AccessSize = (int)access_size 
+        //                 };
+        //                 Console.WriteLine($"First write to 0x{virtualAddress:X}: previous value = 0x{prevValue:X}, current_val : 0x{value:X}, count : {changedMemValues_Fuzz.Count()}");
+        //             }
                     
-                }
+        //         }
 
-                if(virtualAddress==0x0 || physicalAddress==0x0){
-                    Console.WriteLine($"^^^^^ Fuzz_Set_Track_All_Mem_Write() :Accessing address 0x0x : virtual  0x{virtualAddress:X}, physical :  0x{physicalAddress:X} , operation : {(MemoryOperation)operation} , value : 0x{value:X}, pc : 0x{pc:X}");
-                }   
-            });
+        //         if(virtualAddress==0x0 || physicalAddress==0x0){
+        //             Console.WriteLine($"^^^^^ Fuzz_Set_Track_All_Mem_Write() :Accessing address 0x0x : virtual  0x{virtualAddress:X}, physical :  0x{physicalAddress:X} , operation : {(MemoryOperation)operation} , value : 0x{value:X}, pc : 0x{pc:X}");
+        //         }   
+        //     });
 
-        }
+        // }
 
         public void Fuzz_Set_Track_All_Mem_Write_snap() 
         {
@@ -3138,28 +3140,47 @@ namespace Antmicro.Renode.Peripherals.CPU
             {
                 
                 Console.WriteLine($"^^^^^ Fuzz_Set_Track_All_Mem_Write_snap() :Accessing address : virtual  0x{virtualAddress:X}, physical :  0x{physicalAddress:X} , operation : {(MemoryOperation)operation} , value : 0x{value:X}, acess_size : {access_size}, pc : 0x{pc:X}");
-                if((MemoryOperation)operation == MemoryOperation.MemoryWrite || (MemoryOperation)operation == MemoryOperation.MemoryIOWrite){
-                            
-                    // Console.WriteLine($"^^^^^ Fuzz_Set_Track_All_Mem_Write_snap() : operation : {(MemoryOperation)operation}");
-                    // Only track the first write to each address
-                    //if(!changedMemValues_Fuzz.ContainsKey(virtualAddress))
+                // Only track RAM writes; ignore MMIO writes
+                if((MemoryOperation)operation != MemoryOperation.MemoryWrite){
+                    return;
+                }
+
+                {
+                    // Normalize SRAM bit-band alias writes into base SRAM byte writes
+                    if(IsSramBitBandAlias(virtualAddress))
                     {
-                        // // Read the value currently at that address before the write
-                        // uint prevValue = machine.SystemBus.ReadDoubleWord(virtualAddress);
-                        
-                        // Read the value currently at that address before the write, using the correct access size
-                        // ulong prevValue = Fuzz_ReadValueByAccessSize(virtualAddress, access_size);
-                
-                        // changedMemValues_Fuzz[virtualAddress] = prevValue;
-                        
-                        changedMemValues_Fuzz[virtualAddress] = new MemWriteInfo_Fuzz 
-                        { 
-                            Value = value, 
-                            AccessSize = (int)access_size 
-                        };
-                        // Console.WriteLine($"First write to 0x{virtualAddress:X}: previous value = 0x{prevValue:X}, current_val : 0x{value:X}, count : {changedMemValues_Fuzz.Count()}");
+                        var baseAddr = BitBandAliasToBase(sramBitBandAliasBase, virtualAddress, sramBase);
+                        Console.WriteLine($"^^^^^^ IsSramBitBandAlias : baseAddr : {baseAddr}");
+                        if(!IsSram(baseAddr))
+                        {
+                            return;
+                        }
+                        var bit = BitBandAliasToBit(virtualAddress);
+                        byte oldByte;
+                        if(changedMemValues_Fuzz.TryGetValue(baseAddr, out var existing) && existing.AccessSize == 1)
+                        {
+                            oldByte = (byte)existing.Value;
+                        }
+                        else
+                        {
+                            oldByte = machine.SystemBus.ReadByte(baseAddr);
+                        }
+                        var newByte = (byte)((oldByte & ~(1 << bit)) | (((value != 0) ? 1 : 0) << bit));
+                        changedMemValues_Fuzz[baseAddr] = new MemWriteInfo_Fuzz { Value = newByte, AccessSize = 1 };
+                        return;
                     }
-                    
+
+                    // For normal RAM writes, only track if inside SRAM window
+                    if(!IsSram(virtualAddress))
+                    {
+                        return;
+                    }
+
+                    changedMemValues_Fuzz[virtualAddress] = new MemWriteInfo_Fuzz 
+                    { 
+                        Value = value, 
+                        AccessSize = (int)access_size 
+                    };
                 }
 
                 if(virtualAddress==0x0 || physicalAddress==0x0){
@@ -3235,30 +3256,25 @@ namespace Antmicro.Renode.Peripherals.CPU
 
         public void Fuzz_Restore_All_Mem_Track_Dict(){
             // Console.WriteLine($"^^^^^ Fuzz_Restore_All_Mem_Track_Dict : changedMemValues_Fuzz.Count() : {changedMemValues_Fuzz.Count()} ");
-            // foreach (var kvp in changedMemValues_Fuzz)
-            // {
-            //     var virtualAddress = kvp.Key;
-            //     var prevValue = kvp.Value;
-            //     // Console.WriteLine($"Restoring 0x{virtualAddress:X} to 0x{prevValue:X}");
-            //     machine.SystemBus.WriteDoubleWord(virtualAddress, prevValue);
-            // }
             
             foreach(var kvp in changedMemValues_Fuzz)
             {
                 ulong addr = kvp.Key;
                 var info = kvp.Value;
+                // Only restore into SRAM to avoid MMIO side-effects (W1C/write-only/engines)
+                if(!IsSram(addr))
+                {
+                    continue;
+                }
                 switch(info.AccessSize)
                 {
                     case 1:
                         machine.SystemBus.WriteByte(addr, (byte)info.Value);
                         break;
                     case 2:
-                        // Console.WriteLine($"^^^^^ Fuzz_Restore_All_Mem_Track_Dict : Accessing address (WriteWord) :  0x{addr:X} , value : 0x{info.PrevValue:X}");
-
                         machine.SystemBus.WriteWord(addr, (ushort)info.Value);
                         break;
                     case 4:
-                        // Console.WriteLine($"^^^^^ Fuzz_Restore_All_Mem_Track_Dict : Accessing address (doubleWord) :  0x{addr:X} , value : 0x{info.PrevValue:X}");
                         machine.SystemBus.WriteDoubleWord(addr, (uint)info.Value);
                         break;
                     case 8:
@@ -3273,6 +3289,133 @@ namespace Antmicro.Renode.Peripherals.CPU
             
         }
 
+        // ======= Full RAM snapshot/sparse non-zero snapshot support (SRAM only) =======
+        private byte[] ramSnapshotFull;
+        private struct FuzzSparseBlock
+        {
+            public ulong Start;
+            public byte[] Data;
+        }
+        private List<FuzzSparseBlock> ramSnapshotSparse;
+
+        public void Fuzz_CaptureRamFull()
+        {
+            using(machine?.ObtainPausedState(true))
+            {
+                Console.WriteLine($"^^^^^^^Fuzz_CaptureRamFull :ram_address : 0x{ram_address:X} , ram_size : 0x{ram_size:X}");
+                ramSnapshotFull = machine.SystemBus.ReadBytes(ram_address, checked((int)ram_size));
+            }
+        }
+
+        public void Fuzz_RestoreRamFull(bool zeroFirst = false)
+        {
+            if(ramSnapshotFull == null)
+            {
+                Console.WriteLine("^^^^^ Fuzz_RestoreRamFull: no snapshot captured");
+                return;
+            }
+            var expectedLen = checked((int)ram_size);
+            if(ramSnapshotFull.Length != expectedLen)
+            {
+                Console.WriteLine($"^^^^^ Fuzz_RestoreRamFull: snapshot length (0x{ramSnapshotFull.Length:X}) != RAM size (0x{expectedLen:X}); aborting restore");
+                return;
+            }
+            using(machine?.ObtainPausedState(true))
+            {
+                if(zeroFirst)
+                {
+                    var zeros = new byte[ramSnapshotFull.Length];
+                    machine.SystemBus.WriteBytes(zeros, ram_address);
+                }
+                machine.SystemBus.WriteBytes(ramSnapshotFull, ram_address);
+            }
+        }
+
+        public void Fuzz_CaptureRamSparseNonZero()
+        {
+            using(machine?.ObtainPausedState(true))
+            {
+                Console.WriteLine($"^^^^^^^Fuzz_CaptureRamSparseNonZero :ram_address : 0x{ram_address:X} , ram_size : 0x{ram_size:X}");
+                var data = machine.SystemBus.ReadBytes(ram_address, checked((int)ram_size));
+                var blocks = new List<FuzzSparseBlock>();
+                int i = 0;
+                while(i < data.Length)
+                {
+                    // skip zeros
+                    while(i < data.Length && data[i] == 0) i++;
+                    if(i >= data.Length) break;
+                    int start = i;
+                    // grow block until next zero
+                    while(i < data.Length && data[i] != 0) i++;
+                    int len = i - start;
+                    // safety: cap to RAM size range
+                    if((ulong)start >= (ulong)data.Length)
+                    {
+                        Console.WriteLine("^^^^^ Fuzz_CaptureRamSparseNonZero: start beyond RAM snapshot length, stopping.");
+                        break;
+                    }
+                    if((ulong)len > (ulong)data.Length - (ulong)start)
+                    {
+                        var oldLen = len;
+                        len = (int)((ulong)data.Length - (ulong)start);
+                        Console.WriteLine($"^^^^^ Fuzz_CaptureRamSparseNonZero: clamped block length from {oldLen} to {len} to fit RAM snapshot.");
+                    }
+                    var chunk = new byte[len];
+                    Buffer.BlockCopy(data, start, chunk, 0, len);
+                    blocks.Add(new FuzzSparseBlock{ Start = ram_address + (ulong)start, Data = chunk });
+                }
+                ramSnapshotSparse = blocks;
+            }
+        }
+
+        public void Fuzz_RestoreRamSparseNonZero(bool zeroFirst = true)
+        {
+            if(ramSnapshotSparse == null)
+            {
+                Console.WriteLine("^^^^^ Fuzz_RestoreRamSparseNonZero: no snapshot captured");
+                return;
+            }
+            using(machine?.ObtainPausedState(true))
+            {
+                if(zeroFirst)
+                {
+                    // zero full SRAM region first so missing bytes become zero
+                    var zerosLen = checked((int)ram_size);
+                    var zeros = new byte[zerosLen];
+                    machine.SystemBus.WriteBytes(zeros, ram_address);
+                }
+                foreach(var b in ramSnapshotSparse)
+                {
+                    if(b.Data == null || b.Data.Length == 0)
+                    {
+                        continue;
+                    }
+                    // Bounds check: ensure block fits in SRAM region
+                    if(b.Start < ram_address)
+                    {
+                        Console.WriteLine($"^^^^^ Fuzz_RestoreRamSparseNonZero: block start 0x{b.Start:X} before RAM base 0x{ram_address:X}, skipping");
+                        continue;
+                    }
+                    var maxLen = (long)ram_size - (long)(b.Start - ram_address);
+                    if(maxLen <= 0)
+                    {
+                        Console.WriteLine($"^^^^^ Fuzz_RestoreRamSparseNonZero: block start 0x{b.Start:X} beyond RAM end, skipping");
+                        continue;
+                    }
+                    var writeLen = b.Data.Length;
+                    if(writeLen > maxLen)
+                    {
+                        Console.WriteLine($"^^^^^ Fuzz_RestoreRamSparseNonZero: clamping block at 0x{b.Start:X} from {b.Data.Length} to {maxLen} bytes");
+                        var clamped = new byte[(int)maxLen];
+                        Buffer.BlockCopy(b.Data, 0, clamped, 0, (int)maxLen);
+                        machine.SystemBus.WriteBytes(clamped, b.Start);
+                        continue;
+                    }
+                    machine.SystemBus.WriteBytes(b.Data, b.Start);
+                }
+            }
+        }
+        // ======= end RAM snapshot helpers =======
 
         protected override bool ExecutionFinished(ExecutionResult result)
         {
@@ -3497,6 +3640,68 @@ namespace Antmicro.Renode.Peripherals.CPU
             private readonly ulong address;
             private readonly TranslationCPU cpu;
             private readonly HashSet<Action<ICpuSupportingGdb, ulong>> callbacks;
+        }
+
+        // Bit-band and SRAM configuration (defaults for ARMv7-M Cortex-M3)
+        private ulong sramBitBandAliasBase = 0x22000000UL;   // SRAM bit-band alias base
+        private ulong sramBitBandAliasSize = 0x02000000UL;   // 32MB alias window
+        private ulong sramBase            = 0x20000000UL;    // SRAM base corresponding to alias
+
+        private ulong periphBitBandAliasBase = 0x42000000UL; // Peripheral bit-band alias base
+        private ulong periphBitBandAliasSize = 0x02000000UL; // 32MB alias window
+        private ulong periphBase             = 0x40000000UL; // Peripheral base corresponding to alias
+
+        // Optional overrides from harness (defaults above are fine for STM32F1/F4)
+        public void Fuzz_Set_BitBand_SRAM_Params(ulong aliasBase, ulong baseBase, ulong aliasSize)
+        {
+            sramBitBandAliasBase = aliasBase;
+            sramBase = baseBase;
+            sramBitBandAliasSize = aliasSize;
+        }
+
+        public void Fuzz_Set_BitBand_Periph_Params(ulong aliasBase, ulong baseBase, ulong aliasSize)
+        {
+            periphBitBandAliasBase = aliasBase;
+            periphBase = baseBase;
+            periphBitBandAliasSize = aliasSize;
+        }
+
+        // Helper: current SRAM region configuration (ram_address/ram_size are already configurable)
+        private bool IsInRange(ulong addr, ulong baseAddr, ulong size)
+        {
+            return addr >= baseAddr && addr < (baseAddr + size);
+        }
+
+        private bool IsSram(ulong addr)
+        {
+            return IsInRange(addr, ram_address, ram_size);
+        }
+
+        private bool IsSramBitBandAlias(ulong addr)
+        {
+            return IsInRange(addr, sramBitBandAliasBase, sramBitBandAliasSize);
+        }
+
+        private bool IsPeriphBitBandAlias(ulong addr)
+        {
+            return IsInRange(addr, periphBitBandAliasBase, periphBitBandAliasSize);
+        }
+
+        private ulong BitBandAliasToBase(ulong aliasBase, ulong aliasAddr, ulong baseBase)
+        {
+            var aliasOffset = aliasAddr - aliasBase;
+            var byteOffset = aliasOffset >> 5; // alias maps 32 bytes per bit-band byte
+            return baseBase + byteOffset;
+        }
+
+        // private int BitBandAliasToBit(ulong aliasAddr)
+        // {
+        //     return (int)((aliasAddr >> 2) & 0x7);
+        // }
+        private int BitBandAliasToBit(ulong aliasAddr)
+        {
+            var aliasOffset = aliasAddr - sramBitBandAliasBase;
+            return (int)((aliasOffset >> 2) & 0x7);
         }
     }
 }

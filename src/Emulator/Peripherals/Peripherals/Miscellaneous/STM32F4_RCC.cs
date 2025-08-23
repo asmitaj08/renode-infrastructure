@@ -19,6 +19,8 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
     {
         public STM32F4_RCC(IMachine machine, STM32F4_RTC rtcPeripheral)
         {
+            this._machine = machine;
+            this._rtcPeripheral = rtcPeripheral;
             // Renode, in general, does not include clock control peripherals.
             // While this is doable, it seldom benefits real software development
             // and is very cumbersome to maintain.
@@ -264,22 +266,22 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
                     .WithReservedBits(27, 5)
                 },
                 {(long)Registers.BackupDomainControl, new DoubleWordRegister(this)
-                    .WithFlag(0, out var lseon, name: "LSEON")
-                    .WithFlag(1, FieldMode.Read, valueProviderCallback: _ => lseon.Value, name: "LSERDY")
-                    .WithValueField(2, 1, name: "LSEBYP")
+                    .WithFlag(0, out lseonFlag, name: "LSEON")
+                    .WithFlag(1, FieldMode.Read, valueProviderCallback: _ => lseonFlag.Value, name: "LSERDY")
+                    .WithValueField(2, 1, out lsebypField, name: "LSEBYP")
                     .WithReservedBits(3, 5)
-                    .WithValueField(8, 2, name: "RTCSEL")
+                    .WithValueField(8, 2, out rtcselField, name: "RTCSEL")
                     .WithReservedBits(10, 5)
-                    .WithFlag(15, name: "RTCEN",
+                    .WithFlag(15, out rtcEnableFlag, name: "RTCEN",
                         writeCallback: (_, value) =>
                         {
                             if(value)
                             {
-                                machine.SystemBus.EnablePeripheral(rtcPeripheral);
+                                _machine?.SystemBus.EnablePeripheral(_rtcPeripheral);
                             }
                             else
                             {
-                                machine.SystemBus.DisablePeripheral(rtcPeripheral);
+                                _machine?.SystemBus.DisablePeripheral(_rtcPeripheral);
                             }
                         })
                     .WithValueField(16, 1, name: "BDRST")
@@ -354,16 +356,106 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
             RegistersCollection.Reset();
         }
 
+        // Shared ordered offsets for capture/restore (skip CIR and all *_RSTR)
+        private static readonly long[] fuzz_rcc_orderedOffsets = new long[]
+        {
+            // Base and PLL config first
+            
+            (long)Registers.PLLConfiguration,
+            // Spread spectrum and PLL derivatives before switching mux
+            (long)Registers.SpreadSpectrumClockGeneration,
+            (long)Registers.PLLI2SConfiguration,
+            (long)Registers.PLLSAIConfiguration,
+            (long)Registers.DedicatedClockConfiguration,
+            
+
+            (long)Registers.ClockControl,
+
+            // Backup domain before gating enables
+            (long)Registers.BackupDomainControl,
+            // Enables
+            (long)Registers.AHB1PeripheralClockEnable,
+            (long)Registers.AHB2PeripheralClockEnable,
+            (long)Registers.AHB3PeripheralClockEnable,
+            (long)Registers.APB1PeripheralClockEnable,
+            (long)Registers.APB2PeripheralClockEnable,
+            // Low-power enables
+            (long)Registers.AHB1PeripheralClockEnableInLowPowerMode,
+            (long)Registers.AHB2PeripheralClockEnableInLowPowerMode,
+            (long)Registers.AHB3PeripheralClockEnableInLowPowerMode,
+            (long)Registers.APB1PeripheralClockEnableInLowPowerMode,
+            (long)Registers.APB2PeripheralClockEnableInLowPowerMode,
+
+            // Clock mux
+            (long)Registers.ClockConfiguration,
+            
+            // Status/housekeeping last
+            (long)Registers.ClockControlAndStatus,
+        };
+
         public void fuzz_snap_capture()
         {
-            Console.WriteLine("^^^^^ STM32F4_RCC.cs fuzz_snap_capture() -- nothing to capture");
-            
-            
+            Console.WriteLine("^^^^^ STM32F4_RCC.cs fuzz_snap_capture() -- capturing registers");
+            fuzz_snap_registerStates = new Dictionary<long, uint>();
+            foreach(var off in fuzz_rcc_orderedOffsets)
+            {
+                if(RegistersCollection.HasRegisterAtOffset(off))
+                {
+                    fuzz_snap_registerStates[off] = RegistersCollection.Read(off);
+                }
+            }
+            // Capture BDC fields directly to avoid side-effects on restore
+            fuzz_snap_lseon = lseonFlag?.Value ?? false;
+            fuzz_snap_lsebyp = lsebypField?.Value ?? 0UL;
+            fuzz_snap_rtcsel = rtcselField?.Value ?? 0UL;
+            fuzz_snap_rtcen = rtcEnableFlag?.Value ?? false;
         }
 
         public void fuzz_snap_restore()
         {
-            
+            // Console.WriteLine("^^^^^ STM32F4_RCC.cs fuzz_snap_restore()");
+            if(fuzz_snap_registerStates == null)
+            {
+                return;
+            }
+            // Restore in the same stable order to avoid transient edges
+            foreach(var off in fuzz_rcc_orderedOffsets)
+            {
+                if(fuzz_snap_registerStates.TryGetValue(off, out var val) && RegistersCollection.HasRegisterAtOffset(off))
+                {
+                    // For BDC, set fields directly to avoid write callbacks/side-effects
+                    if(off == (long)Registers.BackupDomainControl)
+                    {
+                        // Restore writable fields directly (LSERDY is RO/provider-backed; BDRST stays 0)
+                        if(lseonFlag != null) { lseonFlag.Value = fuzz_snap_lseon; }
+                        if(lsebypField != null) { lsebypField.Value = fuzz_snap_lsebyp; }
+                        if(rtcselField != null) { rtcselField.Value = fuzz_snap_rtcsel; }
+                        if(rtcEnableFlag != null)
+                        {
+                            rtcEnableFlag.Value = fuzz_snap_rtcen;
+                            // Mirror writeCallback side-effect since direct field set skips callbacks
+                            if(fuzz_snap_rtcen)
+                            {
+                                _machine?.SystemBus.EnablePeripheral(_rtcPeripheral);
+                            }
+                            else
+                            {
+                                _machine?.SystemBus.DisablePeripheral(_rtcPeripheral);
+                            }
+                        }
+                        continue;
+                    }
+                    // Skip CSR (ClockControlAndStatus) writes to avoid W1C/status side-effects
+                    if(off == (long)Registers.ClockControlAndStatus)
+                    {
+                        // If needed, a future enhancement could write only LSION here
+                        continue;
+                    }
+                    RegistersCollection.Write(off, val);
+                }
+            }
+
+            // Do NOT restore *_Reset registers to avoid write-one-to-reset semantics
         }
 
         public long Size => 0x400;
@@ -372,6 +464,20 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
 
         // Fuzz snapshot variables
         private Dictionary<long, uint> fuzz_snap_registerStates;
+        private bool fuzz_snap_lseon;
+        private ulong fuzz_snap_lsebyp;
+        private ulong fuzz_snap_rtcsel;
+        private bool fuzz_snap_rtcen;
+
+        // Direct field handles for BDC
+        private IFlagRegisterField lseonFlag;
+        private IValueRegisterField lsebypField;
+        private IValueRegisterField rtcselField;
+        private IFlagRegisterField rtcEnableFlag;
+
+        // References for explicit side-effects on restore
+        private readonly IMachine _machine;
+        private readonly STM32F4_RTC _rtcPeripheral;
 
         private enum Registers
         {

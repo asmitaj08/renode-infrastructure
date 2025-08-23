@@ -31,6 +31,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             core = new STM32_EXTICore(this, BitHelper.CalculateQuadWordMask(firstDirectLine, 0), treatOutOfRangeLinesAsDirect: true, allowMaskingDirectLines: false);
 
             numberOfLinesMask = BitHelper.CalculateQuadWordMask((int)NumberOfLines, 0);
+            this.firstDirectLine = firstDirectLine;
 
             DefineRegisters();
             Reset();
@@ -67,6 +68,10 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 
         private ulong fuzz_snap_softwareInterrupt;
         private Dictionary<int, bool> fuzz_snap_gpioStates;
+        private ulong fuzz_snap_imr;
+        private ulong fuzz_snap_rtsr;
+        private ulong fuzz_snap_ftsr;
+        private ulong fuzz_snap_pr;
 
         public void fuzz_snap_capture()
         {
@@ -77,24 +82,71 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             {
                 fuzz_snap_gpioStates[kvp.Key] = kvp.Value.IsSet; // IsSet is a property of GPIO
             }
+            //capture core register states
+            fuzz_snap_imr = core.InterruptMask.Value;
+            fuzz_snap_rtsr = core.RisingEdgeMask.Value;
+            fuzz_snap_ftsr = core.FallingEdgeMask.Value;
+            fuzz_snap_pr = core.PendingInterrupts.Value;
+
         }
 
         public void fuzz_snap_restore()
         {
             // Console.WriteLine("^^^^STM32F4_EXTI.cs fuzz_snap_restore()");
             // base.Reset();
-            softwareInterrupt = fuzz_snap_softwareInterrupt;
-            foreach(var kvp in Connections)
+            // 1) Restore masks and trigger configuration first (no callbacks)
+            var validMask = numberOfLinesMask;
+            var imr = fuzz_snap_imr & validMask;
+            var rtsr = fuzz_snap_rtsr & validMask;
+            var ftsr = fuzz_snap_ftsr & validMask;
+            var pr = fuzz_snap_pr & validMask;
+            var swierMasked = fuzz_snap_softwareInterrupt & validMask;
+
+            core.InterruptMask.Value = imr;
+            core.RisingEdgeMask.Value = rtsr;
+            core.FallingEdgeMask.Value = ftsr;
+
+            // 2) Restore pending register directly to avoid W1C side-effects
+            core.PendingInterrupts.Value = pr;
+
+            // 3) Deterministically drive outputs: assert only when pending AND unmasked; otherwise ensure unset
+            for(var i = 0; i < (int)NumberOfLines; ++i)
             {
-                if(fuzz_snap_gpioStates.TryGetValue(kvp.Key, out var isSet) && isSet)
+                var pending = ((pr >> i) & 1ul) != 0;
+                var unmasked = ((imr >> i) & 1ul) != 0;
+                var isConfigurable = i < firstDirectLine;
+                bool shouldSet;
+                if(isConfigurable)
                 {
-                    kvp.Value.Set();
+                    // Configurable lines: latched pending OR SWIER, gated by mask
+                    var swier = ((swierMasked >> i) & 1ul) != 0;
+                    shouldSet = (pending || swier) && unmasked;
                 }
                 else
                 {
-                    kvp.Value.Unset();
+                    // Direct lines: reflect captured GPIO level if available; fallback to pending
+                    if(fuzz_snap_gpioStates != null && fuzz_snap_gpioStates.TryGetValue(i, out var capturedLevel))
+                    {
+                        shouldSet = capturedLevel;
+                    }
+                    else
+                    {
+                        shouldSet = pending;
+                    }
+                }
+                if(shouldSet)
+                {
+                    Connections[i].Set();
+                }
+                else
+                {
+                    Connections[i].Unset();
                 }
             }
+
+            // 4) Restore software interrupt bitmap last (it is not directly driving outputs)
+            softwareInterrupt = swierMasked;
+
         }
 
 
@@ -145,6 +197,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
 
         private readonly ulong numberOfLinesMask;
         private readonly STM32_EXTICore core;
+        private readonly int firstDirectLine;
 
         private enum Registers
         {

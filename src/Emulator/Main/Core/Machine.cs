@@ -859,7 +859,7 @@ namespace Antmicro.Renode.Core
         //             //     // STM32_UART_Fuzz.ReadFromFuzzer_Internal(data_in);
         //             // }
         //         }
-       
+        //     }
         // }
 
 
@@ -920,12 +920,27 @@ namespace Antmicro.Renode.Core
         //             // }
         //         // }
         //         }
+        //     }
         // }
 
         private bool useDirectAddressWrite_fuzz = false;
         private ulong fuzzerDataAddress = 0x20010000;
         private ulong pointerAddress_fuzz = 0x0;
         private bool writePointerToAddress_fuzz = false;
+        // When true, skip in-function injection; user will inject via CPU hook from Python
+        private bool hookBasedInjectionEnabled = false;
+
+        public void Fuzz_EnableHookBasedInjection()
+        {
+            hookBasedInjectionEnabled = true;
+            Console.WriteLine("^^^^^^ Machine: Hook-based injection enabled (skipping inline injections)");
+        }
+
+        public void Fuzz_DisableHookBasedInjection()
+        {
+            hookBasedInjectionEnabled = false;
+            Console.WriteLine("^^^^^^ Machine: Hook-based injection disabled (inline injections active)");
+        }
 
         // Configuration methods
         public void ConfigureDirectAddressWrite(ulong dataAddress, ulong pointerAddr = 0, bool writePointer = false)
@@ -985,8 +1000,9 @@ namespace Antmicro.Renode.Core
 
         public void FuzzResetAll_w_ePause(byte[] data_in = null, bool debug=false, string trace_filename=null){
 
-                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
-                using (currentEmulation.ObtainPausedState()){
+                // var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                // using (currentEmulation.ObtainPausedState()){
+                using (ObtainPausedState(true)){
                 foreach(var p in peripheralsToReset_all) 
                 {
                     // Console.WriteLine($"Resetting : {p}");
@@ -1000,7 +1016,7 @@ namespace Antmicro.Renode.Core
                 // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
                 mapped_mem.Fuzz_zeroRam();
                 // 2. Reset random number generator to a known state
-                
+                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
                 currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
     
                 var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
@@ -1036,27 +1052,28 @@ namespace Antmicro.Renode.Core
                         Console.WriteLine($"^^^^^ Machine.cs: Error reading PC value: {ex.Message}");
                     }
                 }
-                Resume();
+                
 
                 // Check for direct address write configuration
-                if (useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
+                if (!hookBasedInjectionEnabled && useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
                 {
                     PerformDirectAddressWrite(data_in);
                 }
                 // Pass data_in to configured peripherals
-                if (peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
+                if (!hookBasedInjectionEnabled && peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
                 {
                     // Console.WriteLine("^^^^ Machine.cs : FuzzResetAll_w_Pause : Calling Fuzz_InjectDataToConfiguredPeripherals ");
                     Fuzz_InjectDataToConfiguredPeripherals(data_in);
                 }
                 }
+                Resume();
             }
 
 
         public void FuzzResetAll_w_ePause_defaultReset(byte[] data_in = null){
 
-                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
-                using (currentEmulation.ObtainPausedState()){
+                // var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                using (ObtainPausedState(true)){
                 // foreach(var p in peripheralsToReset_all) 
                 // {
                 //     // Console.WriteLine($"Resetting : {p}");
@@ -1070,7 +1087,7 @@ namespace Antmicro.Renode.Core
                 // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
                 mapped_mem.Fuzz_zeroRam();
                 // 2. Reset random number generator to a known state
-                
+                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
                 currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
     
                 // var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
@@ -1078,25 +1095,26 @@ namespace Antmicro.Renode.Core
                 // // 3. Reset virtual time to zero using MasterTimeSource
                 // currentEmulation.MasterTimeSource.ResetVirtualTime(TimeInterval.Empty);
                 
-                Resume();
+                // Resume();
                 // Pass data_in to configured peripherals
-                if (useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
+                if (!hookBasedInjectionEnabled && useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
                 {
                     PerformDirectAddressWrite(data_in);
                 }
                 // Pass data_in to configured peripherals
-                if (peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
+                if (!hookBasedInjectionEnabled && peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
                 {
                     // Console.WriteLine("^^^^ Machine.cs : FuzzResetAll_w_Pause : Calling Fuzz_InjectDataToConfiguredPeripherals ");
                     Fuzz_InjectDataToConfiguredPeripherals(data_in);
                 }
                 }
+                Resume();
         }
 
         public void FuzzResetAll_w_ePause_noResume(byte[] data_in = null){
 
-                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
-                using (currentEmulation.ObtainPausedState()){
+                // var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                using (ObtainPausedState(true)){
                 foreach(var p in peripheralsToReset_all) 
                 {
                     // Console.WriteLine($"Resetting : {p}");
@@ -1110,7 +1128,7 @@ namespace Antmicro.Renode.Core
                 // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
                 mapped_mem.Fuzz_zeroRam();
                 // 2. Reset random number generator to a known state
-                
+                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
                 currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
     
                 var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
@@ -1121,12 +1139,12 @@ namespace Antmicro.Renode.Core
                 // Resume();
                 // Pass data_in to configured peripherals using generalized approach
                 // Check for direct address write configuration
-                if (useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
+                if (!hookBasedInjectionEnabled && useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
                 {
                     PerformDirectAddressWrite(data_in);
                 }
                 // Pass data_in to configured peripherals
-                if (peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
+                if (!hookBasedInjectionEnabled && peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
                 {
                     // Console.WriteLine("^^^^ Machine.cs : FuzzResetAll_w_Pause : Calling Fuzz_InjectDataToConfiguredPeripherals ");
                     Fuzz_InjectDataToConfiguredPeripherals(data_in);
@@ -1135,8 +1153,8 @@ namespace Antmicro.Renode.Core
         }
         public void FuzzResetAll_w_ePause_noInput_noResume(byte[] data_in = null){
 
-                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
-                using (currentEmulation.ObtainPausedState()){
+                // var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                using (ObtainPausedState(true)){
                 foreach(var p in peripheralsToReset_all) 
                 {
                     // Console.WriteLine($"Resetting : {p}");
@@ -1150,7 +1168,7 @@ namespace Antmicro.Renode.Core
                 // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
                 mapped_mem.Fuzz_zeroRam();
                 // 2. Reset random number generator to a known state
-                
+                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
                 currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
     
                 var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
@@ -1215,6 +1233,7 @@ namespace Antmicro.Renode.Core
         //             // }
         //         }
         //         }
+        //     }
         // }
 
 
@@ -1275,6 +1294,7 @@ namespace Antmicro.Renode.Core
         //             // }
         //         }
         //         }
+        //     }
         // }
 
 
@@ -1335,7 +1355,7 @@ namespace Antmicro.Renode.Core
         //         // Console.WriteLine($"FuzzReset_memTrack ReadFromFuzzer_Internal done. data_len : {data_in.Length}");
                 
        
-        // }
+        //     }
 
 
         // public void FuzzReset_snapshot(byte[] data_in){
@@ -1391,7 +1411,7 @@ namespace Antmicro.Renode.Core
         //             // }
         //         }
         //         // Console.WriteLine($"FuzzReset_memTrack ReadFromFuzzer_Internal done. data_len : {data_in.Length}");
-        // }
+        //     }
 
         // public void FuzzReset_memTrack_w_cpuState(byte[] data_in){
         //         // foreach(var p in peripheralsToReset_all) 
@@ -1442,13 +1462,14 @@ namespace Antmicro.Renode.Core
         //         {
         //             STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //this works too
         //         }
+        //     }
         // }
 
 
         public void FuzzReset_snapshot_w_cpuState_all(byte[] data_in=null, bool debug=false, string trace_filename=null){
 
-                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
-                using (currentEmulation.ObtainPausedState()){
+                // var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                using (ObtainPausedState(true)){
                 
                 
                 
@@ -1458,7 +1479,7 @@ namespace Antmicro.Renode.Core
                     p.Reset();
                 }
                 // cpu.Fuzz_PartialResetForFunctionRerun();
-                // var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
                 currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
                 
                 var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
@@ -1470,8 +1491,35 @@ namespace Antmicro.Renode.Core
                 cpu.ClearTranslationCache();
                 cpu.Fuzz_Restore_All_Mem_Track_Dict();
 
-                cpu.Fuzz_LoadState(); // load cpu state saved using Fuzz_PrepareState()
+                // Restore non-NVIC peripherals first (RCC -> others), then CPU state, then NVIC
                 Fuzz_RestoreAllPeripheralSnapshots(); 
+                cpu.Fuzz_LoadState(); // load cpu state saved using Fuzz_PrepareState()
+                try
+                {
+                    // Reapply CPU-side wrapper state (e.g., VTOR/MPU) from cpu fuzz snapshot
+                    (cpu as Antmicro.Renode.Peripherals.CPU.BaseCPU)?.fuzz_snap_restore();
+                }
+                catch(Exception ex)
+                {
+                    Console.WriteLine($"^^^^^ Machine.cs: Error in CPU fuzz_snap_restore: {ex.Message}");
+                }
+                // Temporarily mask interrupts while restoring NVIC
+                RegisterValue? savedPrimask = null;
+                try
+                {
+                    savedPrimask = cpu.GetRegisterUnsafe(16); // PRIMASK index is 16 on Cortex-M
+                    cpu.SetRegisterUnsafe(16, 1);
+                }
+                catch {}
+                Fuzz_RestoreNVICSnapshots();
+                try
+                {
+                    if(savedPrimask.HasValue)
+                    {
+                        cpu.SetRegisterUnsafe(16, savedPrimask.Value);
+                    }
+                }
+                catch {}
                 
                 // Enable tracing if debug is enabled and trace_filename is provided
                 
@@ -1501,6 +1549,17 @@ namespace Antmicro.Renode.Core
                     }
                 }
                 
+                // Direct data injection while still paused
+                if (!hookBasedInjectionEnabled && useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
+                {
+                    PerformDirectAddressWrite(data_in);
+                }
+                if (!hookBasedInjectionEnabled && peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
+                {
+                    Fuzz_InjectDataToConfiguredPeripherals(data_in);
+                }
+                }
+                // Resume after leaving paused scope
                 Resume();            
                 // Pass data_in to I2C1 peripheral
                 // if (data_in != null && data_in.Length > 0)
@@ -1516,31 +1575,31 @@ namespace Antmicro.Renode.Core
                 //     }
                 // }
 
-                // Check for direct address write configuration
-                if (useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
-                {
-                    PerformDirectAddressWrite(data_in);
-                }
-                // Pass data_in to configured peripherals
-                if (peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
-                {
-                    // Console.WriteLine("^^^^ Machine.cs : FuzzResetAll_w_Pause : Calling Fuzz_InjectDataToConfiguredPeripherals ");
-                    Fuzz_InjectDataToConfiguredPeripherals(data_in);
-                }
+                // // Check for direct address write configuration
+                // if (!hookBasedInjectionEnabled && useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
+                // {
+                //     PerformDirectAddressWrite(data_in);
+                // }
+                // // Pass data_in to configured peripherals
+                // if (!hookBasedInjectionEnabled && peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
+                // {
+                //     // Console.WriteLine("^^^^ Machine.cs : FuzzResetAll_w_Pause : Calling Fuzz_InjectDataToConfiguredPeripherals ");
+                //     Fuzz_InjectDataToConfiguredPeripherals(data_in);
+                // }
 
                 }
       
-        }
+        // }
 
 
         public void FuzzReset_snapshot_w_cpuState_all_w_defaultReset(byte[] data_in=null, bool debug=false, string trace_filename=null){
 
-                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
-                using (currentEmulation.ObtainPausedState()){
+                // var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                using (ObtainPausedState(true)){
                 Reset();
                 var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
                 // cpu.Fuzz_PartialResetForFunctionRerun();
-                // var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
                 currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
                 
                 var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
@@ -1548,9 +1607,35 @@ namespace Antmicro.Renode.Core
                 var mapped_mem = mem?.Peripheral;
                 // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
                 mapped_mem.Fuzz_zeroRam();
+                 
                 cpu.Fuzz_Restore_All_Mem_Track_Dict();
-                cpu.Fuzz_LoadState(); 
+                // Restore non-NVIC peripherals first (RCC -> others), then CPU state, then NVIC
                 Fuzz_RestoreAllPeripheralSnapshots(); 
+                cpu.Fuzz_LoadState();
+                try
+                {
+                    (cpu as Antmicro.Renode.Peripherals.CPU.BaseCPU)?.fuzz_snap_restore();
+                }
+                catch(Exception ex)
+                {
+                    Console.WriteLine($"^^^^^ Machine.cs: Error in CPU fuzz_snap_restore: {ex.Message}");
+                }
+                RegisterValue? savedPrimask2 = null;
+                try
+                {
+                    savedPrimask2 = cpu.GetRegisterUnsafe(16);
+                    cpu.SetRegisterUnsafe(16, 1);
+                }
+                catch {}
+                Fuzz_RestoreNVICSnapshots();
+                try
+                {
+                    if(savedPrimask2.HasValue)
+                    {
+                        cpu.SetRegisterUnsafe(16, savedPrimask2.Value);
+                    }
+                }
+                catch {}
                 
                 // Enable tracing if debug is enabled and trace_filename is provided
                 
@@ -1579,7 +1664,7 @@ namespace Antmicro.Renode.Core
                         Console.WriteLine($"^^^^^ Machine.cs: Error reading PC value: {ex.Message}");
                     }
                 }
-                Resume();            
+                           
                 // Pass data_in to I2C1 peripheral
                 // if (data_in != null && data_in.Length > 0)
                 // {
@@ -1595,18 +1680,192 @@ namespace Antmicro.Renode.Core
                 // }
 
                 // Check for direct address write configuration
-                if (useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
+                if (!hookBasedInjectionEnabled && useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
                 {
                     PerformDirectAddressWrite(data_in);
                 }
                 // Pass data_in to configured peripherals
-                if (peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
+                if (!hookBasedInjectionEnabled && peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
                 {
                     // Console.WriteLine("^^^^ Machine.cs : FuzzResetAll_w_Pause : Calling Fuzz_InjectDataToConfiguredPeripherals ");
                     Fuzz_InjectDataToConfiguredPeripherals(data_in);
                 }
                 
                 }
+                // Resume after leaving paused scope
+                Resume(); 
+        }
+
+        // New: variant that uses full RAM snapshot restore (if captured) instead of mem-track
+        public void FuzzReset_snapshot_w_cpuState_all_w_defaultReset_usingFullRam(byte[] data_in=null, bool debug=false, string trace_filename=null, bool zeroFirst=false)
+        {
+            // var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+            // using (currentEmulation.ObtainPausedState())
+            using (ObtainPausedState(true))
+            {
+                Reset();
+                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
+                currentEmulation.RandomGenerator.ResetSeed(42);
+
+                // // Zero RAM, then restore full snapshot if present
+                // var mem = SystemBus.FindMemory(ram_address);
+                // var mapped_mem = mem?.Peripheral;
+                // mapped_mem.Fuzz_zeroRam();
+
+                // Attempt full RAM restore (safe if nothing captured)
+                cpu.Fuzz_RestoreRamFull(zeroFirst); //no need to zer as we r restoring full
+                cpu.ClearTranslationCache();
+
+                // Restore non-NVIC peripherals first (RCC -> others), then CPU state, then NVIC
+                Fuzz_RestoreAllPeripheralSnapshots();
+                cpu.Fuzz_LoadState();
+                try
+                {
+                    (cpu as Antmicro.Renode.Peripherals.CPU.BaseCPU)?.fuzz_snap_restore();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"^^^^^ Machine.cs: Error in CPU fuzz_snap_restore: {ex.Message}");
+                }
+                RegisterValue? savedPrimask3 = null;
+                try
+                {
+                    savedPrimask3 = cpu.GetRegisterUnsafe(16);
+                    cpu.SetRegisterUnsafe(16, 1);
+                }
+                catch {}
+                Fuzz_RestoreNVICSnapshots();
+                try
+                {
+                    if(savedPrimask3.HasValue)
+                    {
+                        cpu.SetRegisterUnsafe(16, savedPrimask3.Value);
+                    }
+                }
+                catch {}
+
+                if (debug && !string.IsNullOrEmpty(trace_filename))
+                {
+                    try
+                    {
+                        Console.WriteLine($"^^^^^ Machine.cs: Enabling execution tracing to file: {trace_filename}");
+                        cpu.CreateExecutionTracing("fuzz_trace", trace_filename, TraceFormat.PC, false, false, false);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"^^^^^ Machine.cs: Error enabling tracing: {ex.Message}");
+                    }
+                }
+                if (debug)
+                {
+                    try
+                    {
+                        var pc = cpu.PC;
+                        Console.WriteLine($"^^^^^ Machine.cs: PC value before resume: {pc:X}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"^^^^^ Machine.cs: Error reading PC value: {ex.Message}");
+                    }
+                }
+                // Direct data injection while still paused
+                if (!hookBasedInjectionEnabled && useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
+                {
+                    PerformDirectAddressWrite(data_in);
+                }
+                if (!hookBasedInjectionEnabled && peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
+                {
+                    Fuzz_InjectDataToConfiguredPeripherals(data_in);
+                }
+            }
+            // Resume after leaving paused scope
+            Resume();
+        }
+
+        // New: variant that uses sparse non-zero RAM snapshot
+        public void FuzzReset_snapshot_w_cpuState_all_w_defaultReset_usingSparseRam(byte[] data_in=null, bool debug=false, string trace_filename=null, bool zeroFirst=true)
+        {
+            // var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+            using (ObtainPausedState(true))
+            {
+                Reset();
+                var currentEmulation = EmulationManager.Instance.CurrentEmulation;
+                var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
+                currentEmulation.RandomGenerator.ResetSeed(42);
+
+                // var mem = SystemBus.FindMemory(ram_address);
+                // var mapped_mem = mem?.Peripheral;
+                // mapped_mem.Fuzz_zeroRam();
+
+                cpu.Fuzz_RestoreRamSparseNonZero(zeroFirst); //yes zero as we r restoring only non-zero ones
+                cpu.ClearTranslationCache();
+
+                // Restore non-NVIC peripherals first (RCC -> others), then CPU state, then NVIC
+                Fuzz_RestoreAllPeripheralSnapshots();
+                
+                cpu.Fuzz_LoadState();
+                try
+                {
+                    (cpu as Antmicro.Renode.Peripherals.CPU.BaseCPU)?.fuzz_snap_restore();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"^^^^^ Machine.cs: Error in CPU fuzz_snap_restore: {ex.Message}");
+                }
+                RegisterValue? savedPrimask4 = null;
+                try
+                {
+                    savedPrimask4 = cpu.GetRegisterUnsafe(16);
+                    cpu.SetRegisterUnsafe(16, 1);
+                }
+                catch {}
+                Fuzz_RestoreNVICSnapshots();
+                try
+                {
+                    if(savedPrimask4.HasValue)
+                    {
+                        cpu.SetRegisterUnsafe(16, savedPrimask4.Value);
+                    }
+                }
+                catch {}
+
+                if (debug && !string.IsNullOrEmpty(trace_filename))
+                {
+                    try
+                    {
+                        Console.WriteLine($"^^^^^ Machine.cs: Enabling execution tracing to file: {trace_filename}");
+                        cpu.CreateExecutionTracing("fuzz_trace", trace_filename, TraceFormat.PC, false, false, false);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"^^^^^ Machine.cs: Error enabling tracing: {ex.Message}");
+                    }
+                }
+                if (debug) 
+                {
+                    try
+                    {
+                        var pc = cpu.PC;
+                        Console.WriteLine($"^^^^^ Machine.cs: PC value before resume: {pc:X}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"^^^^^ Machine.cs: Error reading PC value: {ex.Message}");
+                    }
+                }
+                // Direct data injection while still paused
+                if (!hookBasedInjectionEnabled && useDirectAddressWrite_fuzz && data_in != null && data_in.Length > 0)
+                {
+                    PerformDirectAddressWrite(data_in);
+                }
+                if (!hookBasedInjectionEnabled && peripheralsToFuzz.Count>0 && data_in != null && data_in.Length > 0)
+                {
+                    Fuzz_InjectDataToConfiguredPeripherals(data_in);
+                }
+            }
+            // Resume after leaving paused scope
+            Resume();
         }
 
         public void Fuzz_CaptureAllPeripheralSnapshots()
@@ -1653,6 +1912,8 @@ namespace Antmicro.Renode.Core
                             }
                         }
                     }
+
+
                 }
             }
         }
@@ -1661,87 +1922,108 @@ namespace Antmicro.Renode.Core
         {
             // Console.WriteLine("^^^^^ Machine.cs RestoreAllPeripheralSnapshots()");
     
-            foreach(var peripheral in registeredPeripherals.Distinct().ToList())
-            {
-                if(peripheral == this)
-                    continue;
+            // Build deterministic ordering: RCC first, others (excluding NVIC and CPU), NVIC handled separately
+            var peripherals = registeredPeripherals.Distinct().ToList();
+            var rccList = new List<IPeripheral>();
+            var others = new List<IPeripheral>();
 
-                // Check if this peripheral should be skipped by trying to find it by name
+            foreach(var p in peripherals)
+            {
+                if(p == this)
+                {
+                    continue;
+                }
+
+                // Skip CPU here; it is restored explicitly after Fuzz_LoadState()
+                if(p is Antmicro.Renode.Peripherals.CPU.BaseCPU || p is Antmicro.Renode.Peripherals.CPU.ICPU)
+                {
+                    continue;
+                }
+
+                // Honor skip list by name
                 bool shouldSkip = false;
                 foreach(var skipName in peripheralsToSkipSnapshot)
                 {
                     string fullName = $"sysbus.{skipName}";
-                    if (TryGetByName(fullName, out IPeripheral skipPeripheral) && skipPeripheral == peripheral)
+                    if (TryGetByName(fullName, out IPeripheral skipPeripheral) && skipPeripheral == p)
                     {
                         shouldSkip = true;
                         break;
                     }
                 }
-                
                 if(shouldSkip)
                 {
-                    Console.WriteLine($"^^^^^^Machine.cs Skipping fuzz_snap_restore on {peripheral.GetType().Name} (configured to skip)");
+                    Console.WriteLine($"^^^^^^Machine.cs Skipping fuzz_snap_restore on {p.GetType().Name} (configured to skip)");
                     continue;
                 }
 
-                if(peripheral is IFuzzSnapshotRestorable restorable)
+                var typeName = p.GetType().Name;
+                if(typeName.Contains("RCC"))
                 {
-                    try
+                    rccList.Add(p);
+                }
+                else if(typeName == "NVIC")
+                {
+                    // NVIC is handled in Fuzz_RestoreNVICSnapshots()
+                    continue;
+                }
+                else
+                {
+                    others.Add(p);
+                }
+            }
+
+            void RestoreList(IEnumerable<IPeripheral> list)
+            {
+                foreach(var peripheral in list)
+                {
+                    if(peripheral is IFuzzSnapshotRestorable restorable)
                     {
-                        // Console.WriteLine($"^^^^^^Machine.cs Calling fuzz_snap_restore on {peripheral.GetType().Name}");
-                        restorable.fuzz_snap_restore();
-                    }
-                    catch(Exception ex)
-                    {
-                        Console.WriteLine($"^^^^^^Machine.cs Error in fuzz_snap_restore on {peripheral.GetType().Name}: {ex.Message}");
+                        try
+                        {
+                            // Console.WriteLine($"^^^^^^Machine.cs Calling fuzz_snap_restore on {peripheral.GetType().Name}");
+                            restorable.fuzz_snap_restore();
+                        }
+                        catch(Exception ex)
+                        {
+                            Console.WriteLine($"^^^^^^Machine.cs Error in fuzz_snap_restore on {peripheral.GetType().Name}: {ex.Message}");
+                        }
                     }
                 }
             }
+
+            // Apply ordering for non-NVIC peripherals
+            RestoreList(rccList);
+            RestoreList(others);
         }
 
+        public void Fuzz_RestoreNVICSnapshots()
+        {
+            // Directly restore NVIC by name to avoid iterating all peripherals
+            foreach(var skipName in peripheralsToSkipSnapshot)
+            {
+                if(string.Equals(skipName, "nvic", StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine("^^^^^^Machine.cs Skipping fuzz_snap_restore on NVIC (configured to skip)");
+                    return;
+                }
+            }
 
-        // public void FuzzReset_snapshot_w_cpuState(byte[] data_in){ //won't work
+            if(TryGetByName("sysbus.nvic", out IPeripheral nvic) && nvic is IFuzzSnapshotRestorable restorable)
+            {
+                try
+                {
+                    restorable.fuzz_snap_restore();
+                }
+                catch(Exception ex)
+                {
+                    Console.WriteLine($"^^^^^^Machine.cs Error in fuzz_snap_restore on NVIC: {ex.Message}");
+                }
+                return;
+            }
 
-        //         var currentEmulation = EmulationManager.Instance.CurrentEmulation;
-        //         using (currentEmulation.ObtainPausedState()){
-        //         foreach(var p in peripheralsToReset_all) 
-        //         {
-        //             // Console.WriteLine($"Resetting : {p}");
-        //             p.Reset();
-        //         }
-        //         var cpu = SystemBus.GetCPUs().OfType<TranslationCPU>().First();
-        //         // cpu.Fuzz_PartialResetForFunctionRerun();
-                
-        //         currentEmulation.RandomGenerator.ResetSeed(42); // Use a fixed seed
-                
-        //         var mem = SystemBus.FindMemory(ram_address); // update later to auto fetch address
-        //         // Console.WriteLine($"Resetting mem : {mem}");
-        //         var mapped_mem = mem?.Peripheral;
-        //         // Console.WriteLine($"Resetting mapped_mem : {mapped_mem}");
-        //         mapped_mem.Fuzz_zeroRam();
-        //         cpu.Fuzz_Restore_All_Mem_Track_Dict();
-        //         cpu.Fuzz_LoadState();  
-        //         //Resume();           
-        //         // Pass data_in to I2C1 peripheral
-        //         if (data_in != null && data_in.Length > 0)
-        //         {
-        //             // STM32F4_I2C_Fuzz.ReadFromFuzzer_Internal(data_in); //this works too but when static
-        //             var i2c = GetPeripheralsOfType<STM32F4_I2C_Fuzz>().FirstOrDefault();
-        //             if(i2c != null)
-        //             {
-        //                 i2c.ReadFromFuzzer_Internal(data_in);
-        //             }
-        //             else{
-        //                 Console.WriteLine("^^^^^^ i2c null");
-        //             }
-        //         }
-        //         }
-      
-        // }
-
-
-
-
+            Console.WriteLine("^^^^^^Machine.cs: NVIC not found by name 'sysbus.nvic'; skipping NVIC restore");
+        }
 
         //fuzz - mem dump start ----------------------------------------------------
        public class MemoryRegion
@@ -2143,9 +2425,7 @@ public static List<MemoryRegion> DumpAllSTM32F4Regions() //stm32f103 - currently
     }
 
 // fuzz - mem dump stop ----------------------------------------------------
-
-
-        /// For fuzzing
+    /// For fuzzing
     /// Dumps all CPU registers and stack memory to console and optionally to file
     /// <param name="inputFilename">Input filename that caused the crash</param>
     /// <param name="saveToFile">Whether to save to file (default: true)</param>
@@ -2267,10 +2547,9 @@ public static List<MemoryRegion> DumpAllSTM32F4Regions() //stm32f103 - currently
             }
         }
     }
+
+    //------------------------------------------------
         
-
-
-
         public bool InternalPause { get; private set; }
 
         public void RequestResetInSafeState(Action postReset = null, ICollection<IPeripheral> unresetable = null)

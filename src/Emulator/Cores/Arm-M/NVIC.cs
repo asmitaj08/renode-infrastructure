@@ -377,12 +377,12 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
         private bool fuzz_snap_currentSevOnPending_flag;
 
         private long fuzz_snap_systickFrequency;
-private int fuzz_snap_systickDivider;
-private bool fuzz_snap_systickEventEnabled;
-private bool fuzz_snap_systickRawInterrupt;
-private WorkMode fuzz_snap_systickWorkMode;
-private Direction fuzz_snap_systickDirection;
-private bool fuzz_snap_systickAutoUpdate;
+        private int fuzz_snap_systickDivider;
+        private bool fuzz_snap_systickEventEnabled;
+        private bool fuzz_snap_systickRawInterrupt;
+        private WorkMode fuzz_snap_systickWorkMode;
+        private Direction fuzz_snap_systickDirection;
+        private bool fuzz_snap_systickAutoUpdate;
 
 
         public void fuzz_snap_capture()
@@ -419,85 +419,92 @@ private bool fuzz_snap_systickAutoUpdate;
     
          // Capture register field values (the 'out' variables)
          fuzz_snap_systickEnabled_flag = systickEnabled.Value;
-          fuzz_snap_eventEnabled_flag = eventEnabled.Value;
-          fuzz_snap_countFlag_flag = countFlag.Value;
+         fuzz_snap_eventEnabled_flag = eventEnabled.Value;
+         fuzz_snap_countFlag_flag = countFlag.Value;
          fuzz_snap_systickReload_flag = systickReload.Value;
          fuzz_snap_sleepOnExitEnabled_flag = sleepOnExitEnabled.Value;
          fuzz_snap_deepSleepEnabled_flag = deepSleepEnabled.Value;
          fuzz_snap_currentSevOnPending_flag = currentSevOnPending.Value;
-    fuzz_snap_systickFrequency = systick.Frequency;
-    fuzz_snap_systickDivider = systick.Divider;
-    fuzz_snap_systickEventEnabled = systick.EventEnabled;
-    fuzz_snap_systickRawInterrupt = systick.RawInterrupt;
-    fuzz_snap_systickWorkMode = systick.Mode;
-    fuzz_snap_systickDirection = systick.Direction;
-    fuzz_snap_systickAutoUpdate = systick.AutoUpdate;
+        fuzz_snap_systickFrequency = systick.Frequency;
+        fuzz_snap_systickDivider = systick.Divider;
+        fuzz_snap_systickEventEnabled = systick.EventEnabled;
+        fuzz_snap_systickRawInterrupt = systick.RawInterrupt;
+        fuzz_snap_systickWorkMode = systick.Mode;
+        fuzz_snap_systickDirection = systick.Direction;
+        fuzz_snap_systickAutoUpdate = systick.AutoUpdate;
        }
 
-       public void fuzz_snap_restore()
-       {
-          
-        //   Console.WriteLine("^^^^^ NVIC.cs fuzz_snap_restore()");// Restore interrupt arrays
-        //   RegisterCollection.Reset();
-          Array.Copy(fuzz_snap_priorities, priorities, priorities.Length);
-          Array.Copy(fuzz_snap_irqs, irqs, irqs.Length);
-    
-          // Restore active and pending interrupt collections
-          activeIRQs.Clear();
-          foreach (var irq in fuzz_snap_activeIRQs)
-          {
-              activeIRQs.Push(irq);
-          }
-    
-          pendingIRQs.Clear();
-          foreach (var irq in fuzz_snap_pendingIRQs)
-          {
-             pendingIRQs.Add(irq);
-          }
-    
-    // Restore SysTick timer state
-    systick.Value = fuzz_snap_systickValue;
-    systick.Limit = fuzz_snap_systickReloadValue;
-    systick.Enabled = fuzz_snap_systickEnabled;
-    
-    // Restore IRQ line state
-    if (fuzz_snap_irqLineActive)
-    {
-        IRQ.Set();
-    }
-    else
-    {
-        IRQ.Unset();
-    }
-    
-    // Restore control registers
-    mpuControlRegister = fuzz_snap_mpuControlRegister;
-    ccr = fuzz_snap_ccr;
-    basepri = fuzz_snap_basepri;
-    priorityMask = fuzz_snap_priorityMask;
-    binaryPointPosition = fuzz_snap_binaryPointPosition;
-    cpuId = fuzz_snap_cpuId;
-    mpuVersion = fuzz_snap_mpuVersion;
-    
-    // Restore flags
-    HaltSystickOnDeepSleep = fuzz_snap_haltSystickOnDeepSleep;
-    maskedInterruptPresent = fuzz_snap_maskedInterruptPresent;
-    
-    // Restore register field values (the 'out' variables)
-    systickEnabled.Value = fuzz_snap_systickEnabled_flag;
-    eventEnabled.Value = fuzz_snap_eventEnabled_flag;
-    countFlag.Value = fuzz_snap_countFlag_flag;
-    systickReload.Value = fuzz_snap_systickReload_flag;
-    sleepOnExitEnabled.Value = fuzz_snap_sleepOnExitEnabled_flag;
-    deepSleepEnabled.Value = fuzz_snap_deepSleepEnabled_flag;
-    currentSevOnPending.Value = fuzz_snap_currentSevOnPending_flag;
+    public void fuzz_snap_restore()
+      {
+         if(fuzz_snap_priorities == null || fuzz_snap_irqs == null)
+         {
+             return;
+         }
 
-     systick.Frequency = fuzz_snap_systickFrequency;
-    systick.Divider = fuzz_snap_systickDivider;
-    systick.EventEnabled = fuzz_snap_systickEventEnabled;
-    systick.Mode = fuzz_snap_systickWorkMode;
-    systick.AutoUpdate = fuzz_snap_systickAutoUpdate;
-}
+         lock(irqs)
+         {
+             Array.Copy(fuzz_snap_priorities, priorities, priorities.Length);
+             Array.Copy(fuzz_snap_irqs, irqs, irqs.Length);
+
+             // Restore active and pending interrupt collections
+             activeIRQs.Clear();
+             foreach(var irq in fuzz_snap_activeIRQs)
+             {
+                 activeIRQs.Push(irq);
+             }
+
+             pendingIRQs.Clear();
+             foreach (var irq in fuzz_snap_pendingIRQs)
+             {
+                 pendingIRQs.Add(irq);
+             }
+
+             // Restore control registers
+             mpuControlRegister = fuzz_snap_mpuControlRegister;
+             ccr = fuzz_snap_ccr;
+             basepri = fuzz_snap_basepri;
+             priorityMask = fuzz_snap_priorityMask;
+             binaryPointPosition = fuzz_snap_binaryPointPosition;
+
+             // Restore flags (except maskedInterruptPresent which will be updated by arbiter)
+             HaltSystickOnDeepSleep = fuzz_snap_haltSystickOnDeepSleep;
+
+             // SysTick: disable, restore knobs/state, then re-enable as captured
+             var wasEnabled = fuzz_snap_systickEnabled;
+             systick.Enabled = false;
+             systickEnabled.Value =  false;
+             systick.Frequency = fuzz_snap_systickFrequency;
+             systick.Divider = fuzz_snap_systickDivider;
+             systick.Mode = fuzz_snap_systickWorkMode;
+             systick.Direction = fuzz_snap_systickDirection;
+             systick.AutoUpdate = fuzz_snap_systickAutoUpdate;
+             systick.Limit = fuzz_snap_systickReloadValue;
+             systick.Value = fuzz_snap_systickValue;
+             systick.EventEnabled = fuzz_snap_systickEventEnabled;
+             // Update exposed fields to reflect the state
+             countFlag.Value = fuzz_snap_countFlag_flag;
+             systickReload.Value = fuzz_snap_systickReload_flag;
+             eventEnabled.Value = fuzz_snap_eventEnabled_flag;
+                         // Preserve the software-visible ENABLE bit exactly as captured
+            systickEnabled.Value = fuzz_snap_systickEnabled_flag;
+            // Restore additional NVIC register field flags
+            sleepOnExitEnabled.Value = fuzz_snap_sleepOnExitEnabled_flag;
+            deepSleepEnabled.Value = fuzz_snap_deepSleepEnabled_flag;
+            currentSevOnPending.Value = fuzz_snap_currentSevOnPending_flag;
+            // Restore the underlying timer enable exactly as captured
+            if(systick.Enabled != wasEnabled)
+            {
+                systick.Enabled = wasEnabled;
+            }
+
+                          // Use arbiter to update IRQ line and masked flags correctly
+              var __arbiterResult = FindPendingInterrupt();
+              if(__arbiterResult == SpuriousInterrupt)
+              {
+                  IRQ.Set(false);
+              }
+         }
+      }
 
 
 

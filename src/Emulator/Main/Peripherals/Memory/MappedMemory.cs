@@ -417,18 +417,18 @@ namespace Antmicro.Renode.Peripherals.Memory
        
 
 
-        private List<IntPtr> allocatedPointers = new List<IntPtr>(); // for fuzzer
+        // private List<IntPtr> allocatedPointers = new List<IntPtr>(); // for fuzzer
         private readonly HashSet<int> allocatedSegments = new HashSet<int>(); // for fuzzer
-        ulong ram_address = 0x20000000; //change to auto_fetch //fuzz
-        ulong ram_size = 0x10000000; //change to auto fetch //fuzz
+        // ulong ram_address = 0x20000000; //change to auto_fetch //fuzz
+        // ulong ram_size = 0x10000000; //change to auto fetch //fuzz
 
-         public void Fuzz_Set_ramAddress(ulong ram_address){
-            ram_address = ram_address;
-        }
+        //  public void Fuzz_Set_ramAddress(ulong ram_address){
+        //     ram_address = ram_address;
+        // }
 
-        public void Fuzz_Set_ramSize(ulong ram_size){
-            ram_size = ram_size;
-        }
+        // public void Fuzz_Set_ramSize(ulong ram_size){
+        //     ram_size = ram_size;
+        // }
 
         public void TouchSegment(int segmentNo)
         {
