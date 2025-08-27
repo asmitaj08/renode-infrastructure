@@ -472,32 +472,32 @@ namespace Antmicro.Renode.Peripherals.Memory
         //         // this.NoisyLog($"Memory at 0x{pointer.ToInt64():X} has been freed.");
         //     }
         // }
-        public void Fuzz_DeallocateAllSegments() // fuzz - done by Free()
-        {
-            Console.WriteLine($"^^^^^^^^ MappedMemory.cs Fuzz_dealloc(), disposed : {disposed}");
-            // if(!disposed )
-            // {
-                for(var i = 0; i < segments.Length; i++)
-                {
-                    var segment = originalPointers[i];
-                    // Console.WriteLine($"^^^^^ MappedMemeory.cs Free() segment [{i}] : 0x{segment.ToInt64():X}");
-                    if(segments[i] != IntPtr.Zero)
-                    {
-                        Console.WriteLine($"^^^^^ MappedMemeory.cs Fuzz_dealloc() Orig_segment [{i}] : 0x{segment.ToInt64():X} & segment [{i}] : 0x{segments[i].ToInt64():X}");
-                        Marshal.FreeHGlobal(segment);
-                        segment = IntPtr.Zero;
-                        segments[i] = IntPtr.Zero;
-                        this.NoisyLog("Segment {0} freed.", i);
-                    }
-                }
+        // public void Fuzz_DeallocateAllSegments() // fuzz - done by Free()
+        // {
+        //     Console.WriteLine($"^^^^^^^^ MappedMemory.cs Fuzz_dealloc(), disposed : {disposed}");
+        //     // if(!disposed )
+        //     // {
+        //         for(var i = 0; i < segments.Length; i++)
+        //         {
+        //             var segment = originalPointers[i];
+        //             // Console.WriteLine($"^^^^^ MappedMemeory.cs Free() segment [{i}] : 0x{segment.ToInt64():X}");
+        //             if(segments[i] != IntPtr.Zero)
+        //             {
+        //                 Console.WriteLine($"^^^^^ MappedMemeory.cs Fuzz_dealloc() Orig_segment [{i}] : 0x{segment.ToInt64():X} & segment [{i}] : 0x{segments[i].ToInt64():X}");
+        //                 Marshal.FreeHGlobal(segment);
+        //                 segment = IntPtr.Zero;
+        //                 segments[i] = IntPtr.Zero;
+        //                 this.NoisyLog("Segment {0} freed.", i);
+        //             }
+        //         }
 
-                // if(segments != null){ //This is true , here segments !=NULL
-                //     Console.WriteLine($"^^^^^^^^^^^^^^^^^^^segments not NULL: 0x{segments:X}, len :{segments.Length}");
-                //     Console.WriteLine($"^^^^^^^^^^^^^^^^^^^segments not NULL: orig pointer 0x{originalPointers:X}");
-                // }
-            // }
-            // disposed = true;
-        }
+        //         // if(segments != null){ //This is true , here segments !=NULL
+        //         //     Console.WriteLine($"^^^^^^^^^^^^^^^^^^^segments not NULL: 0x{segments:X}, len :{segments.Length}");
+        //         //     Console.WriteLine($"^^^^^^^^^^^^^^^^^^^segments not NULL: orig pointer 0x{originalPointers:X}");
+        //         // }
+        //     // }
+        //     // disposed = true;
+        // }
 
         public byte ResetByte { get; set; }
 
@@ -680,129 +680,132 @@ namespace Antmicro.Renode.Peripherals.Memory
         //modified
 
 
-        public void Fuzz_Mem_Load()
-        {
-            // int position = 0;
-            // Console.WriteLine("^^^^^^^^^^^ Fuzz Mem Load - mappedMemory ^^^^^^^^^^^^^^");
+        // public void Fuzz_Mem_Load() // not being used currently
+        // {
+        //     // int position = 0;
+        //     // Console.WriteLine("^^^^^^^^^^^ Fuzz Mem Load - mappedMemory ^^^^^^^^^^^^^^");
 
-             // If the buffer has been modified, reset it to the default state
-            if (isBufferModified)
-            {
-                globalBuffer = (byte[])defaultBuffer.Clone(); // Reset buffer to default state
-                isBufferModified = false;
-            }
+        //      // If the buffer has been modified, reset it to the default state
+        //     if (isBufferModified)
+        //     {
+        //         globalBuffer = (byte[])defaultBuffer.Clone(); // Reset buffer to default state
+        //         isBufferModified = false;
+        //     }
 
-            using (var ms = new MemoryStream(globalBuffer))
-            using (var reader = new BinaryReader(ms))
-            {
-                // checking magic
-                var magic = reader.ReadUInt32();
-                if(magic != Magic)
-                {
-                    throw new InvalidOperationException("Memory: Cannot resume state from stream: Invalid magic.");
-                }
-                SegmentSize = reader.ReadInt32();
-                size = reader.ReadInt64();
-                ResetByte = reader.ReadByte();
-                if(emptyCtorUsed)
-                {
-                    // Console.WriteLine("^^^^^^^^^^^ Fuzz Mem Load - mappedMemory : emptyCtorUsed true ^^^^^^^^^^^^^^");
-                    Init();
-                }
-                var realSegmentsCount = 0;
-                // Console.WriteLine($"Fuzz_Mem_Load Segment SegmentSize : {SegmentSize} no_of_seg: {segments.Length}");
-                for(var i = 0; i < segments.Length; i++)
-                {
-                    //  Console.WriteLine($"Fuzz_Mem_Load Segment {i} address: 0x{segments[i].ToInt64():X}");
-                    var isTouched = reader.ReadBoolean();
-                    // Console.WriteLine($"Fuzz_Mem_Load Segment {i} address: 0x{segments[i].ToInt64():X}, readBollean :{isTouched}");
-                    if(!isTouched)
-                    {
-                          // Check if the segment is already allocated (not IntPtr.Zero)
-                        if (segments[i] != IntPtr.Zero)
-                        {
-                            // var segment = originalPointers[i];
-                            // // Deallocate the memory associated with this segment
-                            // Marshal.FreeHGlobal(segment);
-                            // // Set the segment pointer to IntPtr.Zero
-                            // segments[i] = IntPtr.Zero;
-                            // segment = IntPtr.Zero;
-                            MemSet(segments[i], ResetByte, SegmentSize);
-                            // Console.WriteLine($"Segment {i} reset to ResetByte");
-                        }
-                        continue;
-                    }
-                    var compressedSegmentSize = reader.ReadInt32();
-                    var compressedBuffer = reader.ReadBytes(compressedSegmentSize);
-                    TouchSegment(i);
-                    realSegmentsCount++;
-                    var decodedBuffer = LZ4Codec.Decode(compressedBuffer, 0, compressedBuffer.Length, SegmentSize);
-                    Marshal.Copy(decodedBuffer, 0, segments[i], decodedBuffer.Length);
-                }
+        //     using (var ms = new MemoryStream(globalBuffer))
+        //     using (var reader = new BinaryReader(ms))
+        //     {
+        //         // checking magic
+        //         var magic = reader.ReadUInt32();
+        //         if(magic != Magic)
+        //         {
+        //             throw new InvalidOperationException("Memory: Cannot resume state from stream: Invalid magic.");
+        //         }
+        //         SegmentSize = reader.ReadInt32();
+        //         size = reader.ReadInt64();
+        //         ResetByte = reader.ReadByte();
+        //         if(emptyCtorUsed)
+        //         {
+        //             // Console.WriteLine("^^^^^^^^^^^ Fuzz Mem Load - mappedMemory : emptyCtorUsed true ^^^^^^^^^^^^^^");
+        //             Init();
+        //         }
+        //         var realSegmentsCount = 0;
+        //         // Console.WriteLine($"Fuzz_Mem_Load Segment SegmentSize : {SegmentSize} no_of_seg: {segments.Length}");
+        //         for(var i = 0; i < segments.Length; i++)
+        //         {
+        //             //  Console.WriteLine($"Fuzz_Mem_Load Segment {i} address: 0x{segments[i].ToInt64():X}");
+        //             var isTouched = reader.ReadBoolean();
+        //             // Console.WriteLine($"Fuzz_Mem_Load Segment {i} address: 0x{segments[i].ToInt64():X}, readBollean :{isTouched}");
+        //             if(!isTouched)
+        //             {
+        //                   // Check if the segment is already allocated (not IntPtr.Zero)
+        //                 if (segments[i] != IntPtr.Zero)
+        //                 {
+        //                     // var segment = originalPointers[i];
+        //                     // // Deallocate the memory associated with this segment
+        //                     // Marshal.FreeHGlobal(segment);
+        //                     // // Set the segment pointer to IntPtr.Zero
+        //                     // segments[i] = IntPtr.Zero;
+        //                     // segment = IntPtr.Zero;
+        //                     MemSet(segments[i], ResetByte, SegmentSize);
+        //                     InvalidateMemoryFragment((long)i * SegmentSize, SegmentSize);
+        //                     // Console.WriteLine($"Segment {i} reset to ResetByte");
+        //                 }
+        //                 continue;
+        //             }
+        //             var compressedSegmentSize = reader.ReadInt32();
+        //             var compressedBuffer = reader.ReadBytes(compressedSegmentSize);
+        //             TouchSegment(i);
+        //             realSegmentsCount++;
+        //             var decodedBuffer = LZ4Codec.Decode(compressedBuffer, 0, compressedBuffer.Length, SegmentSize);
+        //             Marshal.Copy(decodedBuffer, 0, segments[i], decodedBuffer.Length);
+        //             // NEW: ensure icache/tlib is coherent
+        //             InvalidateMemoryFragment((long)i * SegmentSize, decodedBuffer.Length);
+        //         }
                
-                // Console.WriteLine($"Fuzz_Mem_Load Segment loaded : {segments.Length} , realSeg : {realSegmentsCount}");
-            this.NoisyLog(string.Format("{0} segments loaded from stream, of which {1} had content.", segments.Length, realSegmentsCount));
-        }
-        }
+        //         // Console.WriteLine($"Fuzz_Mem_Load Segment loaded : {segments.Length} , realSeg : {realSegmentsCount}");
+        //     this.NoisyLog(string.Format("{0} segments loaded from stream, of which {1} had content.", segments.Length, realSegmentsCount));
+        // }
+        // }
 
-        public void Fuzz_Mem_Save()
-        {
-            Console.WriteLine($"^^^^^^^^^^^ Fuzz_Mem_Save - mappedMemeory : Total segment : {segments.Length}, segment size : {SegmentSize}^^^^^^^^^^^^^^");
-            // If the buffer has been modified, reset it to the default state
-            Console.WriteLine($"Fuzz_Mem_Save test Segment {0} address: 0x{segments[0].ToInt64():X}");
-            if (isBufferModified)
-            {
-                globalBuffer = (byte[])defaultBuffer.Clone(); // Reset buffer to default state
-                isBufferModified = false;
-            }
-            // var globalStopwatch = Stopwatch.StartNew();
-            var realSegmentsCount = 0;
+        // public void Fuzz_Mem_Save() // not used currently
+        // {
+        //     Console.WriteLine($"^^^^^^^^^^^ Fuzz_Mem_Save - mappedMemeory : Total segment : {segments.Length}, segment size : {SegmentSize}^^^^^^^^^^^^^^");
+        //     // If the buffer has been modified, reset it to the default state
+        //     Console.WriteLine($"Fuzz_Mem_Save test Segment {0} address: 0x{segments[0].ToInt64():X}");
+        //     if (isBufferModified)
+        //     {
+        //         globalBuffer = (byte[])defaultBuffer.Clone(); // Reset buffer to default state
+        //         isBufferModified = false;
+        //     }
+        //     // var globalStopwatch = Stopwatch.StartNew();
+        //     var realSegmentsCount = 0;
 
-            using (var ms = new MemoryStream())
-            using (var writer = new BinaryWriter(ms))
-            {
-                writer.Write(Magic);
-                writer.Write(SegmentSize);
-                writer.Write(size);
-                writer.Write(ResetByte);
-                byte[][] outputBuffers = new byte[segments.Length][];
-                Parallel.For(0, segments.Length, i =>
-                {
-                    if(segments[i] == IntPtr.Zero)
-                    {   
-                        return;
-                    }
-                    Interlocked.Increment(ref realSegmentsCount);
-                    var localBuffer = new byte[SegmentSize];
-                    Marshal.Copy(segments[i], localBuffer, 0, localBuffer.Length);
-                    outputBuffers[i] = LZ4Codec.Encode(localBuffer, 0, localBuffer.Length);
-                });
-                for(var i = 0; i < segments.Length; i++)
-                {
-                     // Print the address of the current segment
-                    Console.WriteLine($"Fuzz_Mem_Save Segment {i} address: 0x{segments[i].ToInt64():X}");
-                    if(segments[i] == IntPtr.Zero)
-                    {
-                        writer.Write(false);
-                        continue;
-                    }
+        //     using (var ms = new MemoryStream())
+        //     using (var writer = new BinaryWriter(ms))
+        //     {
+        //         writer.Write(Magic);
+        //         writer.Write(SegmentSize);
+        //         writer.Write(size);
+        //         writer.Write(ResetByte);
+        //         byte[][] outputBuffers = new byte[segments.Length][];
+        //         Parallel.For(0, segments.Length, i =>
+        //         {
+        //             if(segments[i] == IntPtr.Zero)
+        //             {   
+        //                 return;
+        //             }
+        //             Interlocked.Increment(ref realSegmentsCount);
+        //             var localBuffer = new byte[SegmentSize];
+        //             Marshal.Copy(segments[i], localBuffer, 0, localBuffer.Length);
+        //             outputBuffers[i] = LZ4Codec.Encode(localBuffer, 0, localBuffer.Length);
+        //         });
+        //         for(var i = 0; i < segments.Length; i++)
+        //         {
+        //              // Print the address of the current segment
+        //             Console.WriteLine($"Fuzz_Mem_Save Segment {i} address: 0x{segments[i].ToInt64():X}");
+        //             if(segments[i] == IntPtr.Zero)
+        //             {
+        //                 writer.Write(false);
+        //                 continue;
+        //             }
                     
-                    writer.Write(true);
-                    writer.Write(outputBuffers[i].Length);
-                    writer.Write(outputBuffers[i], 0, outputBuffers[i].Length);
-                }
-                Console.WriteLine($"Fuzz_Mem_Save Segment saved seg : {segments.Length} , realSeg : {realSegmentsCount}");
+        //             writer.Write(true);
+        //             writer.Write(outputBuffers[i].Length);
+        //             writer.Write(outputBuffers[i], 0, outputBuffers[i].Length);
+        //         }
+        //         Console.WriteLine($"Fuzz_Mem_Save Segment saved seg : {segments.Length} , realSeg : {realSegmentsCount}");
 
-                // this.NoisyLog(string.Format("{0} segments saved to stream, of which {1} had contents.", segments.Length, realSegmentsCount));
-                // // globalStopwatch.Stop();
-                // this.NoisyLog("Memory serialization ended in {0}s.", Misc.NormalizeDecimal(globalStopwatch.Elapsed.TotalSeconds));
+        //         // this.NoisyLog(string.Format("{0} segments saved to stream, of which {1} had contents.", segments.Length, realSegmentsCount));
+        //         // // globalStopwatch.Stop();
+        //         // this.NoisyLog("Memory serialization ended in {0}s.", Misc.NormalizeDecimal(globalStopwatch.Elapsed.TotalSeconds));
             
-                // Update global buffer with the serialized data
-                globalBuffer = ms.ToArray();
-                defaultBuffer = (byte[])globalBuffer.Clone(); // Save the default state of the buffer
+        //         // Update global buffer with the serialized data
+        //         globalBuffer = ms.ToArray();
+        //         defaultBuffer = (byte[])globalBuffer.Clone(); // Save the default state of the buffer
             
-            }
-        }
+        //     }
+        // }
 
         /// <summary>
         /// This constructor is only to be used with serialization. Deserializer has to invoke Load method after such
@@ -853,24 +856,10 @@ namespace Antmicro.Renode.Peripherals.Memory
                         }
                     }
                 }
-            // Console.WriteLine($"^^^^^^^^ MappedMemory.cs Free(), disposed : {disposed}");
-            if(!disposed )
-            {
-                for(var i = 0; i < segments.Length; i++)
-                {
-                    var segment = originalPointers[i];
-                    // Console.WriteLine($"^^^^^ MappedMemeory.cs Free() segment [{i}] : 0x{segment.ToInt64():X}");
-                    if(segments[i] != IntPtr.Zero)
-                    {
-                        Console.WriteLine($"^^^^^ MappedMemeory.cs Free() orig_segment [{i}] : 0x{segment.ToInt64():X}, segmetn: 0x{segments[i].ToInt64():X}");
-                        Marshal.FreeHGlobal(segment);
-                        this.NoisyLog("Segment {0} freed.", i);
-                    }
-                }
             }
             disposed = true;
-            
-         }
+            allocatedSegments.Clear();
+            Console.WriteLine($"^^^^^^^^ MappedMemory.cs Free(), disposed : {disposed}");
         }
 
         private long GetLocalOffset(long offset)
